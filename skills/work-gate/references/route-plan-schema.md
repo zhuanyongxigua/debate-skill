@@ -18,8 +18,11 @@ RoutePlan:
   next: ""
 ```
 
-Direct answering is valid only when `stack` includes `direct-answer`.
-Direct tool execution is valid only when `stack` includes `direct-execution`.
+Direct answering is valid only when `stack` includes `work-gate direct answer`.
+Direct local tool execution is valid only when the RoutePlan makes it a
+`work-gate` direct local action. It is no longer a separate skill.
+Final answer compression is valid as `work-gate final answer`; it is a
+work-gate output mode, not a separate skill.
 
 The short RoutePlan passes only when:
 
@@ -38,9 +41,10 @@ RoutePlan:
     artifact_type: ""
     needs_current_info: false
     needs_external_evidence: false
-    has_hard_verifier: false
+    has_project_check: false
     requires_codebase_context: false
     requires_tool_use: false
+    needs_agent_dispatch: false
     needs_multi_agent: false
     needs_heterogeneous_agents: false
     risk_level: "low|medium|high"
@@ -64,6 +68,7 @@ RoutePlan:
     max_rounds: 1
   execution_topology:
     mode: "single_agent|same_runtime_multi_agent|heterogeneous_cli_agents"
+    dispatch_method: "none|agent-dispatch"
     reason: ""
     agents:
       - role: ""
@@ -87,26 +92,34 @@ RoutePlan:
 If a task is simple and one method is obviously sufficient, output a short
 RoutePlan and continue.
 
-If the task is trivial and low risk, choose `direct-answer` or
-`direct-execution` explicitly. Do not bypass routing by answering directly
-without naming the direct method when routing is required.
+If the task is trivial and low risk, choose `work-gate direct answer` for simple answers
+or `work-gate` direct local action for simple local tool work. Do not bypass
+routing by answering or acting directly without naming the direct method when
+routing is required.
+
+Use `work-gate direct answer` sparingly. It is appropriate only for simple,
+self-contained, low-risk tasks. Current, ambiguous, project-dependent,
+multi-step, or high-risk tasks should route to a non-direct stack.
 
 If `work-gate` is explicitly invoked, strict mode is mandatory. Do not skip the
-RoutePlan by judging the task trivial; use `direct-answer` or `direct-execution`
-inside the RoutePlan instead.
+RoutePlan by judging the task trivial; use `work-gate direct answer` or a `work-gate`
+direct local action inside the RoutePlan instead.
 
 If candidate stacks score within 2 points on the rubric, prefer the stack that:
 
 1. Gathers missing evidence first.
-2. Uses available validators.
+2. Uses available project checks or source checks.
 3. Minimizes irreversible action.
 4. Produces structured artifacts.
 5. Has a clear fallback.
 
-Use voting only to decide which cheap exploration to try first when evidence is unavailable.
+Use candidate comparison only to decide which cheap exploration to try first
+when evidence is unavailable.
 
-Use `answer-finalizer` after execution when prior method work is long,
+Use `work-gate final answer` after execution when prior method work is long,
 multi-candidate, debate/review-heavy, or likely to produce a noisy final answer.
+It should compress the result without hiding missing evidence, failed checks, or
+unresolved conflict.
 
 ## Execution Consistency
 
@@ -129,17 +142,20 @@ safe fallback.
 
 Choose execution topology after selecting the method stack.
 
-Use `single_agent` when the task is simple, tool-bound, or has a strong verifier.
+Use `single_agent` when the task is simple, tool-bound, or has a strong project check.
 
 Use `same_runtime_multi_agent` when independent generation or judging is useful
-but the task does not require different model families, different tools, or
-external CLIs. This covers most candidate generation, judging, critique, and
-path exploration. In agent environments that support sub-agents in the current
-session, use that before reaching for external CLIs.
+but the task does not need model, tool, or harness diversity.
 
-Use `heterogeneous_cli_agents` only when model or tool diversity is part of the
-requirement: adversarial review across systems, benchmark comparison, high-risk
-review, or explicit user request for different agents such as Codex and Claude
-Code. Inspect available CLIs first. Ask the user before running external CLI
-commands when they require network access, credentials, broader filesystem
-access, or other elevated permissions.
+Use `heterogeneous_cli_agents` when model, tool, or harness diversity can reduce
+correlated error: adversarial review across systems, benchmark comparison,
+high-risk review, debate with independent critics, or explicit user request for
+different agents such as Claude Code and Codex. Inspect available CLIs first.
+Ask before running external CLI commands when they require network access,
+credentials, broader filesystem access, or other elevated permissions.
+
+When the route needs a real current-session versus CLI decision, include
+`agent-dispatch` in the stack and set `dispatch_method: "agent-dispatch"`.
+Default heterogeneous dispatch uses two non-interactive CLIs at most: Claude
+Code first, Codex CLI second. Use additional CLIs only when explicitly
+requested.

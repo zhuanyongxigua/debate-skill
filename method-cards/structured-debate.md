@@ -3,19 +3,19 @@
 ## Purpose
 
 Resolve conflicts between concrete candidate artifacts when evidence, probes, or
-hard verifiers cannot decide cheaply.
+project checks cannot decide cheaply.
 
 ## Use When
 
 - There are at least two concrete candidates, paths, plans, or judgments.
 - They conflict in a meaningful way.
-- A cheaper verifier, source check, or probe cannot resolve the conflict.
+- A cheaper project check, source check, or probe cannot resolve the conflict.
 
 ## Avoid When
 
 - No candidates exist yet. Generate candidates first.
 - The task is factual and sources can decide.
-- The task is testable and a hard verifier can decide.
+- The task is testable and a project check can decide.
 - The conflict is low stakes.
 
 ## Inputs
@@ -31,15 +31,16 @@ hard verifiers cannot decide cheaply.
 
 ## Composes With
 
-- `multipath-localization`: resolve tied paths after probes.
-- `multi-proposal-synthesis`: resolve tradeoff conflicts between top proposals.
-- `multi-judge`: investigate judge disagreement.
+- `agent-dispatch`: decides whether critics run in current session,
+  same-runtime agents, or heterogeneous CLI agents.
+- `multi-candidate-analysis`: resolve tied diagnosis paths, tradeoff conflicts,
+  or rubric-scoring disagreements between top candidates.
 
 ## Failure Modes
 
 - Using debate to generate the first ideas.
 - Rewarding eloquence over evidence.
-- Letting debate continue after a verifier becomes available.
+- Letting debate continue after a project check becomes available.
 
 ## Evaluation
 

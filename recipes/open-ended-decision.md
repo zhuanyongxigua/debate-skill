@@ -16,11 +16,10 @@ Common signals:
 
 ```text
 work-gate
-  -> multi-proposal-synthesis
-  -> multi-judge when a rubric is available
+  -> multi-candidate-analysis
   -> structured-debate only if top candidates remain unresolved
-  -> answer-finalizer
-  -> edit-plan or hard-verifier when execution begins
+  -> work-gate final answer
+  -> work-gate change plan when execution begins
 ```
 
 ## Required Artifacts
@@ -46,11 +45,12 @@ Input:
 How should I position this open-source agent skills repo?
 
 Route:
-multi-proposal-synthesis -> multi-judge -> answer-finalizer
+multi-candidate-analysis -> work-gate final answer
 
 Output:
-DecisionMemo comparing "work gate", "method standard library", and
-"method cards" positioning, then selecting the strongest public narrative.
+CandidateAnalysis comparing "work gate", "method standard library", and
+"method cards" positioning with rubric scoring, then selecting the strongest
+public narrative.
 ```
 
 ## Success Criteria

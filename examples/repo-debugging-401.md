@@ -13,16 +13,16 @@ it has localized the root cause.
 
 ```yaml
 RoutePlan:
-  stack: [multipath-localization, hard-verifier, edit-plan]
-  why: "Intermittent auth bug with uncertain root cause; probes can falsify guesses before edits."
-  skipped: [direct-answer, structured-debate, heterogeneous_cli_agents]
+  stack: [multi-candidate-analysis, work-gate]
+  why: "Intermittent auth bug with uncertain root cause; localize before writing a change plan."
+  skipped: [work-gate direct answer, structured-debate, heterogeneous_cli_agents]
   topology: "single_agent"
-  next: "PathCards"
+  next: "CandidateAnalysis"
 ```
 
 ## Better Workflow
 
-1. Generate PathCards:
+1. Generate a `CandidateAnalysis` in `mode: diagnosis`:
    - Token refresh bug
    - Cookie domain or `SameSite` mismatch
    - CSRF/session mismatch
@@ -33,7 +33,7 @@ RoutePlan:
    - reproduce with server logs
    - add a focused regression test
 3. Select the best-supported path.
-4. Produce an EditPlan with validation commands.
+4. Produce a work-gate change plan with validation commands.
 
 ## Success Signal
 

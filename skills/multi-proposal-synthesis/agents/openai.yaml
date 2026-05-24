@@ -1,4 +1,0 @@
-interface:
-  display_name: "Multi Proposal Synthesis"
-  short_description: "Generate, critique, and synthesize options"
-  default_prompt: "Use $multi-proposal-synthesis to compare options and produce a decision memo."

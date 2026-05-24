@@ -1,4 +1,0 @@
-interface:
-  display_name: "High Risk Evidence"
-  short_description: "Handle high-stakes tasks with evidence and review"
-  default_prompt: "Use $high-risk-evidence to handle this high-stakes task conservatively."

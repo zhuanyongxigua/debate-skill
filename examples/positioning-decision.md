@@ -13,11 +13,11 @@ defends it with generic marketing language.
 
 ```yaml
 RoutePlan:
-  stack: [multi-proposal-synthesis, multi-judge, answer-finalizer]
+  stack: [multi-candidate-analysis, work-gate final answer]
   why: "Open-ended positioning decision needs alternatives, rubric scoring, and a concise recommendation."
-  skipped: [direct-answer, hard-verifier, structured-debate]
+  skipped: [work-gate direct answer, structured-debate]
   topology: "same_runtime_multi_agent"
-  next: "DecisionMemo"
+  next: "CandidateAnalysis"
 ```
 
 ## Better Workflow

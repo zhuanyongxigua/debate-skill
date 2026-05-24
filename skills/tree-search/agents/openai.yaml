@@ -1,4 +1,0 @@
-interface:
-  display_name: "Tree Search"
-  short_description: "Explore, score, and backtrack over branches"
-  default_prompt: "Use $tree-search to solve this by expanding and scoring branches."

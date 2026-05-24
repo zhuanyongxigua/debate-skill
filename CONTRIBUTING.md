@@ -36,9 +36,9 @@ Every card should include:
 Use lowercase kebab-case names:
 
 ```text
-multipath-localization
-rag-claim-check
-hard-verifier
+multi-candidate-analysis
+work-gate
+structured-debate
 ```
 
 Prefer method names over marketing names. The name should tell an agent what to

@@ -1,4 +1,0 @@
-interface:
-  display_name: "Multipath Localization"
-  short_description: "Find competing root-cause paths before patching"
-  default_prompt: "Use $multipath-localization to find competing root-cause paths before planning edits."

@@ -13,18 +13,18 @@ material claims unsupported.
 
 ```yaml
 RoutePlan:
-  stack: [rag-claim-check, hard-verifier]
+  stack: [work-gate]
   why: "Latest factual answer needs sources; date and citation checks can catch stale claims."
-  skipped: [direct-answer, structured-debate]
+  skipped: [work-gate direct answer, structured-debate]
   topology: "single_agent"
-  next: "ClaimTable"
+  next: "source-check table"
 ```
 
 ## Better Workflow
 
-1. Retrieve primary sources first.
+1. Gather primary sources first.
 2. Extract material claims.
-3. Build a ClaimTable:
+3. Build a source-check table:
    - claim
    - supporting source
    - contradiction

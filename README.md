@@ -42,7 +42,7 @@ Task
   -> RoutePlan
   -> Method stack
   -> Artifacts
-  -> Verifier or review
+  -> Project checks or review
 ```
 
 The root meta skill is `work-gate`.
@@ -51,15 +51,14 @@ It emits a short `RoutePlan`, checks that the gate passes, then executes the
 smallest sufficient method stack:
 
 - answer directly only when direct answer is explicitly selected
-- execute one obvious action only when direct execution is explicitly selected
-- retrieve evidence for factual claims
-- sample independently for single-answer reasoning
+- execute one obvious local action only when the work gate selects a direct local action
+- verify sources and citations for factual claims
 - localize before editing code
-- write an edit plan before risky changes
-- run hard verifiers when they exist
+- produce a scoped change plan before risky code/file changes
+- follow project-required checks when they exist
 - use rubrics for judging
 - debate only when concrete candidates conflict and no cheaper check can decide
-- finalize long intermediate work into concise answers
+- use the built-in final answer gate to compress long intermediate work
 
 Debate is a method card, not the default method.
 
@@ -72,8 +71,9 @@ agents:
 Use work-gate strict mode.
 The first visible block must be RoutePlan:
 Do not answer, edit, research, judge, critique, use tools, or debate before RoutePlan.
-Direct answers are allowed only when selected as direct-answer.
-Direct tool actions are allowed only when selected as direct-execution.
+Direct answers are allowed only when selected as work-gate direct answer.
+Simple local tool actions are allowed only when the RoutePlan selects a work-gate direct local action.
+Final answers after long method work should use the work-gate final answer gate.
 Keep the RoutePlan under 7 lines.
 Execute only the selected stack.
 ```
@@ -82,11 +82,11 @@ Default RoutePlan:
 
 ```yaml
 RoutePlan:
-  stack: [multipath-localization, hard-verifier, edit-plan]
+  stack: [multi-candidate-analysis, work-gate]
   why: "Unclear repo bug; probes can falsify guesses before edits."
-  skipped: [direct-answer, structured-debate]
+  skipped: [work-gate direct answer, structured-debate]
   topology: "single_agent"
-  next: "PathCards"
+  next: "CandidateAnalysis"
 ```
 
 ## Quick Example
@@ -98,12 +98,12 @@ Bad default:
   Jump to the first plausible file and patch it.
 
 Better method stack:
-  multipath-localization -> hard-verifier -> edit-plan
+  multi-candidate-analysis -> work-gate change plan
 
 Why:
   The root cause is uncertain.
   Cheap probes can falsify guesses.
-  The edit plan should come after localization.
+  The change plan should come after localization.
 
 Debate:
   Not yet. Use it only if the top paths remain tied after probes.
@@ -116,18 +116,22 @@ The full machine-readable `RoutePlan` schema lives in
 
 | Task | Default route |
 | --- | --- |
-| Simple low-risk question | `direct-answer` |
-| One obvious local action | `direct-execution` |
-| Current factual answer | `rag-claim-check -> hard-verifier` |
-| Contest math or logic | `self-consistency -> hard-verifier` |
-| Repo bug with unclear cause | `multipath-localization -> hard-verifier -> edit-plan` |
-| Repo feature plan | `edit-plan -> hard-verifier` |
-| Open-ended product or strategy decision | `multi-proposal-synthesis -> multi-judge -> answer-finalizer` |
-| Creative naming or copy | `creative-curator` |
-| Subjective evaluation or ranking | `multi-judge` |
-| Concrete candidates still tied | `structured-debate`, capped and evidence-based |
-| High-risk medical, legal, financial, safety, or compliance question | `high-risk-evidence -> rag-claim-check` |
-| Long or noisy intermediate work | `answer-finalizer` |
+| Simple low-risk question | `work-gate direct answer` |
+| One obvious local action | `work-gate` direct local action |
+| Current factual answer | `work-gate` with source/citation constraints |
+| Contest math or logic | `work-gate direct answer` for simple tasks, otherwise `work-gate` with explicit checks |
+| Repo bug with unclear cause | `multi-candidate-analysis -> work-gate` change plan |
+| Repo feature plan | `work-gate` change plan |
+| Open-ended product or strategy decision | `multi-candidate-analysis -> work-gate final answer` |
+| Creative naming or copy with many options | `multi-candidate-analysis -> work-gate final answer` |
+| Subjective evaluation or ranking | `multi-candidate-analysis` in evaluation mode |
+| Cross-agent review or CLI agent choice | `agent-dispatch` |
+| Concrete candidates still tied | `agent-dispatch -> structured-debate`, capped and evidence-based |
+| High-risk medical, legal, financial, safety, or compliance question | `work-gate` with source and human-review boundaries |
+| Long or noisy intermediate work | `work-gate final answer` |
+
+`work-gate direct answer` is a narrow fast path for simple, self-contained,
+low-risk questions. It is not the default route.
 
 ## Meta Skills and Method Cards
 
@@ -136,31 +140,28 @@ Each method has two layers:
 1. A **Method Card**: the human-readable spec.
 2. A **Skill Implementation**: the installable agent-facing `SKILL.md`.
 
+The current core set is intentionally small: 4 installable skills.
+
 | Method | Use it for | Primary artifact |
 | --- | --- | --- |
 | [`work-gate`](method-cards/work-gate.md) | Work-entry gate and method selection | RoutePlan |
-| [`direct-answer`](method-cards/direct-answer.md) | Simple self-contained answers | DirectAnswer |
-| [`direct-execution`](method-cards/direct-execution.md) | One obvious low-risk local action | DirectExecutionRecord |
-| [`hard-verifier`](method-cards/hard-verifier.md) | Tests, schemas, calculators, compilers, source checks | VerificationRecord |
-| [`multipath-localization`](method-cards/multipath-localization.md) | Unclear code/system root causes | PathCards |
-| [`edit-plan`](method-cards/edit-plan.md) | Planning repo changes before editing | EditPlan |
-| [`rag-claim-check`](method-cards/rag-claim-check.md) | Factual work with sources | ClaimTable |
-| [`self-consistency`](method-cards/self-consistency.md) | Independent attempts and aggregation | VoteRecord |
-| [`multi-proposal-synthesis`](method-cards/multi-proposal-synthesis.md) | Open-ended strategy and tradeoffs | DecisionMemo |
-| [`creative-curator`](method-cards/creative-curator.md) | Creative generation and selection | CreativeBoard |
-| [`multi-judge`](method-cards/multi-judge.md) | Rubric-based evaluation | JudgeScorecard |
+| [`agent-dispatch`](method-cards/agent-dispatch.md) | Current session vs same-runtime agents vs heterogeneous CLI agents | AgentDispatchPlan |
+| [`multi-candidate-analysis`](method-cards/multi-candidate-analysis.md) | Generate or evaluate multiple diagnosis paths, options, outputs, or plans | CandidateAnalysis |
 | [`structured-debate`](method-cards/structured-debate.md) | Resolving unresolved candidate conflicts | DebateRecord |
-| [`high-risk-evidence`](method-cards/high-risk-evidence.md) | Medical, legal, finance, safety, compliance | RiskMemo |
-| [`tree-search`](method-cards/tree-search.md) | Branching search and backtracking | BranchTable |
-| [`react-reflexion`](method-cards/react-reflexion.md) | Tool-using observe/act loops | TrajectoryLog |
-| [`answer-finalizer`](method-cards/answer-finalizer.md) | Concise final answers after method work | FinalAnswer |
+
+Built into `work-gate`: direct answer, direct local action, change planning,
+source/check constraints, and final answer formatting. These are gate modes, not
+separate installable skills.
+
+Built into `multi-candidate-analysis`: candidate generation and rubric scoring.
+If candidates already exist, use evaluation mode and skip generation.
 
 ## Recipes
 
 Recipes compose cards into common agent workflows:
 
 - [`coding-bug-fix`](recipes/coding-bug-fix.md): localize before editing
-- [`factual-claim-audit`](recipes/factual-claim-audit.md): retrieve, extract, audit, remove unsupported claims
+- [`factual-claim-audit`](recipes/factual-claim-audit.md): verify sources, audit claims, remove unsupported claims
 - [`open-ended-decision`](recipes/open-ended-decision.md): generate proposals, critique, synthesize, verify
 
 ## Examples
@@ -215,11 +216,11 @@ conflicts between concrete candidates, not a default way to think.
 
 Multi-agent work is an execution topology, not a method by itself.
 
-Start with one strong agent unless independence changes the result. Use
-same-runtime multi-agent runs for cheap independent candidates, judges, or
-critics. Use heterogeneous CLI agents only when model/tool diversity is a real
-requirement; inspect available CLIs first and ask the user before running
-external tools that need extra permissions.
+Use `agent-dispatch` when a task may need independent agents or external CLI
+agents. It chooses current session, same-runtime agents, or heterogeneous CLI
+agents. For heterogeneous CLI work, the default is two non-interactive CLIs:
+Claude Code first and Codex CLI second. Add more CLIs only when explicitly
+requested.
 
 ## Contributing
 

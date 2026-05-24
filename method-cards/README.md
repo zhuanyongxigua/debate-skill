@@ -14,35 +14,30 @@ Cards can be composed into method stacks by the root meta skill,
 | Card | Method type | Primary artifact |
 | --- | --- | --- |
 | [`work-gate`](work-gate.md) | Work-entry gate | RoutePlan |
-| [`direct-answer`](direct-answer.md) | Direct answer | DirectAnswer |
-| [`direct-execution`](direct-execution.md) | Direct execution | DirectExecutionRecord |
-| [`hard-verifier`](hard-verifier.md) | Verification | VerificationRecord |
-| [`multipath-localization`](multipath-localization.md) | Debugging / diagnosis | PathCards |
-| [`edit-plan`](edit-plan.md) | Implementation planning | EditPlan |
-| [`rag-claim-check`](rag-claim-check.md) | Evidence grounding | ClaimTable |
-| [`self-consistency`](self-consistency.md) | Independent sampling | VoteRecord |
-| [`multi-proposal-synthesis`](multi-proposal-synthesis.md) | Strategy synthesis | DecisionMemo |
-| [`creative-curator`](creative-curator.md) | Creative generation | CreativeBoard |
-| [`multi-judge`](multi-judge.md) | Rubric evaluation | JudgeScorecard |
+| [`agent-dispatch`](agent-dispatch.md) | Agent execution topology | AgentDispatchPlan |
+| [`multi-candidate-analysis`](multi-candidate-analysis.md) | Candidate generation, comparison, and rubric evaluation | CandidateAnalysis |
 | [`structured-debate`](structured-debate.md) | Conflict resolution | DebateRecord |
-| [`high-risk-evidence`](high-risk-evidence.md) | High-stakes evidence | RiskMemo |
-| [`tree-search`](tree-search.md) | Branch search | BranchTable |
-| [`react-reflexion`](react-reflexion.md) | Tool loop | TrajectoryLog |
-| [`answer-finalizer`](answer-finalizer.md) | Output control | FinalAnswer |
+
+`work-gate` also owns direct answer, direct local action, change planning, and
+final answer formatting as internal gate modes. They are not separate cards.
 
 ## Routing Rules
 
 Prefer the smallest card stack that controls the main risk:
 
-- If the task is trivial and self-contained, explicitly select direct-answer.
-- If one local low-risk action is enough, explicitly select direct-execution.
-- If a hard verifier exists, use it before debate.
-- If claims can be checked against sources, retrieve and audit them.
+- If the task is trivial and self-contained, explicitly select work-gate direct
+  answer, but do not treat it as the default route.
+- If one local low-risk action is enough, select a work-gate direct local action.
+- If a project check exists, follow it before debate.
+- If claims can be checked against sources, verify sources and citations.
 - If code root cause is uncertain, localize before editing.
-- If the output is subjective, define a rubric before judging.
+- If candidates already exist, use multi-candidate-analysis evaluation mode and
+  skip generation.
+- If the output is subjective, define a rubric before judging candidates.
 - If there are no candidates yet, generate candidates before critique or debate.
 - If candidates conflict and no cheaper check can decide, use structured debate.
-- If method work is long or noisy, use answer-finalizer.
+- If independent agents or external CLIs may be useful, use agent-dispatch.
+- If method work is long or noisy, use the work-gate final answer gate.
 
 ## Card Format
 

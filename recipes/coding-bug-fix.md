@@ -17,27 +17,26 @@ Common signals:
 
 ```text
 work-gate
-  -> multipath-localization
-  -> hard-verifier
-  -> edit-plan
-  -> hard-verifier
-  -> answer-finalizer when the plan is long
+  -> multi-candidate-analysis
+  -> work-gate change plan
+  -> project-required checks
+  -> work-gate final answer when the plan is long
 ```
 
 ## Required Artifacts
 
 - `RoutePlan`
-- `PathCards`
+- `CandidateAnalysis`
 - probe or test results
 - selected path
-- `EditPlan`
+- change plan
 - validation commands
 - concise final recommendation when useful
 
 ## Do Not Do Too Early
 
 - Do not edit the first plausible file.
-- Do not debate before PathCards exist.
+- Do not debate before concrete candidates exist.
 - Do not write a large plan before root cause is narrowed.
 
 ## Minimal Example
@@ -47,23 +46,23 @@ Input:
 Users sometimes get 401 after login.
 
 Route:
-multipath-localization -> hard-verifier -> edit-plan
+multi-candidate-analysis -> work-gate change plan
 
-PathCards:
+CandidateAnalysis (`mode: diagnosis`):
 - token refresh bug
 - cookie domain or SameSite mismatch
 - CSRF/session mismatch
 - session store race
 
-Verifier:
+Checks:
 Inspect Set-Cookie behavior and add a regression test for the selected path.
 
 Output:
-EditPlan with scoped file changes and validation commands.
+Change plan with scoped file changes and validation commands.
 ```
 
 ## Success Criteria
 
 - The selected path explains the symptom better than alternatives.
 - A cheap probe or test supports the selected path.
-- The implementation plan is small, ordered, and verifiable.
+- The change plan is small, ordered, and verifiable.

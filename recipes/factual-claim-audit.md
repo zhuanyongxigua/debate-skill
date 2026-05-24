@@ -16,10 +16,9 @@ Common signals:
 
 ```text
 work-gate
-  -> rag-claim-check
-  -> hard-verifier
-  -> high-risk-evidence when stakes require it
-  -> answer-finalizer when the audit is long
+  -> source/citation checks
+  -> conservative boundaries when stakes require them
+  -> work-gate final answer when the audit is long
 ```
 
 ## Required Artifacts
@@ -27,7 +26,7 @@ work-gate
 - `RoutePlan`
 - source list with authority notes
 - extracted claims
-- `ClaimTable` with source-to-claim mapping
+- source-check table with source-to-claim mapping
 - unsupported or conflicting claims
 - final sourced synthesis
 - concise final answer when useful
@@ -45,9 +44,9 @@ Input:
 Summarize what changed in the latest API pricing rules.
 
 Route:
-rag-claim-check -> hard-verifier
+work-gate with source/citation constraints
 
-ClaimTable:
+Source-check table:
 - claim
 - supporting source
 - date

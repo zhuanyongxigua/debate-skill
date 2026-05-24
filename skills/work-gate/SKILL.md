@@ -18,8 +18,8 @@ This skill is a gate, not advice.
 For non-trivial tasks, route before work. When `work-gate` is explicitly
 invoked, strict mode is mandatory. The first visible block must be `RoutePlan:`.
 Do not skip the gate by deciding the task is trivial. If the task is simple, the
-gate may pass with `direct-answer` or `direct-execution`, but that direct method
-must be selected explicitly.
+gate may pass with `work-gate direct answer` for simple answers or a `work-gate`
+direct local action for simple tool work.
 
 No substantive answer, code edit, broad tool command, research synthesis,
 critique, judgment, or debate may happen before the RoutePlan.
@@ -49,8 +49,9 @@ A RoutePlan passes only when all are true:
 - `topology` states single agent, same-runtime multi-agent, or heterogeneous CLI
   agents.
 - `next` names the next artifact or action required by the selected stack.
-- Direct answering appears only as `direct-answer`.
-- Direct tool execution appears only as `direct-execution`.
+- Direct answering appears only as `work-gate direct answer`.
+- Direct tool execution is handled as a `work-gate` direct local action, not as a
+  separate skill.
 
 If any criterion fails, stop and restart from `RoutePlan:`.
 
@@ -60,21 +61,13 @@ After the RoutePlan passes, execute only the selected stack.
 
 Each selected method must produce or update its expected artifact:
 
-- `direct-answer` -> `DirectAnswer`
-- `direct-execution` -> `DirectExecutionRecord`
-- `rag-claim-check` -> `ClaimTable`
-- `self-consistency` -> `VoteRecord`
-- `multipath-localization` -> `PathCards`
-- `edit-plan` -> `EditPlan`
-- `hard-verifier` -> `VerificationRecord`
-- `multi-proposal-synthesis` -> `DecisionMemo`
-- `creative-curator` -> `CreativeBoard`
-- `multi-judge` -> `JudgeScorecard`
+- `work-gate direct answer` -> `ConciseAnswer`
+- `work-gate` direct local action -> user-visible local result
+- `work-gate` change plan -> scoped file changes, validation commands, risks
+- `work-gate final answer` -> concise result, rationale, risk, next action
+- `agent-dispatch` -> `AgentDispatchPlan`
+- `multi-candidate-analysis` -> `CandidateAnalysis`
 - `structured-debate` -> `DebateRecord`
-- `high-risk-evidence` -> `RiskMemo`
-- `tree-search` -> `BranchTable`
-- `react-reflexion` -> `TrajectoryLog`
-- `answer-finalizer` -> `FinalAnswer`
 
 Do not list a method in `stack` unless you will follow its method frame. If the
 selected stack becomes impossible or unnecessary, emit a revised RoutePlan
@@ -99,21 +92,21 @@ If not, stop and restart from `RoutePlan:`.
 3. Execute only the selected stack.
 4. Produce the artifact required by the current method.
 5. Emit a revised RoutePlan before switching methods.
-6. Use `answer-finalizer` when intermediate method work would make the final
-   response long, noisy, or process-heavy.
+6. Use the built-in final answer gate when intermediate method work would make
+   the final response long, noisy, or process-heavy.
 
 ## Routing Priorities
 
 Use this priority order unless the user explicitly asks otherwise:
 
-1. Hard verifier, tool result, test, schema, calculator, or executable check.
-2. External evidence, retrieval, citations, or authoritative source checking.
-3. Task decomposition, route planning, implementation planning, or edit
+1. Project-required checks, tool results, tests, schemas, calculators, source
+   checks, or executable feedback.
+2. Task decomposition, route planning, implementation planning, or edit
    planning.
-4. Independent candidate generation, multipath localization, or branch search.
-5. Critique, self-refine, pre-mortem, or review.
-6. Structured debate only when candidates conflict and cannot be resolved by
-   evidence.
+3. Independent candidate generation, diagnosis paths, decision options, or branch search.
+4. Critique, self-refine, pre-mortem, or review.
+5. Structured debate only when candidates conflict and cannot be resolved by
+   checks or evidence.
 
 ## Hard Routing Rules
 
@@ -122,24 +115,28 @@ Use this priority order unless the user explicitly asks otherwise:
   task.
 - If an explicitly requested skill is unavailable, irrelevant, or unsafe to use,
   say why in `skipped` or `why`, then choose the closest safe fallback.
-- If the task is simple, low-risk, and self-contained, select `direct-answer`
-  explicitly.
-- If the task is a simple, low-risk, obvious tool action, select
-  `direct-execution` explicitly and add a cheap verifier when useful.
-- Latest or factual claims require retrieval or evidence checking.
-- Repo debugging with uncertain root cause requires multipath localization
-  before edit planning.
-- Hard verifiers outrank debate.
-- High-risk medical, legal, financial, safety, security, or compliance work
-  requires authoritative evidence and human review language.
-- Creative tasks require generation and curation, not adversarial critique
-  first.
+- If the task is simple, low-risk, and self-contained, select
+  `work-gate direct answer` explicitly, but treat it as a narrow low-frequency
+  fast path rather than the default route.
+- If the task is a simple, low-risk, obvious local tool action, use `work-gate`
+  as the direct local action gate and check the visible result when useful.
+- Latest or factual claims require source checks or other evidence handling, but
+  this is a work constraint rather than a separate skill.
+- Repo debugging with uncertain root cause requires multi-candidate diagnosis
+  before work-gate change planning.
+- Project-required tests, build checks, lint, schemas, or source checks outrank
+  debate.
+- High-risk medical, legal, financial, safety, security, or compliance work is
+  not a dedicated skill here; route conservatively, require authoritative
+  sources where applicable, and preserve human-review boundaries.
+- Creative tasks usually do not need a dedicated method skill; generate options
+  directly or use `multi-candidate-analysis` when candidate comparison is useful.
 - Multi-agent work is an execution topology, not a substitute for retrieval,
   tests, schemas, or clear artifacts.
-- For reasoning or answer-selection tasks, compare against independent sampling
-  and voting before using debate.
+- Use `agent-dispatch` whenever the route needs to decide between current
+  session, same-runtime agents, or heterogeneous CLI agents.
 - For coding agent work, prefer independent diagnosis or patch candidates plus
-  tests before language debate.
+  project checks before language debate.
 - Do not mix different harnesses and different models unless the task is
   explicitly evaluating full-stack agent performance.
 
@@ -147,20 +144,20 @@ Use this priority order unless the user explicitly asks otherwise:
 
 | Task signal | Preferred stack |
 | --- | --- |
-| Simple low-risk answer | `direct-answer` |
-| Simple low-risk tool action | `direct-execution -> hard-verifier if useful` |
-| Math, logic, multiple choice | `self-consistency -> hard-verifier` |
-| Factual research or citations | `rag-claim-check -> hard-verifier` |
-| Open strategy, product, business decision | `multi-proposal-synthesis -> multi-judge when a rubric is useful -> structured-debate only if top candidates remain unresolved -> answer-finalizer` |
-| Creative writing, naming, copy | `creative-curator` |
-| Repo bug, uncertain root cause | `multipath-localization -> hard-verifier -> edit-plan` |
-| Repo feature or architecture plan | `edit-plan -> multi-judge or structured-debate if tradeoffs conflict -> hard-verifier` |
-| Single-file testable code | `self-consistency -> hard-verifier` |
-| Web, shell, browser, or tool operation | `react-reflexion -> hard-verifier` |
-| Evaluation, ranking, review, judging | `multi-judge` |
-| Medical, legal, financial, safety, security, compliance | `high-risk-evidence -> rag-claim-check -> multi-judge if useful` |
-| Puzzle, search, planning with backtracking | `tree-search -> hard-verifier if available` |
-| Long, noisy, multi-candidate, or executive output | `answer-finalizer` after the selected method stack |
+| Simple low-risk answer | `work-gate direct answer` |
+| Simple low-risk local tool action | `work-gate direct action` |
+| Math, logic, multiple choice | `work-gate direct answer` for simple tasks, otherwise `work-gate` with explicit checks |
+| Factual research or citations | `work-gate` with source/citation constraints |
+| Open strategy, product, business decision | `multi-candidate-analysis -> structured-debate only if top candidates remain unresolved -> work-gate final answer` |
+| Repo bug, uncertain root cause | `multi-candidate-analysis -> work-gate change plan` |
+| Repo feature or architecture plan | `work-gate change plan -> multi-candidate-analysis evaluation mode or structured-debate if tradeoffs conflict` |
+| Single-file testable code | `work-gate direct action` when obvious, otherwise `work-gate change plan` |
+| Web, shell, browser, or tool operation | `work-gate direct action` for one obvious step, otherwise plan the tool loop in the RoutePlan |
+| Evaluation, ranking, review, judging | `multi-candidate-analysis` in evaluation mode |
+| Cross-agent review, debate, or CLI agent choice | `agent-dispatch -> selected method` |
+| Medical, legal, financial, safety, security, compliance | `work-gate` with conservative source and human-review boundaries |
+| Puzzle, search, planning with backtracking | `work-gate` with explicit branch/check strategy |
+| Long, noisy, multi-candidate, or executive output | `work-gate final answer` after the selected method stack |
 | Skill/method selection | `work-gate` |
 
 ## Execution Topology
@@ -168,19 +165,15 @@ Use this priority order unless the user explicitly asks otherwise:
 Choose execution topology after choosing the method stack.
 
 - Use `single_agent` when the task is simple, tool-bound, or has a strong
-  verifier.
+  project check.
 - Use `same_runtime_multi_agent` when independent candidates, judges, critics,
   or path generators are useful and heterogeneity is not required.
-- Use heterogeneous models in the same harness when model diversity is the
-  variable being tested or weak models are used as critics/test writers rather
-  than final voters.
-- Use `heterogeneous_cli_agents` only when model/tool/harness diversity
-  materially reduces risk, the user asks for it, or a benchmark/review requires
-  cross-agent independence.
-- Before using heterogeneous CLI agents, inspect what CLIs are available and ask
-  the user for permission when commands need broader filesystem, network,
-  credentials, or other elevated access.
-- Do not use extra agents to replace a hard verifier, source check, cheap probe,
+- Use `agent-dispatch` for any non-trivial decision about current session versus
+  same-runtime agents versus heterogeneous CLI agents.
+- When `agent-dispatch` selects heterogeneous CLI agents, prefer two CLIs by
+  default: Claude Code first, Codex CLI second. Use non-interactive commands
+  only. Add more CLIs only when the user explicitly asks.
+- Do not use extra agents to replace a project check, source check, cheap probe,
   or user approval.
 
 ## Debate Gate
@@ -189,26 +182,33 @@ Use structured debate only when all are true:
 
 - There are at least two concrete candidates, paths, plans, or judgments.
 - They conflict in a way that matters.
-- A hard verifier, source check, or cheap probe cannot decide immediately.
+- A project check, source check, or cheap probe cannot decide immediately.
 - The cost of choosing wrong is meaningful.
 - The debate can be capped to one critique round plus an arbiter.
 
 Do not use debate to create the first candidates.
 
 When the user asks whether to use debate, multi-agent, heterogeneous models, or
-different CLI harnesses, read `references/debate-agent-policy.md`.
+different CLI harnesses, route through `agent-dispatch`.
 
 ## Direct Gates
 
-Use `direct-answer` only when all are true:
+Use `work-gate direct answer` only when all are true:
 
 - The task is simple, self-contained, and low risk.
 - No current facts, citations, or external evidence are needed.
 - No code/file changes or broad tool use are needed.
-- No hard verifier would materially improve the answer.
+- No project check, calculation, source check, or other external feedback would
+  materially improve the answer.
 - No multiple plausible workflows need comparison.
 
-Use `direct-execution` only when all are true:
+Direct answer should be rare under strict mode. It is for genuinely small
+questions, not a way to avoid routing. If many broad, current, ambiguous,
+project-dependent, or multi-step tasks are being routed to
+`work-gate direct answer`, the gate is failing and must choose a non-direct
+method stack instead.
+
+Use a `work-gate` direct local action only when all are true:
 
 - The task is simple, local, and low risk.
 - The next action is obvious.
@@ -217,6 +217,23 @@ Use `direct-execution` only when all are true:
   reduction.
 
 If any direct gate condition fails, select a non-direct method stack.
+
+## Final Answer Gate
+
+Use `work-gate final answer` after the selected method stack when the prior work
+is long, multi-candidate, debate/review-heavy, or likely to include process
+recap. This is an output gate inside `work-gate`, not a separate skill.
+
+The final answer should keep only:
+
+- decision, answer, or recommendation
+- main reason or evidence
+- material risk, uncertainty, or tradeoff
+- next concrete action when useful
+
+Do not use finalization to hide missing evidence, failed checks, unresolved
+candidate conflicts, or important uncertainty. If those remain, say so briefly
+instead of compressing them away.
 
 ## Good And Bad Patterns
 
@@ -230,17 +247,17 @@ Good:
 
 ```yaml
 RoutePlan:
-  stack: [direct-answer]
+  stack: [work-gate direct answer]
   why: "Simple, self-contained, low-risk concept question."
-  skipped: [rag-claim-check, structured-debate]
+  skipped: [multi-candidate-analysis, structured-debate]
   topology: "single_agent"
-  next: "DirectAnswer"
+  next: "ConciseAnswer"
 ```
 
 Bad:
 
 ```text
-I will use multi-proposal-synthesis.
+I will use multi-candidate-analysis.
 Final answer: ...
 ```
 
@@ -248,27 +265,28 @@ Good:
 
 ```yaml
 RoutePlan:
-  stack: [multi-proposal-synthesis, answer-finalizer]
+  stack: [multi-candidate-analysis, work-gate final answer]
   why: "Open-ended decision with multiple plausible positions and verbosity risk."
-  skipped: [hard-verifier, structured-debate]
+  skipped: [work-gate direct answer, structured-debate]
   topology: "single_agent"
-  next: "DecisionMemo"
+  next: "CandidateAnalysis"
 ```
 
-Then produce the `DecisionMemo`, not just a final answer.
+Then produce the `CandidateAnalysis`, not just a final answer.
 
 ## Output
 
 For active gate tasks, the first output is always the short `RoutePlan:` block.
 After that, output the artifact required by the selected method stack. If the
-stack includes `answer-finalizer`, finish with a concise `FinalAnswer`.
+stack includes `work-gate final answer`, finish with a concise answer instead
+of process recap.
 
 ## References
 
 - Read `references/method-catalog.md` for method descriptions, selection rules,
   and compositions.
 - Read `references/debate-agent-policy.md` for debate, ensemble, heterogeneous
-  model, and harness-selection rules.
+  model, and harness-selection background.
 - Read `references/route-plan-schema.md` when producing a formal RoutePlan.
 - Read `references/evidence-index.md` when the user asks for the evidence behind
   a routing choice.

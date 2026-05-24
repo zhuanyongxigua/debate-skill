@@ -50,7 +50,7 @@ been table-checked, mark it explicitly.
 
 ## Routing Heuristics Derived From The Evidence
 
-- Always compare debate against independent sampling plus voting or verifier selection.
-- Prefer hard verifiers, source checks, tests, and schemas over language debate.
+- Always compare debate against independent candidates plus aggregation or project checks.
+- Prefer project checks, source checks, tests, and schemas over language debate.
 - Use heterogeneous models when diversity is the variable or when critics/test writers are useful; avoid weak-model majority voting as a default.
 - Treat different CLI harnesses as full-stack agent comparisons, not clean model comparisons.

@@ -1,0 +1,4 @@
+version: 1
+openai:
+  default_prompt: "Use $agent-dispatch to decide whether to stay in the current session, use same-runtime agents, or launch non-interactive heterogeneous CLI agents such as Claude Code and Codex CLI."
+

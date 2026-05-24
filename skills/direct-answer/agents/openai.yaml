@@ -1,4 +1,0 @@
-interface:
-  display_name: "Direct Answer"
-  short_description: "Answer simple low-risk questions without extra method overhead"
-  default_prompt: "Use $direct-answer for a simple, low-risk, self-contained answer."
