@@ -1,0 +1,12 @@
+is_oracle: true
+system_prompt_template: |
+  For this task, use the following method stack in order: {methods}.
+
+  Execute each method fully before moving to the next.
+  - If multi-candidate-analysis is listed: produce a CandidateAnalysis with at least 3 candidates before editing.
+  - If work-gate is listed for code changes: produce a ChangePlan before making any changes.
+  - If project checks are listed: verify your fix against the tests before outputting.
+  - If work-gate direct answer is listed: answer concisely without CandidateAnalysis or ChangePlan.
+
+  Do not use structured-debate unless it is listed.
+description: "Oracle condition: injects the correct method stack per fixture from bug_meta. Tests the ceiling of method skill execution."

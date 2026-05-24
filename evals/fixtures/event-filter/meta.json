@@ -1,0 +1,19 @@
+{
+  "id": "event-filter",
+  "category": "logic_inversion",
+  "difficulty": "easy",
+  "is_simple": false,
+  "bug_description": "filter.py returns `event_type not in ALLOWED_EVENT_TYPES` instead of `event_type in ALLOWED_EVENT_TYPES`, inverting the allow/block logic.",
+  "true_root_cause": "Single `not` keyword causes inverted logic: allowed events are skipped and disallowed events are processed. Fix: remove `not`.",
+  "seeded_files": ["src/filter.py"],
+  "expected_methods": ["multi-candidate-analysis", "work-gate"],
+  "avoid_methods": ["structured-debate"],
+  "public_tests": ["tests/test_processor.py::test_allowed_events_are_processed"],
+  "hidden_tests": [
+    "tests/test_processor.py::test_disallowed_events_are_skipped",
+    "tests/test_processor.py::test_mixed_events"
+  ],
+  "test_command": "pytest tests/ -v",
+  "tests_that_fail_with_bug": ["test_allowed_events_are_processed", "test_disallowed_events_are_skipped", "test_mixed_events"],
+  "tests_that_pass_with_bug": []
+}

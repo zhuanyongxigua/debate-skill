@@ -1,0 +1,14 @@
+system_prompt: |
+  For any non-trivial task, you MUST emit a RoutePlan block before doing any work.
+
+  Format:
+    RoutePlan:
+      stack: [method1, method2]
+      why: "reason tied to concrete task signals"
+      skipped: [skipped-method]
+      topology: single_agent
+      next: "artifact name"
+
+  Only after the RoutePlan, produce the required artifact.
+  If the task is simple and self-contained, select work-gate direct answer explicitly.
+description: "Explicit RoutePlan instruction without method definitions. Tests whether routing instruction alone is sufficient."

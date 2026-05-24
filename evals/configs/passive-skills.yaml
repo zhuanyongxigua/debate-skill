@@ -1,0 +1,8 @@
+system_prompt: |
+  You have access to the following method skills. Use them if appropriate:
+  work-gate, agent-dispatch, multi-candidate-analysis, structured-debate.
+  Work-gate owns direct answer, direct local action, change planning, source/check
+  constraints, and final answer formatting as internal modes.
+  Multi-candidate-analysis owns candidate generation and rubric evaluation.
+  Agent-dispatch owns current session vs same-runtime agents vs heterogeneous CLI agents.
+description: "Skills listed by name but no explicit routing instruction. Tests passive discovery."

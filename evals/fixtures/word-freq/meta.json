@@ -1,0 +1,16 @@
+{
+  "id": "word-freq",
+  "category": "text_processing",
+  "difficulty": "easy",
+  "is_simple": false,
+  "bug_description": "tokenizer.py lowercases text but does not strip punctuation, so 'hello,' and 'hello' are counted as separate tokens.",
+  "true_root_cause": "tokenize() calls text.lower().split() without stripping punctuation. Fix: use re.findall or str.translate to remove non-alpha chars before splitting.",
+  "seeded_files": ["src/tokenizer.py"],
+  "expected_methods": ["multi-candidate-analysis", "work-gate"],
+  "avoid_methods": ["structured-debate"],
+  "public_tests": ["tests/test_counter.py::test_frequency_with_punctuation"],
+  "hidden_tests": ["tests/test_counter.py::test_top_n_words"],
+  "test_command": "pytest tests/ -v",
+  "tests_that_fail_with_bug": ["test_frequency_with_punctuation", "test_top_n_words"],
+  "tests_that_pass_with_bug": ["test_basic_frequency"]
+}

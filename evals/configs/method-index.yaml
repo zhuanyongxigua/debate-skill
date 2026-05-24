@@ -1,0 +1,13 @@
+system_prompt: |
+  [Method Skills Index] root: ./skills
+  IMPORTANT: For non-trivial tasks, produce a RoutePlan before solving.
+  work-gate direct answer: rare fast path for simple, low-risk, self-contained tasks — artifact: ConciseAnswer
+  work-gate direct local action: simple, local, low-risk tool actions
+  agent-dispatch: current session vs same-runtime agents vs heterogeneous CLI agents; default heterogeneous CLIs are Claude Code then Codex CLI — artifact: AgentDispatchPlan
+  multi-candidate-analysis: diagnosis paths, decision options, or evaluation of existing candidates — artifact: CandidateAnalysis
+  work-gate change plan: risky repo or code changes before editing
+  project/source checks: use the checks required by the repo, docs, or task
+  structured-debate: ONLY after concrete candidates conflict and cheaper checks cannot decide — artifact: DebateRecord
+  work-gate final answer: built-in output gate; compress long intermediate work into a final answer — artifact: FinalAnswer
+  work-gate: mandatory entry gate, selects the stack — artifact: RoutePlan
+description: "Always-on compact method index in system prompt. Removes the model's trigger decision point."
