@@ -38,8 +38,6 @@ Method selection is the missing layer in many agent workflows.
 
 ```text
 Task
-  -> Task fingerprint
-  -> RoutePlan
   -> Method stack
   -> Artifacts
   -> Verifier or review
@@ -59,73 +57,42 @@ It chooses the smallest sufficient method stack:
 
 Debate is a method card, not the default method.
 
-## Method Stack Example
+## Quick Example
 
 For an intermittent repo bug:
 
-```yaml
-route_plan:
-  task_fingerprint:
-    task_type: "repo_debugging"
-    artifact_type: "implementation_plan"
-    needs_current_info: false
-    needs_external_evidence: false
-    has_hard_verifier: true
-    requires_codebase_context: true
-    requires_tool_use: true
-    needs_multi_agent: false
-    needs_heterogeneous_agents: false
-    risk_level: "medium"
-    ambiguity_level: "high"
-    budget_preference: "balanced"
-  selected_stack:
-    - skill_or_method: "multipath-localization"
-      purpose: "Generate competing root-cause paths before editing."
-      expected_artifact: "PathCards"
-      selection_reason: "Root cause is uncertain and several auth paths may explain the symptom."
-      user_requested: false
-      requested_skill_handling: "used"
-    - skill_or_method: "hard-verifier"
-      purpose: "Design probes or tests that can distinguish candidate paths."
-      expected_artifact: "VerificationRecord"
-      selection_reason: "Cookie headers, logs, and regression tests can falsify candidates."
-      user_requested: false
-      requested_skill_handling: "used"
-    - skill_or_method: "edit-plan"
-      purpose: "Turn the selected path into scoped file changes."
-      expected_artifact: "EditPlan"
-      selection_reason: "The user asked for a plan before code edits."
-      user_requested: false
-      requested_skill_handling: "used"
-  why_this_stack:
-    - "The task is a repo bug with uncertain root cause."
-    - "Localization and probes reduce premature edits."
-    - "An edit plan is useful only after a path is selected."
-  skipped_skills:
-    - skill: "structured-debate"
-      reason: "Debate is premature until PathCards exist and probes are inconclusive."
-  debate:
-    use: false
-    condition: "Use only if top localization paths remain tied after probes."
-    max_rounds: 1
-  execution_topology:
-    mode: "single_agent"
-    reason: "Hard probes are more useful than model diversity for this task."
-    agents: []
-    permission_needed: false
-    permission_reason: ""
-    cli_discovery:
-      needed: false
-      approach: ""
-  escalation_conditions:
-    - "Escalate to structured-debate if top PathCards remain tied after cheap probes."
-  expected_artifacts:
-    - "PathCards"
-    - "score table"
-    - "VerificationRecord"
-    - "EditPlan"
-  immediate_next_action: "Orient in the repo and generate PathCards."
+```text
+Bad default:
+  Jump to the first plausible file and patch it.
+
+Better method stack:
+  multipath-localization -> hard-verifier -> edit-plan
+
+Why:
+  The root cause is uncertain.
+  Cheap probes can falsify guesses.
+  The edit plan should come after localization.
+
+Debate:
+  Not yet. Use it only if the top paths remain tied after probes.
 ```
+
+The full machine-readable `RoutePlan` schema lives in
+[`skills/task-router/references/route-plan-schema.md`](skills/task-router/references/route-plan-schema.md).
+
+## Common Routes
+
+| Task | Default route |
+| --- | --- |
+| Current factual answer | `rag-claim-check -> hard-verifier` |
+| Contest math or logic | `self-consistency -> hard-verifier` |
+| Repo bug with unclear cause | `multipath-localization -> hard-verifier -> edit-plan` |
+| Repo feature plan | `edit-plan -> hard-verifier` |
+| Open-ended product or strategy decision | `multi-proposal-synthesis -> multi-judge` |
+| Creative naming or copy | `creative-curator` |
+| Subjective evaluation or ranking | `multi-judge` |
+| Concrete candidates still tied | `structured-debate`, capped and evidence-based |
+| High-risk medical, legal, financial, safety, or compliance question | `high-risk-evidence -> rag-claim-check` |
 
 ## Meta Skills and Method Cards
 
