@@ -7,13 +7,13 @@ avoid it, and declares the artifact it should produce. The installable
 agent-facing implementations live in `../skills/`.
 
 Cards can be composed into method stacks by the root meta skill,
-`method-router`.
+`work-gate`.
 
 ## Card Index
 
 | Card | Method type | Primary artifact |
 | --- | --- | --- |
-| [`method-router`](method-router.md) | Routing | RoutePlan |
+| [`work-gate`](work-gate.md) | Work-entry gate | RoutePlan |
 | [`direct-answer`](direct-answer.md) | Direct answer | DirectAnswer |
 | [`direct-execution`](direct-execution.md) | Direct execution | DirectExecutionRecord |
 | [`hard-verifier`](hard-verifier.md) | Verification | VerificationRecord |

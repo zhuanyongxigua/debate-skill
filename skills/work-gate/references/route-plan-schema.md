@@ -1,29 +1,38 @@
 # RoutePlan Schema
 
-Use this structure when the user asks how a task should be handled, or when several method skills may apply.
+Use this structure when `work-gate` is invoked, when the user asks how a task
+should be handled, or when several method skills may apply.
 
 ## Short RoutePlan
 
-Use this by default. Keep it under 12 lines unless the user asks for detail or
-the route is being audited.
+Use this by default. Keep it under 7 lines unless the user asks for detail or
+the route is being audited. When `work-gate` is explicitly invoked, the first
+visible block must be `RoutePlan:`.
 
 ```yaml
-route_plan:
-  task_type: ""
-  selected_stack: []
-  skipped_methods: []
-  reason: ""
-  next_step: ""
+RoutePlan:
+  stack: []
+  why: ""
+  skipped: []
+  topology: "single_agent|same_runtime_multi_agent|heterogeneous_cli_agents"
+  next: ""
 ```
 
-Direct answering is valid only when `selected_stack` includes `direct-answer`.
-Direct tool execution is valid only when `selected_stack` includes
-`direct-execution`.
+Direct answering is valid only when `stack` includes `direct-answer`.
+Direct tool execution is valid only when `stack` includes `direct-execution`.
+
+The short RoutePlan passes only when:
+
+- `stack` is non-empty.
+- `why` ties the stack to concrete task signals.
+- `skipped` names relevant but unselected methods.
+- `topology` names the execution topology.
+- `next` names the next expected artifact or action.
 
 ## Full RoutePlan
 
 ```yaml
-route_plan:
+RoutePlan:
   task_fingerprint:
     task_type: ""
     artifact_type: ""
@@ -75,11 +84,16 @@ route_plan:
 
 ## Selection Rules
 
-If a task is simple and one method is obviously sufficient, output a short RoutePlan and continue.
+If a task is simple and one method is obviously sufficient, output a short
+RoutePlan and continue.
 
 If the task is trivial and low risk, choose `direct-answer` or
 `direct-execution` explicitly. Do not bypass routing by answering directly
 without naming the direct method when routing is required.
+
+If `work-gate` is explicitly invoked, strict mode is mandatory. Do not skip the
+RoutePlan by judging the task trivial; use `direct-answer` or `direct-execution`
+inside the RoutePlan instead.
 
 If candidate stacks score within 2 points on the rubric, prefer the stack that:
 
@@ -93,6 +107,12 @@ Use voting only to decide which cheap exploration to try first when evidence is 
 
 Use `answer-finalizer` after execution when prior method work is long,
 multi-candidate, debate/review-heavy, or likely to produce a noisy final answer.
+
+## Execution Consistency
+
+After a RoutePlan passes, execute only the selected stack. Each selected method
+must produce or update its primary artifact. If that becomes impossible or
+unnecessary, emit a revised RoutePlan before switching methods.
 
 ## Explicit Skill Requests
 

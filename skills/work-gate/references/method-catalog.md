@@ -6,6 +6,7 @@ Use this catalog only when the route is not obvious from the task. Prefer the sm
 
 | Method | Best for | Avoid when | Evidence strength | Primary artifact |
 | --- | --- | --- | --- | --- |
+| `work-gate` | Route-before-work entry protocol and method stack selection | A previous RoutePlan already selected a method and the current step is just execution | Protocol | RoutePlan |
 | `direct-answer` | Simple low-risk self-contained answers | Current facts, code/file changes, multiple workflows, high-risk domains, useful verifier available | Heuristic | DirectAnswer |
 | `direct-execution` | Simple low-risk local actions with an obvious next action and cheap confirmation | Ambiguous, high-risk, cross-file, current-info, networked, credentialed, or judgment-heavy tasks | Heuristic | DirectExecutionRecord |
 | `self-consistency` | Standard-answer reasoning, math, logic, low-risk testable answers | Open-ended decisions, current facts without retrieval, tasks where samples are not independent | Strong | VoteRecord |

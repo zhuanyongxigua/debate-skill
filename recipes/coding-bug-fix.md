@@ -16,7 +16,7 @@ Common signals:
 ## Method Stack
 
 ```text
-method-router
+work-gate
   -> multipath-localization
   -> hard-verifier
   -> edit-plan

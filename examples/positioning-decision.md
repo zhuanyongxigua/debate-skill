@@ -12,72 +12,18 @@ defends it with generic marketing language.
 ## RoutePlan
 
 ```yaml
-route_plan:
-  task_fingerprint:
-    task_type: "open_ended_decision"
-    artifact_type: "decision_memo"
-    needs_current_info: false
-    needs_external_evidence: false
-    has_hard_verifier: false
-    requires_codebase_context: true
-    requires_tool_use: false
-    needs_multi_agent: true
-    needs_heterogeneous_agents: false
-    risk_level: "medium"
-    ambiguity_level: "high"
-    budget_preference: "balanced"
-  selected_stack:
-    - skill_or_method: "multi-proposal-synthesis"
-      purpose: "Generate distinct positioning options and synthesize a recommendation."
-      expected_artifact: "DecisionMemo"
-      selection_reason: "The task is open-ended and benefits from comparing alternatives."
-      user_requested: false
-      requested_skill_handling: "used"
-    - skill_or_method: "multi-judge"
-      purpose: "Score options against clarity, differentiation, and credibility."
-      expected_artifact: "JudgeScorecard"
-      selection_reason: "A rubric is useful because there is no single correct answer."
-      user_requested: false
-      requested_skill_handling: "used"
-  why_this_stack:
-    - "The task is an open-ended strategy decision."
-    - "Independent proposals and rubric judging reduce first-answer lock-in."
-  skipped_skills:
-    - skill: "structured-debate"
-      reason: "Debate should wait until concrete proposals remain unresolved after judging."
-  debate:
-    use: false
-    condition: "Use only if the top proposals remain tied after rubric judging."
-    max_rounds: 1
-  execution_topology:
-    mode: "same_runtime_multi_agent"
-    reason: "Independent proposal and judge roles are useful; heterogeneous CLIs are not required."
-    agents:
-      - role: "proposal_generator"
-        runtime: "same_runtime"
-        model_or_cli: ""
-        purpose: "Generate distinct positioning options."
-      - role: "rubric_judge"
-        runtime: "same_runtime"
-        model_or_cli: ""
-        purpose: "Score options against the rubric."
-    permission_needed: false
-    permission_reason: ""
-    cli_discovery:
-      needed: false
-      approach: ""
-  escalation_conditions:
-    - "Escalate to structured-debate only if top proposals remain unresolved after judging."
-  expected_artifacts:
-    - "DecisionMemo"
-    - "JudgeScorecard"
-  immediate_next_action: "Generate distinct positioning proposals before judging."
+RoutePlan:
+  stack: [multi-proposal-synthesis, multi-judge, answer-finalizer]
+  why: "Open-ended positioning decision needs alternatives, rubric scoring, and a concise recommendation."
+  skipped: [direct-answer, hard-verifier, structured-debate]
+  topology: "same_runtime_multi_agent"
+  next: "DecisionMemo"
 ```
 
 ## Better Workflow
 
 1. Generate distinct frames:
-   - method router
+   - work gate
    - method standard library
    - method cards deck
    - workflow linter

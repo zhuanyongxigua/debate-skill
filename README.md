@@ -10,7 +10,7 @@ They answer from memory when they should retrieve.
 They judge by taste when they should use a rubric.  
 They give one polished answer when they should generate alternatives.
 
-Meta Method Skills help agents choose the method before they choose the answer.
+Meta Method Skills help agents pass a work gate before they choose the answer.
 
 > Do not ask only which model should answer. Ask which method the task needs.
 
@@ -34,18 +34,21 @@ agent workflows.
 
 ## The Core Idea
 
-Method selection is the missing layer in many agent workflows.
+Method selection is the missing layer in many agent workflows. The root skill is
+not just a recommendation prompt; it is a work-entry protocol.
 
 ```text
 Task
+  -> RoutePlan
   -> Method stack
   -> Artifacts
   -> Verifier or review
 ```
 
-The root meta skill is `method-router`.
+The root meta skill is `work-gate`.
 
-It chooses the smallest sufficient method stack:
+It emits a short `RoutePlan`, checks that the gate passes, then executes the
+smallest sufficient method stack:
 
 - answer directly only when direct answer is explicitly selected
 - execute one obvious action only when direct execution is explicitly selected
@@ -66,12 +69,24 @@ Some agents skip method selection and answer directly. Use strict mode for those
 agents:
 
 ```text
-Use method-router strict mode.
-Route before work.
+Use work-gate strict mode.
+The first visible block must be RoutePlan:
+Do not answer, edit, research, judge, critique, use tools, or debate before RoutePlan.
 Direct answers are allowed only when selected as direct-answer.
 Direct tool actions are allowed only when selected as direct-execution.
-Keep the RoutePlan under 12 lines.
-After the selected method stack, use answer-finalizer if the output is noisy.
+Keep the RoutePlan under 7 lines.
+Execute only the selected stack.
+```
+
+Default RoutePlan:
+
+```yaml
+RoutePlan:
+  stack: [multipath-localization, hard-verifier, edit-plan]
+  why: "Unclear repo bug; probes can falsify guesses before edits."
+  skipped: [direct-answer, structured-debate]
+  topology: "single_agent"
+  next: "PathCards"
 ```
 
 ## Quick Example
@@ -95,7 +110,7 @@ Debate:
 ```
 
 The full machine-readable `RoutePlan` schema lives in
-[`skills/method-router/references/route-plan-schema.md`](skills/method-router/references/route-plan-schema.md).
+[`skills/work-gate/references/route-plan-schema.md`](skills/work-gate/references/route-plan-schema.md).
 
 ## Common Routes
 
@@ -123,7 +138,7 @@ Each method has two layers:
 
 | Method | Use it for | Primary artifact |
 | --- | --- | --- |
-| [`method-router`](method-cards/method-router.md) | Selecting the method stack | RoutePlan |
+| [`work-gate`](method-cards/work-gate.md) | Work-entry gate and method selection | RoutePlan |
 | [`direct-answer`](method-cards/direct-answer.md) | Simple self-contained answers | DirectAnswer |
 | [`direct-execution`](method-cards/direct-execution.md) | One obvious low-risk local action | DirectExecutionRecord |
 | [`hard-verifier`](method-cards/hard-verifier.md) | Tests, schemas, calculators, compilers, source checks | VerificationRecord |

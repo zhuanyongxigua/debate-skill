@@ -33,7 +33,7 @@ the router explicitly selects direct answering.
 
 ## Composes With
 
-- `method-router`: must select direct-answer when routing is required.
+- `work-gate`: must select direct-answer when routing is required.
 - `answer-finalizer`: can compress a direct answer further when the user asks for brevity.
 
 ## Failure Modes

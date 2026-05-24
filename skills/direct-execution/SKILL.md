@@ -1,6 +1,6 @@
 ---
 name: direct-execution
-description: Execute one obvious, low-risk local action after method-router explicitly selects direct-execution. Use for simple commands or tool actions with cheap confirmation; do not use for ambiguous, destructive, networked, credentialed, broad, or high-risk work.
+description: Execute one obvious, low-risk local action after work-gate explicitly selects direct-execution. Use for simple commands or tool actions with cheap confirmation; do not use for ambiguous, destructive, networked, credentialed, broad, or high-risk work.
 ---
 
 # Direct Execution
@@ -32,7 +32,7 @@ method, not a bypass around routing or permission checks.
 
 ## Avoid / Escalate
 
-- Escalate to `method-router` when the task has multiple plausible workflows.
+- Escalate to `work-gate` when the task has multiple plausible workflows.
 - Escalate to `react-reflexion` when the work needs multiple observe-act steps.
 - Escalate to `hard-verifier` when the action result needs deterministic checking.
 - Escalate to `edit-plan` before non-trivial file or code changes.

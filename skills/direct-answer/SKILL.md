@@ -1,6 +1,6 @@
 ---
 name: direct-answer
-description: Directly answer simple, low-risk, self-contained questions after method-router explicitly selects direct-answer. Use when no external evidence, tool use, code edits, verifier, or multi-step method would materially improve the result.
+description: Directly answer simple, low-risk, self-contained questions after work-gate explicitly selects direct-answer. Use when no external evidence, tool use, code edits, verifier, or multi-step method would materially improve the result.
 ---
 
 # Direct Answer

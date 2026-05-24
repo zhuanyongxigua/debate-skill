@@ -15,7 +15,7 @@ Common signals:
 ## Method Stack
 
 ```text
-method-router
+work-gate
   -> rag-claim-check
   -> hard-verifier
   -> high-risk-evidence when stakes require it

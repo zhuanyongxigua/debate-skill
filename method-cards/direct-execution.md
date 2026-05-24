@@ -31,7 +31,7 @@ router explicitly selects direct execution.
 
 ## Composes With
 
-- `method-router`: must select direct-execution when routing is required.
+- `work-gate`: must select direct-execution when routing is required.
 - `hard-verifier`: verifies the result when a cheap check exists.
 - `react-reflexion`: takes over when the work becomes multi-step.
 

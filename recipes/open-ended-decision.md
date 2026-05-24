@@ -15,7 +15,7 @@ Common signals:
 ## Method Stack
 
 ```text
-method-router
+work-gate
   -> multi-proposal-synthesis
   -> multi-judge when a rubric is available
   -> structured-debate only if top candidates remain unresolved
@@ -49,7 +49,7 @@ Route:
 multi-proposal-synthesis -> multi-judge -> answer-finalizer
 
 Output:
-DecisionMemo comparing "method router", "method standard library", and
+DecisionMemo comparing "work gate", "method standard library", and
 "method cards" positioning, then selecting the strongest public narrative.
 ```
 

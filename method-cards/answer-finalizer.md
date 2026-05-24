@@ -31,7 +31,7 @@ only the decision-relevant result.
 
 ## Composes With
 
-- `method-router`: can add finalization when verbosity risk is high.
+- `work-gate`: can add finalization when verbosity risk is high.
 - `multi-proposal-synthesis`: compresses the decision memo into a final recommendation.
 - `multi-judge`: summarizes the winning candidate and key disagreement.
 - `structured-debate`: turns the debate record into a decision.
