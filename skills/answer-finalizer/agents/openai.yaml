@@ -1,0 +1,4 @@
+interface:
+  display_name: "Answer Finalizer"
+  short_description: "Compress method output into a concise final answer"
+  default_prompt: "Use $answer-finalizer to produce a concise final answer from prior method work."

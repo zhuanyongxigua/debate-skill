@@ -14,6 +14,8 @@ Score each RoutePlan from 0 to 5 on each criterion.
 | Selection reasons | Every selected skill has a concrete reason. |
 | Skip reasons | Relevant skipped skills have clear reasons. |
 | Escalation | The plan states when to add debate, judges, or heterogeneous agents. |
+| Direct gate | Direct answers/actions are explicitly selected and meet their gates. |
+| Finalization | Long method output is compressed without hiding uncertainty. |
 
 ## Failure Flags
 
@@ -25,6 +27,9 @@ Score each RoutePlan from 0 to 5 on each criterion.
 - Produces no durable artifact.
 - Runs permission-bound tools without asking.
 - Uses search or tool loops without a budget or stopping condition.
+- Answers directly in strict mode before a RoutePlan.
+- Uses direct-answer or direct-execution without explicitly selecting it.
+- Uses answer-finalizer to hide unresolved evidence, failed verification, or open conflict.
 
 ## Passing Bar
 
@@ -33,4 +38,5 @@ A route is acceptable when:
 - no failure flags apply,
 - average score is at least 4,
 - validator use is at least 4 when a verifier exists,
-- selection reasons are present for every selected skill.
+- selection reasons are present for every selected skill,
+- direct work is explicitly routed as `direct-answer` or `direct-execution`.

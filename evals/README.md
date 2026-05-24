@@ -9,6 +9,8 @@ selection inspectable:
 - Did it avoid unnecessary debate or multi-agent work?
 - Did it use available verifiers?
 - Did it explain why each skill was selected?
+- Did it route direct answers/actions explicitly instead of bypassing the router?
+- Did it use `answer-finalizer` when long intermediate work needs a concise final answer?
 
 Files:
 

@@ -2,6 +2,26 @@
 
 Use this structure when the user asks how a task should be handled, or when several method skills may apply.
 
+## Short RoutePlan
+
+Use this by default. Keep it under 12 lines unless the user asks for detail or
+the route is being audited.
+
+```yaml
+route_plan:
+  task_type: ""
+  selected_stack: []
+  skipped_methods: []
+  reason: ""
+  next_step: ""
+```
+
+Direct answering is valid only when `selected_stack` includes `direct-answer`.
+Direct tool execution is valid only when `selected_stack` includes
+`direct-execution`.
+
+## Full RoutePlan
+
 ```yaml
 route_plan:
   task_fingerprint:
@@ -57,6 +77,10 @@ route_plan:
 
 If a task is simple and one method is obviously sufficient, output a short RoutePlan and continue.
 
+If the task is trivial and low risk, choose `direct-answer` or
+`direct-execution` explicitly. Do not bypass routing by answering directly
+without naming the direct method when routing is required.
+
 If candidate stacks score within 2 points on the rubric, prefer the stack that:
 
 1. Gathers missing evidence first.
@@ -66,6 +90,9 @@ If candidate stacks score within 2 points on the rubric, prefer the stack that:
 5. Has a clear fallback.
 
 Use voting only to decide which cheap exploration to try first when evidence is unavailable.
+
+Use `answer-finalizer` after execution when prior method work is long,
+multi-candidate, debate/review-heavy, or likely to produce a noisy final answer.
 
 ## Explicit Skill Requests
 

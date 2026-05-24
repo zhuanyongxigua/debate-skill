@@ -1,13 +1,46 @@
 ---
-name: task-router
-description: Lightweight method-stack router for AI work. Use when Codex needs to decide which skills, reasoning methods, verification methods, or workflow pattern to use for a task; when a user asks how to solve a task with AI agents/skills; when a task may require choosing among self-consistency, RAG, multipath localization, edit plans, debate, multi-judge review, tree search, ReAct, or high-risk evidence workflows.
+name: method-router
+description: Required route-before-work skill for non-trivial tasks. Use before answering, coding, researching, judging, critiquing, or debating to choose the smallest sufficient method stack. Select direct-answer or direct-execution explicitly for simple low-risk work.
 ---
 
-# Task Router
+# Method Router
 
 ## Overview
 
 Select the smallest sufficient method stack for the user's task. Treat routing as structured classification, evidence gathering, and planning; do not default to debate, voting, or all-skills loading.
+
+## Mandatory Routing Contract
+
+For every non-trivial task, route before solving.
+
+The first artifact must be a concise RoutePlan unless the task is trivial. A
+task is trivial only when all are true:
+
+- No external or current evidence is needed.
+- No code or file change is needed.
+- No high-risk domain is involved.
+- User intent is clear.
+- There are no competing plausible workflows.
+- The answer or action can be completed safely in one short response.
+
+Direct answering is allowed only when the selected stack explicitly includes
+`direct-answer`. Direct tool execution is allowed only when the selected stack
+explicitly includes `direct-execution`.
+
+Keep the default RoutePlan under 12 lines. Use the full schema only for audits,
+evals, handoffs, or when the user asks for details.
+
+## Strict Mode
+
+Use strict mode when the user asks for it, when the model tends to skip routing,
+or when task risk/ambiguity is medium or high.
+
+In strict mode:
+
+- Do not answer, edit files, run broad implementation commands, or start debate before the RoutePlan.
+- Do not choose `direct-answer` or `direct-execution` unless the Direct gates pass.
+- Execute only the selected stack after routing.
+- Finish with `answer-finalizer` when the intermediate work is long, multi-candidate, or likely to produce noisy output.
 
 ## Routing Priorities
 
@@ -39,7 +72,8 @@ Use this priority order unless the user explicitly asks otherwise:
 2. Apply hard routing rules before subjective judgment:
    - If the user explicitly names, links, tags, or invokes a skill, include that skill in the RoutePlan and use that skill's method frame to reason about the task.
    - If an explicitly requested skill is unavailable, irrelevant, or unsafe to use, say why and choose the closest safe fallback.
-   - If the task is simple, low-risk, and has an obvious direct action, do not force a method stack. Use direct execution plus a verifier when useful.
+   - If the task is simple, low-risk, and self-contained, select `direct-answer` explicitly.
+   - If the task is a simple, low-risk, obvious tool action, select `direct-execution` explicitly and add a cheap verifier when useful.
    - Latest or factual claims require retrieval or evidence checking.
    - Repo debugging with uncertain root cause requires multipath localization before edit planning.
    - Hard verifiers outrank debate.
@@ -76,7 +110,7 @@ Use this priority order unless the user explicitly asks otherwise:
    - Produces clear artifacts: 0-3
    - Has fallback/escalation conditions: 0-3
 
-7. Output a RoutePlan. Use `references/route-plan-schema.md` for the full schema.
+7. Output a concise RoutePlan before solving. Use `references/route-plan-schema.md` for the short and full schemas.
    - Mark any user-explicitly requested skill as requested and explain how it shaped the route.
    - For every selected skill, state why it was selected for this task.
    - For every relevant skipped skill, state why it was not selected.
@@ -87,6 +121,8 @@ Use this priority order unless the user explicitly asks otherwise:
 
 | Task signal | Preferred stack |
 | --- | --- |
+| Simple low-risk answer | `direct-answer` |
+| Simple low-risk tool action | `direct-execution -> hard-verifier if useful` |
 | Math, logic, multiple choice | `self-consistency -> hard-verifier` |
 | Factual research or citations | `rag-claim-check -> hard-verifier` |
 | Open strategy, product, business decision | `multi-proposal-synthesis -> multi-judge when a rubric is useful -> structured-debate only if top candidates remain unresolved` |
@@ -98,7 +134,8 @@ Use this priority order unless the user explicitly asks otherwise:
 | Evaluation, ranking, review, judging | `multi-judge` |
 | Medical, legal, financial, compliance | `high-risk-evidence -> rag-claim-check -> multi-judge if useful` |
 | Puzzle, search, planning with backtracking | `tree-search -> hard-verifier if available` |
-| Skill/method selection | `task-router` |
+| Long, noisy, multi-candidate, or executive output | `answer-finalizer` after the selected method stack |
+| Skill/method selection | `method-router` |
 
 ## Debate Gate
 
@@ -117,12 +154,25 @@ different CLI harnesses, read `references/debate-agent-policy.md`.
 
 ## Direct Execution Gate
 
-Use direct execution instead of a method stack when all are true:
+Use `direct-execution` only when all are true:
 
 - The task is simple, local, and low risk.
 - The next action is obvious.
 - A short tool check or user-visible result can verify completion.
 - Extra planning, debate, or multi-agent work would add more overhead than risk reduction.
+
+## Direct Answer Gate
+
+Use `direct-answer` only when all are true:
+
+- The task is simple, self-contained, and low risk.
+- No current facts, citations, or external evidence are needed.
+- No code/file changes or broad tool use are needed.
+- No hard verifier would materially improve the answer.
+- No multiple plausible workflows need comparison.
+
+If any condition fails, produce a RoutePlan and choose the smallest sufficient
+method stack.
 
 ## Output
 

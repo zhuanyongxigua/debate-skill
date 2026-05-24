@@ -15,10 +15,11 @@ Common signals:
 ## Method Stack
 
 ```text
-task-router
+method-router
   -> rag-claim-check
   -> hard-verifier
   -> high-risk-evidence when stakes require it
+  -> answer-finalizer when the audit is long
 ```
 
 ## Required Artifacts
@@ -29,6 +30,7 @@ task-router
 - `ClaimTable` with source-to-claim mapping
 - unsupported or conflicting claims
 - final sourced synthesis
+- concise final answer when useful
 
 ## Do Not Do Too Early
 

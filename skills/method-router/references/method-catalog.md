@@ -6,7 +6,8 @@ Use this catalog only when the route is not obvious from the task. Prefer the sm
 
 | Method | Best for | Avoid when | Evidence strength | Primary artifact |
 | --- | --- | --- | --- | --- |
-| `direct-execution` | Simple low-risk tasks with an obvious next action and cheap confirmation | Ambiguous, high-risk, cross-file, current-info, or judgment-heavy tasks | Heuristic | Completion note or verifier result |
+| `direct-answer` | Simple low-risk self-contained answers | Current facts, code/file changes, multiple workflows, high-risk domains, useful verifier available | Heuristic | DirectAnswer |
+| `direct-execution` | Simple low-risk local actions with an obvious next action and cheap confirmation | Ambiguous, high-risk, cross-file, current-info, networked, credentialed, or judgment-heavy tasks | Heuristic | DirectExecutionRecord |
 | `self-consistency` | Standard-answer reasoning, math, logic, low-risk testable answers | Open-ended decisions, current facts without retrieval, tasks where samples are not independent | Strong | VoteRecord |
 | `rag-claim-check` | Facts, research, current info, citations, docs | Pure creative tasks or tasks with no factual claims | Strong | ClaimTable |
 | `multi-proposal-synthesis` | Strategy, product, business, architecture direction | Tasks with a hard verifier or single correct answer | Medium | DecisionMemo |
@@ -19,8 +20,23 @@ Use this catalog only when the route is not obvious from the task. Prefer the sm
 | `tree-search` | Puzzles, planning, constraint search, backtracking | Simple single-pass tasks, tasks with no state or branching constraints | Strong | BranchTable |
 | `react-reflexion` | Tool/web/browser/shell loops where observations update the plan | Pure offline reasoning, destructive actions without approval | Strong | TrajectoryLog |
 | `high-risk-evidence` | Medical/legal/financial/security/compliance | Low-risk informal advice or non-actionable general discussion | Medium | RiskMemo |
+| `answer-finalizer` | Long, noisy, multi-candidate, debate/review-heavy, or executive-summary outputs | Missing evidence, unresolved conflict, user asked for full audit trail | Heuristic | FinalAnswer |
 
 ## Common Stacks
+
+### Simple Answer
+
+`direct-answer`
+
+Use only when the Direct Answer Gate passes. Direct answer is a selected method,
+not a bypass around routing.
+
+### Simple Tool Action
+
+`direct-execution -> hard-verifier if useful`
+
+Use only when the Direct Execution Gate passes. Stop and route again if the
+action reveals ambiguity or risk.
 
 ### Math or Logic
 
@@ -37,27 +53,27 @@ Use a critic only to find unsupported claims.
 
 ### Open Strategy
 
-`multi-proposal-synthesis -> multi-judge when a rubric is useful -> structured-debate only if top candidates remain unresolved`
+`multi-proposal-synthesis -> multi-judge when a rubric is useful -> structured-debate only if top candidates remain unresolved -> answer-finalizer`
 
 Use pre-mortem before final recommendation when risk or ambiguity is high.
 Do not start with debate before distinct proposals exist.
 
 ### Creative Work
 
-`creative-curator`
+`creative-curator -> answer-finalizer when the shortlist needs compression`
 
 Add `multi-judge` only when selecting among final options.
 
 ### Repo Debugging
 
-`multipath-localization -> hard-verifier/probes -> edit-plan -> hard-verifier`
+`multipath-localization -> hard-verifier/probes -> edit-plan -> hard-verifier -> answer-finalizer when useful`
 
 Add `structured-debate` only when top PathCards remain close after probes.
 Do not patch the first plausible file before localization unless the failing location is already proven.
 
 ### Repo Feature Planning
 
-`edit-plan -> multi-judge or structured-debate for tradeoffs -> hard-verifier`
+`edit-plan -> multi-judge or structured-debate for tradeoffs -> hard-verifier -> answer-finalizer when useful`
 
 Use `multipath-localization` first if the feature depends on uncertain existing behavior.
 Use direct execution for obvious one-file changes with clear validation.
@@ -71,7 +87,7 @@ Use direct execution when the next tool action is obvious and low risk.
 
 ### High-Risk Domain
 
-`high-risk-evidence -> rag-claim-check -> multi-judge if useful -> human review language`
+`high-risk-evidence -> rag-claim-check -> multi-judge if useful -> answer-finalizer -> human review language`
 
 Never let model debate be final authority.
 
@@ -120,3 +136,10 @@ available CLIs. Ask the user before running external tools that require network,
 credentials, broad filesystem access, or other elevated permissions. Do not use
 heterogeneity as a substitute for retrieval, tests, schema validation, or cheap
 probes.
+
+## Finalization Strategy
+
+Use `answer-finalizer` after the selected method stack when output is long,
+multi-candidate, debate/review-heavy, or likely to contain process recap. Do not
+use finalization to hide failed verification, missing evidence, or unresolved
+conflicts.

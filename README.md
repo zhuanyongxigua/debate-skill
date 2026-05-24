@@ -43,10 +43,12 @@ Task
   -> Verifier or review
 ```
 
-The root meta skill is `task-router`.
+The root meta skill is `method-router`.
 
 It chooses the smallest sufficient method stack:
 
+- answer directly only when direct answer is explicitly selected
+- execute one obvious action only when direct execution is explicitly selected
 - retrieve evidence for factual claims
 - sample independently for single-answer reasoning
 - localize before editing code
@@ -54,8 +56,23 @@ It chooses the smallest sufficient method stack:
 - run hard verifiers when they exist
 - use rubrics for judging
 - debate only when concrete candidates conflict and no cheaper check can decide
+- finalize long intermediate work into concise answers
 
 Debate is a method card, not the default method.
+
+## Strict Mode
+
+Some agents skip method selection and answer directly. Use strict mode for those
+agents:
+
+```text
+Use method-router strict mode.
+Route before work.
+Direct answers are allowed only when selected as direct-answer.
+Direct tool actions are allowed only when selected as direct-execution.
+Keep the RoutePlan under 12 lines.
+After the selected method stack, use answer-finalizer if the output is noisy.
+```
 
 ## Quick Example
 
@@ -78,21 +95,24 @@ Debate:
 ```
 
 The full machine-readable `RoutePlan` schema lives in
-[`skills/task-router/references/route-plan-schema.md`](skills/task-router/references/route-plan-schema.md).
+[`skills/method-router/references/route-plan-schema.md`](skills/method-router/references/route-plan-schema.md).
 
 ## Common Routes
 
 | Task | Default route |
 | --- | --- |
+| Simple low-risk question | `direct-answer` |
+| One obvious local action | `direct-execution` |
 | Current factual answer | `rag-claim-check -> hard-verifier` |
 | Contest math or logic | `self-consistency -> hard-verifier` |
 | Repo bug with unclear cause | `multipath-localization -> hard-verifier -> edit-plan` |
 | Repo feature plan | `edit-plan -> hard-verifier` |
-| Open-ended product or strategy decision | `multi-proposal-synthesis -> multi-judge` |
+| Open-ended product or strategy decision | `multi-proposal-synthesis -> multi-judge -> answer-finalizer` |
 | Creative naming or copy | `creative-curator` |
 | Subjective evaluation or ranking | `multi-judge` |
 | Concrete candidates still tied | `structured-debate`, capped and evidence-based |
 | High-risk medical, legal, financial, safety, or compliance question | `high-risk-evidence -> rag-claim-check` |
+| Long or noisy intermediate work | `answer-finalizer` |
 
 ## Meta Skills and Method Cards
 
@@ -103,7 +123,9 @@ Each method has two layers:
 
 | Method | Use it for | Primary artifact |
 | --- | --- | --- |
-| [`task-router`](method-cards/task-router.md) | Selecting the method stack | RoutePlan |
+| [`method-router`](method-cards/method-router.md) | Selecting the method stack | RoutePlan |
+| [`direct-answer`](method-cards/direct-answer.md) | Simple self-contained answers | DirectAnswer |
+| [`direct-execution`](method-cards/direct-execution.md) | One obvious low-risk local action | DirectExecutionRecord |
 | [`hard-verifier`](method-cards/hard-verifier.md) | Tests, schemas, calculators, compilers, source checks | VerificationRecord |
 | [`multipath-localization`](method-cards/multipath-localization.md) | Unclear code/system root causes | PathCards |
 | [`edit-plan`](method-cards/edit-plan.md) | Planning repo changes before editing | EditPlan |
@@ -116,6 +138,7 @@ Each method has two layers:
 | [`high-risk-evidence`](method-cards/high-risk-evidence.md) | Medical, legal, finance, safety, compliance | RiskMemo |
 | [`tree-search`](method-cards/tree-search.md) | Branching search and backtracking | BranchTable |
 | [`react-reflexion`](method-cards/react-reflexion.md) | Tool-using observe/act loops | TrajectoryLog |
+| [`answer-finalizer`](method-cards/answer-finalizer.md) | Concise final answers after method work | FinalAnswer |
 
 ## Recipes
 

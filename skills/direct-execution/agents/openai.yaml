@@ -1,0 +1,4 @@
+interface:
+  display_name: "Direct Execution"
+  short_description: "Run one obvious low-risk local action"
+  default_prompt: "Use $direct-execution for one obvious, low-risk, local tool action."

@@ -16,11 +16,12 @@ Common signals:
 ## Method Stack
 
 ```text
-task-router
+method-router
   -> multipath-localization
   -> hard-verifier
   -> edit-plan
   -> hard-verifier
+  -> answer-finalizer when the plan is long
 ```
 
 ## Required Artifacts
@@ -31,6 +32,7 @@ task-router
 - selected path
 - `EditPlan`
 - validation commands
+- concise final recommendation when useful
 
 ## Do Not Do Too Early
 

@@ -15,10 +15,11 @@ Common signals:
 ## Method Stack
 
 ```text
-task-router
+method-router
   -> multi-proposal-synthesis
   -> multi-judge when a rubric is available
   -> structured-debate only if top candidates remain unresolved
+  -> answer-finalizer
   -> edit-plan or hard-verifier when execution begins
 ```
 
@@ -30,6 +31,7 @@ task-router
 - critique
 - synthesized recommendation
 - validation triggers
+- concise final answer
 
 ## Do Not Do Too Early
 
@@ -44,7 +46,7 @@ Input:
 How should I position this open-source agent skills repo?
 
 Route:
-multi-proposal-synthesis -> multi-judge -> selected recommendation
+multi-proposal-synthesis -> multi-judge -> answer-finalizer
 
 Output:
 DecisionMemo comparing "method router", "method standard library", and

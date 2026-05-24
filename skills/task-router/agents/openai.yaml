@@ -1,4 +1,0 @@
-interface:
-  display_name: "Task Router"
-  short_description: "Route tasks to the smallest useful method stack"
-  default_prompt: "Use $task-router to choose the right method stack for this task."
