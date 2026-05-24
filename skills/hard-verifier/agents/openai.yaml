@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hard Verifier"
+  short_description: "Prefer tests, schemas, and tools over debate"
+  default_prompt: "Use $hard-verifier to validate candidate answers with hard checks."

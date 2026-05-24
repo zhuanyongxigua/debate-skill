@@ -1,0 +1,228 @@
+# Meta Method Skills
+
+**Meta skills and method cards for AI agents.**
+
+Agents often fail before they start.
+
+They debate when they should verify.  
+They edit when they should localize.  
+They answer from memory when they should retrieve.  
+They judge by taste when they should use a rubric.  
+They give one polished answer when they should generate alternatives.
+
+Meta Method Skills help agents choose the method before they choose the answer.
+
+> Do not ask only which model should answer. Ask which method the task needs.
+
+## What This Is
+
+This repo packages practical agent workflows as small, reusable **meta skills**.
+
+Each meta skill helps an agent decide, guide, or structure how work should be
+done. Each **Method Card** is the human-readable specification for one method.
+
+- `skills/` contains the installable agent-facing skill implementations.
+- `method-cards/` contains the human-facing method specs, contribution format,
+  and public catalog.
+- `recipes/` shows how cards compose into common workflows.
+- `evals/` contains starter tasks and rubrics for measuring routing quality.
+
+No runtime. No framework. No orchestration engine.
+
+Just composable meta skills, method cards, and routing rules for choosing better
+agent workflows.
+
+## The Core Idea
+
+Method selection is the missing layer in many agent workflows.
+
+```text
+Task
+  -> Task fingerprint
+  -> RoutePlan
+  -> Method stack
+  -> Artifacts
+  -> Verifier or review
+```
+
+The root meta skill is `task-router`.
+
+It chooses the smallest sufficient method stack:
+
+- retrieve evidence for factual claims
+- sample independently for single-answer reasoning
+- localize before editing code
+- write an edit plan before risky changes
+- run hard verifiers when they exist
+- use rubrics for judging
+- debate only when concrete candidates conflict and no cheaper check can decide
+
+Debate is a method card, not the default method.
+
+## Method Stack Example
+
+For an intermittent repo bug:
+
+```yaml
+route_plan:
+  task_fingerprint:
+    task_type: "repo_debugging"
+    artifact_type: "implementation_plan"
+    needs_current_info: false
+    needs_external_evidence: false
+    has_hard_verifier: true
+    requires_codebase_context: true
+    requires_tool_use: true
+    needs_multi_agent: false
+    needs_heterogeneous_agents: false
+    risk_level: "medium"
+    ambiguity_level: "high"
+    budget_preference: "balanced"
+  selected_stack:
+    - skill_or_method: "multipath-localization"
+      purpose: "Generate competing root-cause paths before editing."
+      expected_artifact: "PathCards"
+      selection_reason: "Root cause is uncertain and several auth paths may explain the symptom."
+      user_requested: false
+      requested_skill_handling: "used"
+    - skill_or_method: "hard-verifier"
+      purpose: "Design probes or tests that can distinguish candidate paths."
+      expected_artifact: "VerificationRecord"
+      selection_reason: "Cookie headers, logs, and regression tests can falsify candidates."
+      user_requested: false
+      requested_skill_handling: "used"
+    - skill_or_method: "edit-plan"
+      purpose: "Turn the selected path into scoped file changes."
+      expected_artifact: "EditPlan"
+      selection_reason: "The user asked for a plan before code edits."
+      user_requested: false
+      requested_skill_handling: "used"
+  why_this_stack:
+    - "The task is a repo bug with uncertain root cause."
+    - "Localization and probes reduce premature edits."
+    - "An edit plan is useful only after a path is selected."
+  skipped_skills:
+    - skill: "structured-debate"
+      reason: "Debate is premature until PathCards exist and probes are inconclusive."
+  debate:
+    use: false
+    condition: "Use only if top localization paths remain tied after probes."
+    max_rounds: 1
+  execution_topology:
+    mode: "single_agent"
+    reason: "Hard probes are more useful than model diversity for this task."
+    agents: []
+    permission_needed: false
+    permission_reason: ""
+    cli_discovery:
+      needed: false
+      approach: ""
+  escalation_conditions:
+    - "Escalate to structured-debate if top PathCards remain tied after cheap probes."
+  expected_artifacts:
+    - "PathCards"
+    - "score table"
+    - "VerificationRecord"
+    - "EditPlan"
+  immediate_next_action: "Orient in the repo and generate PathCards."
+```
+
+## Meta Skills and Method Cards
+
+Each method has two layers:
+
+1. A **Method Card**: the human-readable spec.
+2. A **Skill Implementation**: the installable agent-facing `SKILL.md`.
+
+| Method | Use it for | Primary artifact |
+| --- | --- | --- |
+| [`task-router`](method-cards/task-router.md) | Selecting the method stack | RoutePlan |
+| [`hard-verifier`](method-cards/hard-verifier.md) | Tests, schemas, calculators, compilers, source checks | VerificationRecord |
+| [`multipath-localization`](method-cards/multipath-localization.md) | Unclear code/system root causes | PathCards |
+| [`edit-plan`](method-cards/edit-plan.md) | Planning repo changes before editing | EditPlan |
+| [`rag-claim-check`](method-cards/rag-claim-check.md) | Factual work with sources | ClaimTable |
+| [`self-consistency`](method-cards/self-consistency.md) | Independent attempts and aggregation | VoteRecord |
+| [`multi-proposal-synthesis`](method-cards/multi-proposal-synthesis.md) | Open-ended strategy and tradeoffs | DecisionMemo |
+| [`creative-curator`](method-cards/creative-curator.md) | Creative generation and selection | CreativeBoard |
+| [`multi-judge`](method-cards/multi-judge.md) | Rubric-based evaluation | JudgeScorecard |
+| [`structured-debate`](method-cards/structured-debate.md) | Resolving unresolved candidate conflicts | DebateRecord |
+| [`high-risk-evidence`](method-cards/high-risk-evidence.md) | Medical, legal, finance, safety, compliance | RiskMemo |
+| [`tree-search`](method-cards/tree-search.md) | Branching search and backtracking | BranchTable |
+| [`react-reflexion`](method-cards/react-reflexion.md) | Tool-using observe/act loops | TrajectoryLog |
+
+## Recipes
+
+Recipes compose cards into common agent workflows:
+
+- [`coding-bug-fix`](recipes/coding-bug-fix.md): localize before editing
+- [`factual-claim-audit`](recipes/factual-claim-audit.md): retrieve, extract, audit, remove unsupported claims
+- [`open-ended-decision`](recipes/open-ended-decision.md): generate proposals, critique, synthesize, verify
+
+## Examples
+
+Examples show before/after routing for concrete tasks:
+
+- [`repo-debugging-401`](examples/repo-debugging-401.md): localize intermittent auth failures before editing
+- [`factual-claim-audit`](examples/factual-claim-audit.md): map current claims to sources before answering
+- [`positioning-decision`](examples/positioning-decision.md): compare positioning options before recommending one
+
+## Evals
+
+The starter routing eval lives in [`evals/`](evals/):
+
+- [`routing-tasks.jsonl`](evals/routing-tasks.jsonl): seed tasks with expected stacks and topology
+- [`route-rubric.md`](evals/route-rubric.md): rubric for judging RoutePlans
+
+## Project Layout
+
+```text
+skills/
+  <skill-name>/        installable agent-facing meta skill implementations
+    SKILL.md
+    agents/
+    references/
+method-cards/
+  *.md                 human-facing method card specs
+recipes/
+  *.md                 card compositions for common workflows
+examples/
+  *.md                 before/after routed examples
+evals/
+  *.jsonl, *.md        route selection eval seed and rubric
+```
+
+## What This Is Not
+
+This is not an agent framework.
+
+It does not run agents, schedule tasks, manage memory, or replace coding tools.
+It is a lightweight control layer for agent behavior: a way to name, choose, and
+compose the methods an agent should use.
+
+It is also not a prompt pack. A good method card is not just a prompt; it
+defines use and avoid conditions, required inputs, produced artifacts,
+composition rules, failure modes, and evaluation hooks.
+
+Debate is included, but it is not centered. Debate is a fallback for unresolved
+conflicts between concrete candidates, not a default way to think.
+
+## Multi-Agent Use
+
+Multi-agent work is an execution topology, not a method by itself.
+
+Start with one strong agent unless independence changes the result. Use
+same-runtime multi-agent runs for cheap independent candidates, judges, or
+critics. Use heterogeneous CLI agents only when model/tool diversity is a real
+requirement; inspect available CLIs first and ask the user before running
+external tools that need extra permissions.
+
+## Contributing
+
+New method cards should follow the [Method Card template](method-cards/TEMPLATE.md).
+
+A good card is not just a prompt. It has clear use/avoid conditions, a named
+artifact, composition rules, failure modes, and at least one evaluation hook.
+
+## License
+
+MIT. See [`LICENSE`](LICENSE).

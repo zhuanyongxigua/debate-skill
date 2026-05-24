@@ -1,0 +1,4 @@
+interface:
+  display_name: "Multi Judge"
+  short_description: "Evaluate outputs with rubric-based judges"
+  default_prompt: "Use $multi-judge to evaluate outputs with independent rubric-based judges."

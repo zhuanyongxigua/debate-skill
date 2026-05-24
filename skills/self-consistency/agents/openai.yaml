@@ -1,0 +1,4 @@
+interface:
+  display_name: "Self Consistency"
+  short_description: "Use independent samples, vote, and verify"
+  default_prompt: "Use $self-consistency to solve this with independent samples and voting."

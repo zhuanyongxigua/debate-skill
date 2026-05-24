@@ -1,0 +1,4 @@
+interface:
+  display_name: "Edit Plan"
+  short_description: "Turn localization into executable coding plans"
+  default_prompt: "Use $edit-plan to produce an executable implementation plan before editing."

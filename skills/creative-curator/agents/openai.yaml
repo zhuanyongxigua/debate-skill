@@ -1,0 +1,4 @@
+interface:
+  display_name: "Creative Curator"
+  short_description: "Generate, select, remix, and polish creative options"
+  default_prompt: "Use $creative-curator to generate and curate creative options."

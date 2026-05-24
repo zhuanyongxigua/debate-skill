@@ -1,0 +1,4 @@
+interface:
+  display_name: "RAG Claim Check"
+  short_description: "Ground claims in retrieved evidence"
+  default_prompt: "Use $rag-claim-check to answer with evidence and claim checks."

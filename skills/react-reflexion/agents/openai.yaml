@@ -1,0 +1,4 @@
+interface:
+  display_name: "ReAct Reflexion"
+  short_description: "Run tool loops with observations and reflection"
+  default_prompt: "Use $react-reflexion to operate tools through observe-update loops."
