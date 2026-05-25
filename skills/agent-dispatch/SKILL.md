@@ -51,11 +51,29 @@ shorter, narrower prompt if a CLI times out. Stop early only when the process is
 clearly blocked on login, OAuth, browser auth, credentials, stdin, an
 interactive prompt, or repeated no-output/no-progress behavior.
 
+Do not stop a child agent only because the parent harness prints a transient
+router/tool warning such as `failed to parse function arguments`, `unknown
+variant`, or a tool-call parse warning. Treat those as warnings, not failure,
+unless they are followed by final failure, timeout, a real interactive block, or
+long no-progress behavior. If the child later enters command execution, produces
+content, or reports a retry, keep waiting within the timeout.
+
 If a selected CLI is unavailable or blocked, record that fact. Do not silently
 substitute a different CLI unless the user already asked for fallback CLIs.
 
 Ask before invoking external CLIs when they require network access, credentials,
 broad filesystem access, or other elevated permissions.
+
+For Codex CLI child agents, do not assume the default sandbox/profile can use
+network, SSH, package registries, external APIs, or remote documentation. If the
+child task needs network, record the required network capability in the
+`AgentDispatchPlan`, use a Codex profile/config/sandbox that is known to permit
+it, or ask the user to approve a network-capable invocation before launch. The
+local `codex exec` interface may expose `--sandbox` modes such as `read-only`,
+`workspace-write`, or `danger-full-access`, but network availability is still an
+environment/config property that must be checked or stated. If network is
+needed but not available, mark the Codex agent `blocked` for that capability
+instead of treating the result as a model or reasoning failure.
 
 ## Workflow
 
@@ -90,12 +108,18 @@ AgentDispatchPlan:
       timeout_seconds: 300
       role: ""
       status: "planned|available|unavailable|blocked"
+      stop_condition: "final|timeout|blocked_interactive|long_no_progress"
+      sandbox: "read-only|workspace-write|danger-full-access|profile_default|unknown"
+      network: "not_needed|needed_enabled|needed_blocked|unknown"
     - name: "codex-cli"
       command: "codex exec"
       mode: "non_interactive"
       timeout_seconds: 300
       role: ""
       status: "planned|available|unavailable|blocked"
+      stop_condition: "final|timeout|blocked_interactive|long_no_progress"
+      sandbox: "read-only|workspace-write|danger-full-access|profile_default|unknown"
+      network: "not_needed|needed_enabled|needed_blocked|unknown"
   permission_needed: false
   permission_reason: ""
   max_cli_agents: 2
@@ -109,4 +133,3 @@ AgentDispatchPlan:
 - Avoid mixing harnesses when the experiment is meant to isolate model behavior.
 - Escalate back to `work-gate` when dispatch would require credentials,
   irreversible changes, sensitive data access, or user approval.
-

@@ -59,6 +59,13 @@ Before running external CLIs, inspect what is available and ask the user when
 network, credentials, broader filesystem access, or other elevated permissions
 are needed.
 
+For Codex CLI specifically, do not assume a child `codex exec` process can use
+network just because the command exists. If the task needs SSH, package
+registries, external APIs, web access, or remote docs, the dispatch plan must
+state the Codex sandbox/profile and whether network is enabled, approved,
+blocked, or unknown. If network is blocked, report Codex as blocked for that
+capability instead of treating the failure as a model-quality result.
+
 ## CLI Agent Invocation Rules
 
 Use `agent-dispatch` whenever `work-gate` routes to heterogeneous CLI agents for
@@ -70,12 +77,18 @@ debate, review, judging, benchmarking, or cross-agent critique.
 - Prefer non-interactive modes:
   - Claude Code: `claude -p` or `claude --print`
   - Codex CLI: `codex exec`
+- For Codex CLI, record the intended sandbox/profile and network status when
+  the child task needs network or broad filesystem access.
 - Do not launch interactive TUI sessions for child agents.
 - Use read-only, plan, or no-edit modes when available.
 - Do not let child agents edit files unless the user explicitly requested
   implementation.
 - Wait patiently for non-interactive CLI agents. Use a long timeout for normal
   model latency; 5 minutes is a reasonable default.
+- Do not kill a child agent only because the parent harness prints a transient
+  parser/router warning such as `failed to parse function arguments`, `unknown
+  variant`, or a tool-call parse warning. Continue waiting if the child retries,
+  enters command execution, or produces useful output.
 - Kill the child agent early only when it is clearly blocked on login, OAuth,
   browser auth, credentials, stdin, an interactive prompt, or repeated
   no-output/no-progress behavior.

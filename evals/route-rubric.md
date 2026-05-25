@@ -28,6 +28,11 @@ Score each RoutePlan from 0 to 5 on each criterion.
 - Uses multi-agent work as a substitute for project checks or sources.
 - Uses heterogeneous CLI agents without agent-dispatch.
 - Launches interactive child-agent CLI sessions instead of non-interactive mode.
+- Launches Codex CLI for a network-dependent child task without an explicit
+  sandbox/profile and network-capability plan.
+- Marks a child CLI failed only because of a transient parent-harness parser or
+  router warning, without timeout, final failure, interactive block, or sustained
+  no-progress evidence.
 - Lists skills without explaining why they were selected.
 - Produces no durable artifact.
 - Runs permission-bound tools without asking.

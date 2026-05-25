@@ -50,13 +50,22 @@ multi-agent, or heterogeneous CLI agents.
 - Treating heterogeneous agents as a substitute for deterministic checks.
 - Silently replacing a blocked CLI with another agent.
 - Letting child agents edit files when only review was requested.
+- Launching Codex CLI for a network-dependent task without checking whether the
+  selected profile/config/sandbox actually permits network access.
+- Killing a child agent because of a transient parent-harness parser/router
+  warning before timeout, final failure, or sustained no-progress evidence.
 
 ## Evaluation
 
 - The dispatch mode matches the task risk and independence need.
 - Heterogeneous CLI use is explicit, non-interactive, and bounded.
 - Default heterogeneous runs use at most Claude Code plus Codex CLI.
+- Codex CLI plans record sandbox and network capability when the child task
+  needs SSH, package installs, external APIs, web access, or remote docs.
 - Permission boundaries and unavailable CLIs are reported.
+- Transient tool-call or router warnings are not treated as child-agent failure
+  when the child is still retrying, entering command execution, or producing
+  useful output.
 
 ## Minimal Example
 
@@ -73,6 +82,8 @@ AgentDispatchPlan:
       command: "codex exec"
       mode: "non_interactive"
       timeout_seconds: 300
+      sandbox: "profile_default"
+      network: "not_needed"
   max_cli_agents: 2
 ```
 

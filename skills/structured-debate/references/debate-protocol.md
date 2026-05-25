@@ -12,11 +12,15 @@ debate_record:
         command: "codex exec"
         mode: "non_interactive"
         timeout_seconds: 300
+        sandbox: "read-only|workspace-write|danger-full-access|profile_default|unknown"
+        network: "not_needed|needed_enabled|needed_blocked|unknown"
         status: "planned|ran|blocked|unavailable"
       - name: "claude"
         command: "claude -p|claude --print"
         mode: "non_interactive"
         timeout_seconds: 300
+        sandbox: "read-only|workspace-write|danger-full-access|profile_default|unknown"
+        network: "not_needed|needed_enabled|needed_blocked|unknown"
         status: "planned|ran|blocked|unavailable"
   frozen_candidates:
     - id: "A"
@@ -70,11 +74,19 @@ Rules:
 - Use non-interactive CLI modes:
   - Claude Code: `claude -p` or `claude --print`
   - Codex CLI: `codex exec`
+- For Codex CLI, do not assume the default sandbox/profile can use network. If
+  the critic task needs SSH, package installs, external APIs, web access, or
+  remote docs, record sandbox/profile and network status before launch. Mark the
+  Codex critic `blocked` if network is needed but unavailable.
 - Do not launch interactive TUI sessions for child agents.
 - Use read-only, plan, or no-edit modes when available. Do not let child agents
   edit files unless implementation was explicitly requested.
 - Wait patiently for non-interactive CLI agents. Use a long timeout for normal
   model latency; 5 minutes is a reasonable default.
+- Do not kill a child agent only because the parent harness prints a transient
+  parser/router warning such as `failed to parse function arguments`, `unknown
+  variant`, or a tool-call parse warning. Continue waiting if the child retries,
+  enters command execution, or produces useful output.
 - Kill the child agent early only when it is clearly blocked on login, OAuth,
   browser auth, credentials, stdin, an interactive prompt, or repeated
   no-output/no-progress behavior.
