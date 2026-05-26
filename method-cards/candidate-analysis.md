@@ -1,10 +1,12 @@
-# Method Card: `multi-candidate-analysis`
+# Method Card: `work-gate candidate analysis`
 
 ## Purpose
 
 Generate or evaluate multiple candidates before selecting a path, proposal, or
 recommendation. If candidates already exist, skip generation and score them
 with a rubric.
+
+This is an internal `work-gate` mode, not a separate installable skill.
 
 ## Use When
 
@@ -38,12 +40,12 @@ with a rubric.
 
 ## Composes With
 
-- `work-gate`: selects the mode and converts the selected candidate into a
-  direct action or change plan.
+- `work-gate`: owns this mode and converts the selected candidate into a direct
+  action, change plan, debate, or final answer.
 - `agent-dispatch`: decides current session, same-runtime agents, or
   heterogeneous CLI agents when independent candidates or scoring need external
   agents.
-- `structured-debate`: resolves unresolved conflict between top candidates.
+- `work-gate debate`: resolves unresolved conflict between top candidates.
 - `work-gate final answer`: compresses the analysis into a concise recommendation.
 
 ## Failure Modes
@@ -80,4 +82,5 @@ session race candidates, plus probes to distinguish them.
 
 ## Skill Implementation
 
-- `skills/multi-candidate-analysis/SKILL.md`
+- `skills/work-gate/SKILL.md`
+- `skills/work-gate/references/candidate-analysis-template.md`

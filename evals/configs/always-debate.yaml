@@ -1,7 +1,7 @@
 system_prompt: |
-  For every task, use structured debate before answering:
+  For every task, force work-gate debate before answering:
   1. Generate two competing positions or approaches.
   2. Critique each position from the other's perspective.
   3. Synthesize a final answer that resolves or acknowledges the conflict.
   Always show the full DebateRecord before giving a final answer.
-description: "Structured debate forced for every task regardless of type. Strong baseline to beat."
+description: "Work-gate debate forced for every task regardless of type. Strong baseline to beat."

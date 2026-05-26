@@ -1,4 +1,0 @@
-interface:
-  display_name: "Structured Debate"
-  short_description: "Use bounded debate only for real conflicts"
-  default_prompt: "Use $structured-debate to resolve conflicting candidates with a bounded protocol."

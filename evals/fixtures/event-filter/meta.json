@@ -6,8 +6,8 @@
   "bug_description": "filter.py returns `event_type not in ALLOWED_EVENT_TYPES` instead of `event_type in ALLOWED_EVENT_TYPES`, inverting the allow/block logic.",
   "true_root_cause": "Single `not` keyword causes inverted logic: allowed events are skipped and disallowed events are processed. Fix: remove `not`.",
   "seeded_files": ["src/filter.py"],
-  "expected_methods": ["multi-candidate-analysis", "work-gate"],
-  "avoid_methods": ["structured-debate"],
+  "expected_methods": ["work-gate candidate analysis", "work-gate"],
+  "avoid_methods": ["work-gate debate"],
   "public_tests": ["tests/test_processor.py::test_allowed_events_are_processed"],
   "hidden_tests": [
     "tests/test_processor.py::test_disallowed_events_are_skipped",

@@ -2,16 +2,18 @@
 
 ## Purpose
 
-Choose the execution topology for agent work: current session, same-runtime
-multi-agent, or heterogeneous CLI agents.
+Choose the execution topology for a selected work mode: current session,
+same-runtime multi-agent, or heterogeneous CLI agents. This is a sub-protocol
+used by candidate analysis, debate, review, and benchmarking. It is not a
+candidate method or standalone reasoning path.
 
 ## Use When
 
-- A task may benefit from independent agents, critics, judges, reviewers, or
-  candidate generators.
+- A selected `work-gate` mode may benefit from independent agents, critics,
+  judges, reviewers, or candidate generators.
 - The user asks for Claude Code, Codex CLI, cross-agent debate, or heterogeneous
   review.
-- `structured-debate` or `multi-candidate-analysis` needs independent child
+- `work-gate debate` or `work-gate candidate analysis` needs independent child
   agents.
 - You need to decide whether CLI agents are worth the cost and permission
   boundary.
@@ -19,6 +21,7 @@ multi-agent, or heterogeneous CLI agents.
 ## Avoid When
 
 - The task is simple, low risk, or directly checkable.
+- No parent `work-gate` mode has been selected yet.
 - A project check, source check, test, schema, calculator, or cheap probe can
   decide the issue.
 - Running external CLIs would require credentials or broad access that the user
@@ -39,15 +42,18 @@ multi-agent, or heterogeneous CLI agents.
 ## Composes With
 
 - `work-gate`: chooses when dispatch is needed.
-- `multi-candidate-analysis`: uses dispatch for independent candidates or
+- `work-gate candidate analysis`: uses dispatch for independent candidates or
   rubric scoring.
-- `structured-debate`: uses dispatch for heterogeneous critic agents.
+- `work-gate debate`: uses dispatch for heterogeneous critic agents.
 
 ## Failure Modes
 
 - Launching interactive CLI sessions.
 - Using too many CLIs by default.
 - Treating heterogeneous agents as a substitute for deterministic checks.
+- Treating `agent-dispatch` as one of the candidates being compared.
+- Routing to `agent-dispatch` as the work itself instead of attaching it to
+  candidate analysis, debate, review, or benchmarking.
 - Silently replacing a blocked CLI with another agent.
 - Letting child agents edit files when only review was requested.
 - Launching Codex CLI for a network-dependent task without checking whether the
@@ -58,6 +64,7 @@ multi-agent, or heterogeneous CLI agents.
 ## Evaluation
 
 - The dispatch mode matches the task risk and independence need.
+- Dispatch is attached to a parent work mode and is not scored as a candidate.
 - Heterogeneous CLI use is explicit, non-interactive, and bounded.
 - Default heterogeneous runs use at most Claude Code plus Codex CLI.
 - Codex CLI plans record sandbox and network capability when the child task

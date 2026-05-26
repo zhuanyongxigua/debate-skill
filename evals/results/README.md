@@ -44,7 +44,7 @@ Outputs a summary table and writes `results/scores.jsonl`.
   "model": "claude-opus-4-7",
   "route_plan_emitted": true,
   "critical_recall": 1.0,
-  "critical_found": ["multi-candidate-analysis", "work-gate"],
+  "critical_found": ["work-gate candidate analysis", "work-gate"],
   "critical_missing": [],
   "avoid_violated": false,
   "avoid_violations": [],

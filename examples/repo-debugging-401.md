@@ -13,9 +13,9 @@ it has localized the root cause.
 
 ```yaml
 RoutePlan:
-  stack: [multi-candidate-analysis, work-gate]
+  stack: [work-gate candidate analysis, work-gate]
   why: "Intermittent auth bug with uncertain root cause; localize before writing a change plan."
-  skipped: [work-gate direct answer, structured-debate, heterogeneous_cli_agents]
+  skipped: [work-gate direct, work-gate debate, heterogeneous_cli_agents]
   topology: "single_agent"
   next: "CandidateAnalysis"
 ```

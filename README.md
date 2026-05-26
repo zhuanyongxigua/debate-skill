@@ -50,8 +50,8 @@ The root meta skill is `work-gate`.
 It emits a short `RoutePlan`, checks that the gate passes, then executes the
 smallest sufficient method stack:
 
-- answer directly only when direct answer is explicitly selected
-- execute one obvious local action only when the work gate selects a direct local action
+- answer directly or execute one obvious local action only when `work-gate
+  direct` is explicitly selected
 - verify sources and citations for factual claims
 - localize before editing code
 - produce a scoped change plan before risky code/file changes
@@ -71,8 +71,8 @@ agents:
 Use work-gate strict mode.
 The first visible block must be RoutePlan:
 Do not answer, edit, research, judge, critique, use tools, or debate before RoutePlan.
-Direct answers are allowed only when selected as work-gate direct answer.
-Simple local tool actions are allowed only when the RoutePlan selects a work-gate direct local action.
+Direct answers and simple local tool actions are allowed only when the RoutePlan
+selects work-gate direct.
 Final answers after long method work should use the work-gate final answer gate.
 Keep the RoutePlan under 7 lines.
 Execute only the selected stack.
@@ -82,9 +82,9 @@ Default RoutePlan:
 
 ```yaml
 RoutePlan:
-  stack: [multi-candidate-analysis, work-gate]
+  stack: [work-gate candidate analysis, work-gate]
   why: "Unclear repo bug; probes can falsify guesses before edits."
-  skipped: [work-gate direct answer, structured-debate]
+  skipped: [work-gate direct, work-gate debate]
   topology: "single_agent"
   next: "CandidateAnalysis"
 ```
@@ -98,7 +98,7 @@ Bad default:
   Jump to the first plausible file and patch it.
 
 Better method stack:
-  multi-candidate-analysis -> work-gate change plan
+  work-gate candidate analysis -> work-gate change plan
 
 Why:
   The root cause is uncertain.
@@ -116,45 +116,51 @@ The full machine-readable `RoutePlan` schema lives in
 
 | Task | Default route |
 | --- | --- |
-| Simple low-risk question | `work-gate direct answer` |
-| One obvious local action | `work-gate` direct local action |
+| Simple low-risk question | `work-gate direct` |
+| One obvious local action | `work-gate direct` |
 | Current factual answer | `work-gate` with source/citation constraints |
-| Contest math or logic | `work-gate direct answer` for simple tasks, otherwise `work-gate` with explicit checks |
-| Repo bug with unclear cause | `multi-candidate-analysis -> work-gate` change plan |
-| Repo feature plan | `work-gate` change plan |
-| Open-ended product or strategy decision | `multi-candidate-analysis -> work-gate final answer` |
-| Creative naming or copy with many options | `multi-candidate-analysis -> work-gate final answer` |
-| Subjective evaluation or ranking | `multi-candidate-analysis` in evaluation mode |
-| Cross-agent review or CLI agent choice | `agent-dispatch` |
-| Concrete candidates still tied | `agent-dispatch -> structured-debate`, capped and evidence-based |
+| Contest math or logic | `work-gate direct` for simple tasks, otherwise `work-gate` with explicit checks |
+| Repo bug with unclear cause | `work-gate candidate analysis -> work-gate change plan` |
+| Repo feature plan | `work-gate change plan` |
+| Open-ended product or strategy decision | `work-gate candidate analysis -> work-gate final answer` |
+| Creative naming or copy with many options | `work-gate candidate analysis -> work-gate final answer` |
+| Subjective evaluation or ranking | `work-gate candidate analysis` in evaluation mode |
+| Cross-agent review or CLI agent choice | selected `work-gate` mode with `agent-dispatch` as topology helper |
+| Concrete candidates still tied | `work-gate debate` with `agent-dispatch` when independent agents are needed |
 | High-risk medical, legal, financial, safety, or compliance question | `work-gate` with source and human-review boundaries |
 | Long or noisy intermediate work | `work-gate final answer` |
 
-`work-gate direct answer` is a narrow fast path for simple, self-contained,
+`work-gate direct` is a narrow fast path for simple, self-contained,
 low-risk questions. It is not the default route.
 
 ## Meta Skills and Method Cards
 
-Each method has two layers:
+Each method has two possible layers:
 
 1. A **Method Card**: the human-readable spec.
-2. A **Skill Implementation**: the installable agent-facing `SKILL.md`.
+2. An implementation: either an installable agent-facing `SKILL.md` or an
+   internal `work-gate` mode.
 
-The current core set is intentionally small: 4 installable skills.
+The current core set is intentionally small: 2 installable skills. Candidate
+analysis and debate are internal `work-gate` modes, not separate skills.
 
 | Method | Use it for | Primary artifact |
 | --- | --- | --- |
 | [`work-gate`](method-cards/work-gate.md) | Work-entry gate and method selection | RoutePlan |
-| [`agent-dispatch`](method-cards/agent-dispatch.md) | Current session vs same-runtime agents vs heterogeneous CLI agents | AgentDispatchPlan |
-| [`multi-candidate-analysis`](method-cards/multi-candidate-analysis.md) | Generate or evaluate multiple diagnosis paths, options, outputs, or plans | CandidateAnalysis |
-| [`structured-debate`](method-cards/structured-debate.md) | Resolving unresolved candidate conflicts | DebateRecord |
+| [`agent-dispatch`](method-cards/agent-dispatch.md) | Execution topology helper used by candidate analysis, debate, review, and CLI-agent workflows | AgentDispatchPlan |
+| [`candidate-analysis`](method-cards/candidate-analysis.md) | Internal mode for multiple diagnosis paths, options, outputs, or plans | CandidateAnalysis |
+| [`debate`](method-cards/debate.md) | Internal mode for requirement, single-proposal, candidate, or judgment debate | DebateRecord |
 
-Built into `work-gate`: direct answer, direct local action, change planning,
-source/check constraints, and final answer formatting. These are gate modes, not
-separate installable skills.
+Built into `work-gate`: direct mode, change planning, source/check constraints,
+candidate analysis, debate, and final answer formatting. These are gate modes,
+not separate installable skills.
 
-Built into `multi-candidate-analysis`: candidate generation and rubric scoring.
-If candidates already exist, use evaluation mode and skip generation.
+Built into `work-gate candidate analysis`: candidate generation and rubric
+scoring. If candidates already exist, use evaluation mode and skip generation.
+
+Built into `work-gate debate`: requirement debate, single-proposal debate,
+candidate debate, and judgment debate. Existing candidates are frozen directly;
+raw requirements generate candidates first, then debate only if useful.
 
 ## Recipes
 
@@ -216,11 +222,12 @@ conflicts between concrete candidates, not a default way to think.
 
 Multi-agent work is an execution topology, not a method by itself.
 
-Use `agent-dispatch` when a task may need independent agents or external CLI
-agents. It chooses current session, same-runtime agents, or heterogeneous CLI
-agents. For heterogeneous CLI work, the default is two non-interactive CLIs:
-Claude Code first and Codex CLI second. Add more CLIs only when explicitly
-requested.
+Use `agent-dispatch` inside the selected `work-gate` mode when candidate
+analysis, debate, review, or benchmarking needs independent agents or external
+CLI agents. It chooses current session, same-runtime agents, or heterogeneous
+CLI agents. It is not a candidate method or a standalone reasoning path. For
+heterogeneous CLI work, the default is two non-interactive CLIs: Claude Code
+first and Codex CLI second. Add more CLIs only when explicitly requested.
 
 ## Contributing
 

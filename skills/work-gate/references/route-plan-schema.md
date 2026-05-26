@@ -1,7 +1,7 @@
 # RoutePlan Schema
 
 Use this structure when `work-gate` is invoked, when the user asks how a task
-should be handled, or when several method skills may apply.
+should be handled, or when several methods or modes may apply.
 
 ## Short RoutePlan
 
@@ -18,11 +18,15 @@ RoutePlan:
   next: ""
 ```
 
-Direct answering is valid only when `stack` includes `work-gate direct answer`.
-Direct local tool execution is valid only when the RoutePlan makes it a
-`work-gate` direct local action. It is no longer a separate skill.
+Direct answering and direct local tool execution are valid only when `stack`
+includes `work-gate direct`. Direct is one mode; its `DirectResult.kind` should
+be `answer` or `local_action`.
 Final answer compression is valid as `work-gate final answer`; it is a
 work-gate output mode, not a separate skill.
+Candidate analysis is valid as `work-gate candidate analysis`; it is a
+work-gate mode, not a separate installable skill.
+Debate is valid as `work-gate debate`; it is a work-gate mode, not a separate
+installable skill.
 
 The short RoutePlan passes only when:
 
@@ -64,11 +68,14 @@ RoutePlan:
       reason: ""
   debate:
     use: false
+    entry_case: "none|requirement_debate|single_proposal_debate|candidate_debate|judgment_debate"
+    style: "none|parallel_positions|proposal_attack|frozen_candidates"
     condition: ""
     max_rounds: 1
   execution_topology:
     mode: "single_agent|same_runtime_multi_agent|heterogeneous_cli_agents"
     dispatch_method: "none|agent-dispatch"
+    dispatch_role: "none|topology_helper_for_selected_method"
     reason: ""
     agents:
       - role: ""
@@ -92,18 +99,17 @@ RoutePlan:
 If a task is simple and one method is obviously sufficient, output a short
 RoutePlan and continue.
 
-If the task is trivial and low risk, choose `work-gate direct answer` for simple answers
-or `work-gate` direct local action for simple local tool work. Do not bypass
-routing by answering or acting directly without naming the direct method when
-routing is required.
+If the task is trivial and low risk, choose `work-gate direct` for simple
+answers or simple local tool work. Do not bypass routing by answering or acting
+directly without naming the direct mode when routing is required.
 
-Use `work-gate direct answer` sparingly. It is appropriate only for simple,
+Use `work-gate direct` sparingly. It is appropriate only for simple,
 self-contained, low-risk tasks. Current, ambiguous, project-dependent,
 multi-step, or high-risk tasks should route to a non-direct stack.
 
 If `work-gate` is explicitly invoked, strict mode is mandatory. Do not skip the
-RoutePlan by judging the task trivial; use `work-gate direct answer` or a `work-gate`
-direct local action inside the RoutePlan instead.
+RoutePlan by judging the task trivial; use `work-gate direct` inside the
+RoutePlan instead.
 
 If candidate stacks score within 2 points on the rubric, prefer the stack that:
 
@@ -129,9 +135,9 @@ unnecessary, emit a revised RoutePlan before switching methods.
 
 ## Explicit Skill Requests
 
-When the user explicitly names, links, tags, or invokes a skill, include it in
-`selected_stack` unless it is unavailable, irrelevant, or unsafe. Set
-`user_requested: true` and explain how that skill shaped the route in
+When the user explicitly names, links, tags, or invokes a skill or method mode,
+include it in `selected_stack` unless it is unavailable, irrelevant, or unsafe. Set
+`user_requested: true` and explain how that request shaped the route in
 `selection_reason`.
 
 If the requested skill cannot be used directly, keep it visible in the
@@ -154,8 +160,12 @@ different agents such as Claude Code and Codex. Inspect available CLIs first.
 Ask before running external CLI commands when they require network access,
 credentials, broader filesystem access, or other elevated permissions.
 
-When the route needs a real current-session versus CLI decision, include
-`agent-dispatch` in the stack and set `dispatch_method: "agent-dispatch"`.
+When the route needs a real current-session versus CLI decision, set
+`dispatch_method: "agent-dispatch"` and keep dispatch attached to the selected
+`work-gate` mode. Do not list `agent-dispatch` as the reasoning method or as a
+candidate in a comparison. It is a topology helper for running candidate
+analysis, judging, critic review, debate, or cross-agent review.
+
 Default heterogeneous dispatch uses two non-interactive CLIs at most: Claude
 Code first, Codex CLI second. Use additional CLIs only when explicitly
 requested.

@@ -10,5 +10,5 @@ system_prompt: |
       next: "artifact name"
 
   Only after the RoutePlan, produce the required artifact.
-  If the task is simple and self-contained, select work-gate direct answer explicitly.
+  If the task is simple and self-contained, select work-gate direct explicitly.
 description: "Explicit RoutePlan instruction without method definitions. Tests whether routing instruction alone is sufficient."

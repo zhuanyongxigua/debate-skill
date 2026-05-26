@@ -1,14 +1,15 @@
 ---
 name: agent-dispatch
-description: Decide whether work should stay in the current session, use same-runtime multi-agent passes, or launch heterogeneous CLI agents. Use for debate, cross-agent review, independent candidate generation, rubric evaluation, benchmarking, or any task that may need Claude Code, Codex CLI, or other external agent CLIs. Prefer non-interactive CLI modes and default to two CLIs: Claude Code first, Codex second.
+description: Execution-topology helper for selected work-gate modes. Use inside candidate analysis, debate, cross-agent review, rubric evaluation, benchmarking, or tasks that may need Claude Code, Codex CLI, or other external agent CLIs. Do not use as a standalone reasoning method or candidate option. Prefer non-interactive CLI modes and default to two CLIs: Claude Code first, Codex second.
 ---
 
 # Agent Dispatch
 
 ## Overview
 
-Use `agent-dispatch` to choose where agent work runs. It is an execution
-topology skill, not a reasoning method. It decides between:
+Use `agent-dispatch` to choose where a selected `work-gate` mode runs. It is an
+execution topology skill, not a reasoning method and not a candidate in the
+decision being made. It decides between:
 
 - current session
 - same-runtime fresh sessions or subagents
@@ -33,6 +34,9 @@ cheap probe can decide the task directly.
 - Add more than two CLIs only when the user explicitly asks.
 - Do not use extra agents as a substitute for tests, source checks, schemas,
   calculators, cheap probes, or user approval.
+- Do not use `agent-dispatch` as the work itself. A parent method such as
+  `work-gate candidate analysis`, `work-gate debate`, review, or benchmarking
+  must define what the child agents are producing.
 
 ## CLI Invocation Rules
 

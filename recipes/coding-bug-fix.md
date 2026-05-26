@@ -17,7 +17,7 @@ Common signals:
 
 ```text
 work-gate
-  -> multi-candidate-analysis
+  -> work-gate candidate analysis
   -> work-gate change plan
   -> project-required checks
   -> work-gate final answer when the plan is long
@@ -46,7 +46,7 @@ Input:
 Users sometimes get 401 after login.
 
 Route:
-multi-candidate-analysis -> work-gate change plan
+work-gate candidate analysis -> work-gate change plan
 
 CandidateAnalysis (`mode: diagnosis`):
 - token refresh bug

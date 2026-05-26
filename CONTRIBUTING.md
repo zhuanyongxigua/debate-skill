@@ -6,8 +6,9 @@ A contribution should make agent behavior easier to route, execute, or evaluate.
 Avoid adding broad prompts that say "think carefully" without a concrete method,
 artifact, or evaluation hook.
 
-A Method Card is the human-readable spec. A matching `skills/<name>/SKILL.md`
-is the installable agent-facing implementation.
+A Method Card is the human-readable spec. Only broad entry points should become
+installable agent-facing skills. Lightweight methods should usually be
+implemented as `work-gate` modes or references instead of separate skills.
 
 ## Adding a Method Card or Meta Skill
 
@@ -15,8 +16,8 @@ is the installable agent-facing implementation.
 2. Fill in every section.
 3. Add the card to `method-cards/README.md`.
 4. Add or update at least one recipe when the card composes with others.
-5. If the card should be installable by an agent, add a matching
-   `skills/<name>/SKILL.md`.
+5. If the card should be installable by an agent, justify why it should not be a
+   `work-gate` mode first. Then add a matching `skills/<name>/SKILL.md`.
 
 ## Card Requirements
 
@@ -33,16 +34,23 @@ Every card should include:
 
 ## Naming
 
-Use lowercase kebab-case names:
+Use lowercase kebab-case names for installable skills:
 
 ```text
-multi-candidate-analysis
 work-gate
-structured-debate
+agent-dispatch
 ```
+
+Use `work-gate <mode>` names for internal gate modes, such as `work-gate
+candidate analysis` and `work-gate debate`.
 
 Prefer method names over marketing names. The name should tell an agent what to
 do.
+
+Installable skills should stay sparse. Prefer names such as `work-gate` and
+`agent-dispatch` for entry protocols or execution topology. Candidate analysis,
+debate, direct mode, change plans, and finalization currently live inside
+`work-gate`.
 
 ## Quality Bar
 

@@ -6,9 +6,9 @@ Act as the work-entry gate for agent tasks. It turns method selection from
 optional advice into a checkable protocol: emit a RoutePlan first, pass the
 gate, then execute only the selected method stack.
 
-Direct answering and direct local tool use are allowed, but only when selected
-explicitly by the gate. Direct answer is a narrow low-frequency fast path, not
-the default.
+Direct answering and direct local tool use are allowed through one internal
+mode, `work-gate direct`, but only when selected explicitly by the gate. Direct
+is a narrow low-frequency fast path, not the default.
 
 ## Use When
 
@@ -27,8 +27,8 @@ the default.
   simply executing that method.
 - The user explicitly requests one narrow method and no routing decision remains.
 
-Even when avoided, direct answer and direct local action should still be named
-explicitly if a gate is already active.
+Even when avoided, direct mode should still be named explicitly if a gate is
+already active.
 
 ## Inputs
 
@@ -55,7 +55,7 @@ explicitly if a gate is already active.
 A RoutePlan passes only when:
 
 - The first visible block is `RoutePlan:` when `work-gate` is explicitly invoked.
-- `stack` names the selected method skills or direct method.
+- `stack` names the selected method skill or `work-gate` mode.
 - `why` ties the stack to concrete task signals.
 - `skipped` names relevant methods that are not selected.
 - `topology` states the execution topology.
@@ -65,23 +65,29 @@ A RoutePlan passes only when:
 ## Composes With
 
 - Every other card. `work-gate` selects and orders them.
-- `agent-dispatch`: selected when current session, same-runtime agents, or
-  heterogeneous CLI agents must be chosen.
-- `work-gate direct answer`: selected only for simple self-contained answers.
-- Work-gate direct local action: selected only for one obvious low-risk local action.
+- `agent-dispatch`: execution-topology helper used inside selected modes when
+  current session, same-runtime agents, or heterogeneous CLI agents must be
+  chosen.
+- `work-gate candidate analysis`: internal mode for diagnosis, decision, and
+  evaluation.
+- `work-gate debate`: internal mode for requirement, single-proposal, candidate,
+  and judgment debate.
+- `work-gate direct`: selected only for simple self-contained answers or one
+  obvious low-risk local action.
 - Work-gate final answer gate: selected after long or noisy method work.
 
 ## Failure Modes
 
 - Producing advice about methods without emitting a RoutePlan.
-- Treating `work-gate direct answer` as a bypass instead of a selected method.
-- Routing broad, ambiguous, current, or project-dependent work to direct answer
+- Treating `work-gate direct` as a bypass instead of a selected method.
+- Routing broad, ambiguous, current, or project-dependent work to direct
   too often.
 - Listing a method in `stack` but not producing its artifact.
 - Using final answer formatting to hide missing evidence, failed checks, or
   unresolved conflict.
 - Selecting debate before evidence, probes, validators, or concrete candidates.
 - Confusing multi-agent execution topology with a method stack.
+- Treating `agent-dispatch` as a candidate method instead of a topology helper.
 - Choosing heterogeneous CLI agents without `agent-dispatch`.
 - Ignoring a user-explicitly requested skill instead of using it as the method
   frame or explaining why it cannot be used.
@@ -89,11 +95,12 @@ A RoutePlan passes only when:
 ## Evaluation
 
 - RoutePlan appears before substantive work.
-- Direct work is explicitly routed as `work-gate direct answer` or a work-gate direct local action.
-- Direct answer is used only for simple low-risk self-contained questions.
+- Direct work is explicitly routed as `work-gate direct`.
+- Direct mode is used only for simple low-risk self-contained questions or one
+  obvious low-risk local action.
 - Route covers the main task risk and uses available project checks.
 - Agent execution topology goes through `agent-dispatch` when external or
-  heterogeneous agents are possible.
+  heterogeneous agents are needed by the selected mode.
 - Selected and skipped relevant methods have concrete reasons.
 - The next artifact matches the first selected non-gate method.
 - Execution follows the selected stack.
@@ -105,9 +112,9 @@ A RoutePlan passes only when:
 
 ```yaml
 RoutePlan:
-  stack: [multi-candidate-analysis, work-gate]
+  stack: [work-gate candidate analysis, work-gate]
   why: "Repo bug has uncertain auth root cause; localize before writing a change plan."
-  skipped: [structured-debate, work-gate direct answer]
+  skipped: [work-gate debate, work-gate direct]
   topology: "single_agent"
   next: "CandidateAnalysis"
 ```

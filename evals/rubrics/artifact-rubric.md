@@ -9,7 +9,7 @@ Layer 2 eval rubric. Each criterion scored 0–3:
 
 ---
 
-## CandidateAnalysis (multi-candidate-analysis)
+## CandidateAnalysis (work-gate candidate analysis)
 
 ### Diagnosis mode
 

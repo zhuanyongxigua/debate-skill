@@ -18,8 +18,8 @@ This skill is a gate, not advice.
 For non-trivial tasks, route before work. When `work-gate` is explicitly
 invoked, strict mode is mandatory. The first visible block must be `RoutePlan:`.
 Do not skip the gate by deciding the task is trivial. If the task is simple, the
-gate may pass with `work-gate direct answer` for simple answers or a `work-gate`
-direct local action for simple tool work.
+gate may pass with `work-gate direct`. The `DirectResult` must state whether
+the direct work is `kind: answer` or `kind: local_action`.
 
 No substantive answer, code edit, broad tool command, research synthesis,
 critique, judgment, or debate may happen before the RoutePlan.
@@ -42,32 +42,33 @@ evals, handoffs, or when the user asks for detail.
 
 A RoutePlan passes only when all are true:
 
-- `stack` names the selected method skills or direct method.
+- `stack` names the selected method or `work-gate` mode.
 - `why` ties the stack to concrete task signals, risks, evidence needs,
   validators, or expected artifacts.
 - `skipped` names relevant methods that might be tempting but are not selected.
 - `topology` states single agent, same-runtime multi-agent, or heterogeneous CLI
   agents.
 - `next` names the next artifact or action required by the selected stack.
-- Direct answering appears only as `work-gate direct answer`.
-- Direct tool execution is handled as a `work-gate` direct local action, not as a
-  separate skill.
+- Direct answering and direct local tool execution appear only as
+  `work-gate direct`.
 
 If any criterion fails, stop and restart from `RoutePlan:`.
 
 ## Execution Contract
 
-After the RoutePlan passes, execute only the selected stack.
+After the RoutePlan passes, execute only the selected stack. `work-gate` owns
+the lightweight method modes directly; do not require the agent to jump to
+separate candidate-analysis or debate skills.
 
 Each selected method must produce or update its expected artifact:
 
-- `work-gate direct answer` -> `ConciseAnswer`
-- `work-gate` direct local action -> user-visible local result
+- `work-gate direct` -> `DirectResult` with `kind: answer|local_action`
 - `work-gate` change plan -> scoped file changes, validation commands, risks
 - `work-gate final answer` -> concise result, rationale, risk, next action
-- `agent-dispatch` -> `AgentDispatchPlan`
-- `multi-candidate-analysis` -> `CandidateAnalysis`
-- `structured-debate` -> `DebateRecord`
+- `work-gate candidate analysis` -> `CandidateAnalysis`
+- `work-gate debate` -> `DebateRecord`
+- `agent-dispatch` -> `AgentDispatchPlan` only as an execution-topology
+  substep for a selected `work-gate` mode
 
 Do not list a method in `stack` unless you will follow its method frame. If the
 selected stack becomes impossible or unnecessary, emit a revised RoutePlan
@@ -103,26 +104,26 @@ Use this priority order unless the user explicitly asks otherwise:
    checks, or executable feedback.
 2. Task decomposition, route planning, implementation planning, or edit
    planning.
-3. Independent candidate generation, diagnosis paths, decision options, or branch search.
+3. Candidate analysis: independent diagnosis paths, decision options, existing
+   candidate evaluation, or branch search.
 4. Critique, self-refine, pre-mortem, or review.
-5. Structured debate only when candidates conflict and cannot be resolved by
-   checks or evidence.
+5. Debate only when the debate entry case is explicit and checks/evidence cannot
+   decide cheaply.
 
 ## Hard Routing Rules
 
-- If the user explicitly names, links, tags, or invokes a skill, include that
-  skill in the RoutePlan and use that skill's method frame to reason about the
-  task.
-- If an explicitly requested skill is unavailable, irrelevant, or unsafe to use,
-  say why in `skipped` or `why`, then choose the closest safe fallback.
-- If the task is simple, low-risk, and self-contained, select
-  `work-gate direct answer` explicitly, but treat it as a narrow low-frequency
-  fast path rather than the default route.
-- If the task is a simple, low-risk, obvious local tool action, use `work-gate`
-  as the direct local action gate and check the visible result when useful.
+- If the user explicitly names, links, tags, or invokes a skill or method mode,
+  include that request in the RoutePlan and use its method frame to reason about
+  the task.
+- If an explicitly requested skill or mode is unavailable, irrelevant, or unsafe
+  to use, say why in `skipped` or `why`, then choose the closest safe fallback.
+- If the task is simple, low-risk, and self-contained, or if the next action is
+  a simple, low-risk, obvious local tool action, select `work-gate direct`
+  explicitly. Treat it as a narrow low-frequency fast path rather than the
+  default route.
 - Latest or factual claims require source checks or other evidence handling, but
   this is a work constraint rather than a separate skill.
-- Repo debugging with uncertain root cause requires multi-candidate diagnosis
+- Repo debugging with uncertain root cause requires candidate analysis
   before work-gate change planning.
 - Project-required tests, build checks, lint, schemas, or source checks outrank
   debate.
@@ -130,11 +131,14 @@ Use this priority order unless the user explicitly asks otherwise:
   not a dedicated skill here; route conservatively, require authoritative
   sources where applicable, and preserve human-review boundaries.
 - Creative tasks usually do not need a dedicated method skill; generate options
-  directly or use `multi-candidate-analysis` when candidate comparison is useful.
+  directly or use `work-gate candidate analysis` when candidate comparison is
+  useful.
 - Multi-agent work is an execution topology, not a substitute for retrieval,
   tests, schemas, or clear artifacts.
-- Use `agent-dispatch` whenever the route needs to decide between current
-  session, same-runtime agents, or heterogeneous CLI agents.
+- Use `agent-dispatch` only as an execution-topology helper for a selected
+  method mode, usually `work-gate candidate analysis` or `work-gate debate`.
+  Do not treat it as a candidate method, mock candidate, or standalone answer
+  path.
 - For coding agent work, prefer independent diagnosis or patch candidates plus
   project checks before language debate.
 - Do not mix different harnesses and different models unless the task is
@@ -144,17 +148,17 @@ Use this priority order unless the user explicitly asks otherwise:
 
 | Task signal | Preferred stack |
 | --- | --- |
-| Simple low-risk answer | `work-gate direct answer` |
-| Simple low-risk local tool action | `work-gate direct action` |
-| Math, logic, multiple choice | `work-gate direct answer` for simple tasks, otherwise `work-gate` with explicit checks |
+| Simple low-risk answer | `work-gate direct` |
+| Simple low-risk local tool action | `work-gate direct` |
+| Math, logic, multiple choice | `work-gate direct` for simple tasks, otherwise `work-gate` with explicit checks |
 | Factual research or citations | `work-gate` with source/citation constraints |
-| Open strategy, product, business decision | `multi-candidate-analysis -> structured-debate only if top candidates remain unresolved -> work-gate final answer` |
-| Repo bug, uncertain root cause | `multi-candidate-analysis -> work-gate change plan` |
-| Repo feature or architecture plan | `work-gate change plan -> multi-candidate-analysis evaluation mode or structured-debate if tradeoffs conflict` |
-| Single-file testable code | `work-gate direct action` when obvious, otherwise `work-gate change plan` |
-| Web, shell, browser, or tool operation | `work-gate direct action` for one obvious step, otherwise plan the tool loop in the RoutePlan |
-| Evaluation, ranking, review, judging | `multi-candidate-analysis` in evaluation mode |
-| Cross-agent review, debate, or CLI agent choice | `agent-dispatch -> selected method` |
+| Open strategy, product, business decision | `work-gate candidate analysis -> work-gate debate only if unresolved -> work-gate final answer` |
+| Repo bug, uncertain root cause | `work-gate candidate analysis -> work-gate change plan` |
+| Repo feature or architecture plan | `work-gate change plan -> work-gate candidate analysis evaluation mode or work-gate debate if tradeoffs conflict` |
+| Single-file testable code | `work-gate direct` when obvious, otherwise `work-gate change plan` |
+| Web, shell, browser, or tool operation | `work-gate direct` for one obvious step, otherwise plan the tool loop in the RoutePlan |
+| Evaluation, ranking, review, judging | `work-gate candidate analysis` in evaluation mode |
+| Cross-agent review, debate, or CLI agent choice | selected `work-gate` mode with `agent-dispatch` as topology helper |
 | Medical, legal, financial, safety, security, compliance | `work-gate` with conservative source and human-review boundaries |
 | Puzzle, search, planning with backtracking | `work-gate` with explicit branch/check strategy |
 | Long, noisy, multi-candidate, or executive output | `work-gate final answer` after the selected method stack |
@@ -169,31 +173,93 @@ Choose execution topology after choosing the method stack.
 - Use `same_runtime_multi_agent` when independent candidates, judges, critics,
   or path generators are useful and heterogeneity is not required.
 - Use `agent-dispatch` for any non-trivial decision about current session versus
-  same-runtime agents versus heterogeneous CLI agents.
+  same-runtime agents versus heterogeneous CLI agents, but keep it attached to
+  the selected `work-gate` mode. For example, use it to decide how to run
+  candidate generation, judging, critic review, or debate; do not route to
+  `agent-dispatch` as the work itself.
 - When `agent-dispatch` selects heterogeneous CLI agents, prefer two CLIs by
   default: Claude Code first, Codex CLI second. Use non-interactive commands
   only. Add more CLIs only when the user explicitly asks.
 - Do not use extra agents to replace a project check, source check, cheap probe,
   or user approval.
 
-## Debate Gate
+## Candidate Analysis Mode
 
-Use structured debate only when all are true:
+Use `work-gate candidate analysis` when the task needs multiple candidates
+before selecting, synthesizing, or planning.
 
-- There are at least two concrete candidates, paths, plans, or judgments.
-- They conflict in a way that matters.
-- A project check, source check, or cheap probe cannot decide immediately.
-- The cost of choosing wrong is meaningful.
-- The debate can be capped to one critique round plus an arbiter.
+Modes:
 
-Do not use debate to create the first candidates.
+- `diagnosis`: unclear bug, failure, regression, performance issue, or system
+  behavior. Generate 2-5 root-cause candidates with causal chains, evidence,
+  negative evidence, probes, likely patch shape, risk, and confidence.
+- `decision`: open-ended strategy, product, architecture, positioning, creative
+  direction, or planning decision. Generate 2-5 proposals with goal fit,
+  assumptions, tradeoffs, risks, cost, and validation triggers.
+- `evaluation`: candidates already exist. Preserve them, normalize labels,
+  define a rubric, score each candidate on the same criteria, then select,
+  combine, split, defer, or escalate.
+
+If candidates already exist, skip generation unless a missing baseline or
+control candidate is needed. Do not generate new options just to make the
+process look multi-path.
+
+Return `CandidateAnalysis`. Use `references/candidate-analysis-template.md` for
+the full artifact shape.
+
+## Debate Mode
+
+Use `work-gate debate` when the user asks for debate or when candidate analysis,
+review, or external evidence leaves a meaningful unresolved conflict.
+
+Select the debate entry case first:
+
+- `requirement_debate`: no candidates exist. First generate 2-4 candidate
+  positions or plans, freeze them, then debate only if the choice still matters.
+- `single_proposal_debate`: one proposal exists. Freeze it and debate
+  adopt/revise/reject/probe using support, opposition, risk, and testability
+  views.
+- `candidate_debate`: multiple proposals, paths, plans, answers, or patches
+  already exist. Freeze the existing candidates and debate their conflicts
+  without adding new candidates by default.
+- `judgment_debate`: the artifact may be singular, but there are conflicting
+  judgments or claims about it. Freeze those judgments as the debate candidates.
+
+Select the debate style:
+
+- `parallel_positions`: each side independently states a position first, then
+  cross-reviews the others. Use for requirement debates and broad decisions.
+- `proposal_attack`: one frozen proposal is attacked and defended. Use for
+  single-proposal review.
+- `frozen_candidates`: multiple existing candidates are cross-critiqued and
+  arbitrated. Use when A/B/C already exist.
+
+Debate gates:
+
+- Use project checks, source checks, tests, schemas, calculators, or cheap
+  probes before debate when they can decide.
+- Do not use open-ended debate when a rubric evaluation is enough.
+- Do not let critics rewrite frozen candidates during critique.
+- Cross-review is required: each critic must inspect the other critic findings
+  before arbitration.
+- The arbiter decides from evidence, risk, reversibility, constraints, and probe
+  availability. Do not decide by vote count, confidence, or consensus pressure.
+- Cap the debate to one independent critique round, one cross-review round, and
+  arbitration unless the user explicitly asks for more.
 
 When the user asks whether to use debate, multi-agent, heterogeneous models, or
-different CLI harnesses, route through `agent-dispatch`.
+different CLI harnesses, select the relevant work mode first, then use
+`agent-dispatch` to choose the execution topology when needed.
 
-## Direct Gates
+Return `DebateRecord`. Use `references/debate-protocol.md` for the full artifact
+shape.
 
-Use `work-gate direct answer` only when all are true:
+## Direct Mode
+
+Use `work-gate direct` only for simple, low-risk work that can be answered or
+acted on without a broader method stack.
+
+For `kind: answer`, all are true:
 
 - The task is simple, self-contained, and low risk.
 - No current facts, citations, or external evidence are needed.
@@ -202,13 +268,7 @@ Use `work-gate direct answer` only when all are true:
   materially improve the answer.
 - No multiple plausible workflows need comparison.
 
-Direct answer should be rare under strict mode. It is for genuinely small
-questions, not a way to avoid routing. If many broad, current, ambiguous,
-project-dependent, or multi-step tasks are being routed to
-`work-gate direct answer`, the gate is failing and must choose a non-direct
-method stack instead.
-
-Use a `work-gate` direct local action only when all are true:
+For `kind: local_action`, all are true:
 
 - The task is simple, local, and low risk.
 - The next action is obvious.
@@ -216,7 +276,20 @@ Use a `work-gate` direct local action only when all are true:
 - Extra planning, debate, or multi-agent work would add more overhead than risk
   reduction.
 
-If any direct gate condition fails, select a non-direct method stack.
+Direct should be rare under strict mode. It is for genuinely small questions or
+obvious local actions, not a way to avoid routing. If many broad, current,
+ambiguous, project-dependent, or multi-step tasks are being routed to
+`work-gate direct`, the gate is failing and must choose a non-direct stack
+stack instead.
+
+Return a `DirectResult`:
+
+```yaml
+DirectResult:
+  kind: "answer|local_action"
+  result: ""
+  verification: ""
+```
 
 ## Final Answer Gate
 
@@ -247,17 +320,17 @@ Good:
 
 ```yaml
 RoutePlan:
-  stack: [work-gate direct answer]
+  stack: [work-gate direct]
   why: "Simple, self-contained, low-risk concept question."
-  skipped: [multi-candidate-analysis, structured-debate]
+  skipped: [work-gate candidate analysis, work-gate debate]
   topology: "single_agent"
-  next: "ConciseAnswer"
+  next: "DirectResult"
 ```
 
 Bad:
 
 ```text
-I will use multi-candidate-analysis.
+I will use candidate analysis.
 Final answer: ...
 ```
 
@@ -265,9 +338,9 @@ Good:
 
 ```yaml
 RoutePlan:
-  stack: [multi-candidate-analysis, work-gate final answer]
+  stack: [work-gate candidate analysis, work-gate final answer]
   why: "Open-ended decision with multiple plausible positions and verbosity risk."
-  skipped: [work-gate direct answer, structured-debate]
+  skipped: [work-gate direct, work-gate debate]
   topology: "single_agent"
   next: "CandidateAnalysis"
 ```
@@ -287,6 +360,9 @@ of process recap.
   and compositions.
 - Read `references/debate-agent-policy.md` for debate, ensemble, heterogeneous
   model, and harness-selection background.
+- Read `references/candidate-analysis-template.md` when producing
+  `CandidateAnalysis`.
+- Read `references/debate-protocol.md` when producing `DebateRecord`.
 - Read `references/route-plan-schema.md` when producing a formal RoutePlan.
 - Read `references/evidence-index.md` when the user asks for the evidence behind
   a routing choice.

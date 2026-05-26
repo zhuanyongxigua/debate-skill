@@ -14,7 +14,7 @@ Eight conditions run against the same tasks:
 | `explicit-router` | Requires RoutePlan but no method definitions |
 | `method-index` | Always-on compact method index in system prompt |
 | `method-index-plus-skills` | Method index plus brief method execution descriptions |
-| `always-debate` | Structured debate forced for every task |
+| `always-debate` | Work-gate debate forced for every task |
 | `generic-long-prompt` | Generic best-practices prompt (ablation baseline) |
 | `oracle-skill` | Per-fixture: injects the correct method stack, tests skill execution ceiling |
 
@@ -116,7 +116,7 @@ Scale thresholds:
 
 **A. Auth / Session / Security (6 fixtures)**
 
-Complex enough that `multi-candidate-analysis` should identify multiple plausible
+Complex enough that `work-gate candidate analysis` should identify multiple plausible
 root causes before narrowing to the correct fix.
 
 | id | Symptom | Hidden root cause |
@@ -158,7 +158,7 @@ localize multiple candidate paths first.
 **D. Webhook / Jobs / Idempotency (4 fixtures)**
 
 Multi-path root causes: bug could be in handler, queue, repository, or state
-machine. Good for measuring `multi-candidate-analysis` value.
+machine. Good for measuring `work-gate candidate analysis` value.
 
 | id | Symptom | Hidden root cause |
 | --- | --- | --- |

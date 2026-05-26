@@ -21,11 +21,12 @@ RESULTS_DIR = EVALS_DIR / "results"
 
 METHOD_TO_ARTIFACT = {
     "agent-dispatch": "AgentDispatchPlan",
-    "multi-candidate-analysis": "CandidateAnalysis",
-    "work-gate direct answer": "ConciseAnswer",
+    "work-gate candidate analysis": "CandidateAnalysis",
+    "work-gate change plan": "ChangePlan",
+    "work-gate direct": "DirectResult",
     "work-gate final answer": "FinalAnswer",
     "work-gate": "RoutePlan",
-    "structured-debate": "DebateRecord",
+    "work-gate debate": "DebateRecord",
 }
 
 ARTIFACT_PATTERNS = {
@@ -34,11 +35,15 @@ ARTIFACT_PATTERNS = {
     "CandidateAnalysis": r"candidateanalysis|candidate[\s\-_]*analysis|candidate\s+[a-c1-3]|hypothesis|proposal|option|root cause",
     "ChangePlan": r"changeplan\s*:|change[\s\-_]*plan|scoped file changes",
     "SourceCheckTable": r"source[\s\-_]*check|source table|citation[\s\-_]*check",
-    "ConciseAnswer": r"directanswer|direct[\s\-_]*answer",
+    "DirectResult": r"directresult|work-gate\s+direct|direct[\s\-_]*(answer|action|local)",
     "FinalAnswer": r"finalanswer|final[\s\-_]*answer",
     "DebateRecord": r"debaterecord|debate[\s\-_]*record",
     "CandidateAnalysisScorecard": r"scorecard|rubric|criterion[\s\-_]*scores|aggregate[\s\-_]*ranking",
 }
+
+
+def normalize_key(value):
+    return re.sub(r"[\s\-_]+", "", value.lower())
 
 
 def load_tasks(tasks_file=None):
@@ -168,7 +173,7 @@ def score_layer2_heuristic(output, task):
 # ---------------------------------------------------------------------------
 
 LLM_JUDGE_PROMPTS = {
-    "CandidateAnalysis": """Score this CandidateAnalysis artifact from a multi-candidate-analysis method.
+    "CandidateAnalysis": """Score this CandidateAnalysis artifact from a work-gate candidate analysis method.
 
 Task: {task}
 
@@ -279,7 +284,7 @@ def score_llm_judge(output, task, client):
 
 def score_result(result, task):
     output = result["output"]
-    output_norm = output.lower().replace("-", "").replace("_", "").replace(" ", "")
+    output_norm = normalize_key(output)
 
     # 1. RoutePlan emitted before substantive content
     route_plan_emitted = bool(re.search(r"routeplan\s*:", output, re.IGNORECASE))
@@ -288,7 +293,7 @@ def score_result(result, task):
     expected = task.get("expected_stack", [])
     critical_found = []
     for m in expected:
-        m_norm = m.lower().replace("-", "")
+        m_norm = normalize_key(m)
         if m_norm in output_norm:
             critical_found.append(m)
     critical_recall = len(critical_found) / len(expected) if expected else 1.0
@@ -297,7 +302,11 @@ def score_result(result, task):
     avoid = task.get("avoid", [])
     avoid_violations = []
     for a in avoid:
-        key_words = [w for w in a.lower().split() if len(w) > 4]
+        key_words = [
+            normalize_key(w)
+            for w in re.findall(r"[A-Za-z0-9_-]+", a.lower())
+            if len(normalize_key(w)) > 4
+        ]
         if key_words and all(w in output_norm for w in key_words):
             avoid_violations.append(a)
     avoid_violated = len(avoid_violations) > 0
@@ -308,6 +317,9 @@ def score_result(result, task):
         artifact = METHOD_TO_ARTIFACT.get(method)
         if artifact and artifact not in required_artifacts:
             required_artifacts.append(artifact)
+    for artifact in task.get("required_artifacts", []):
+        if artifact not in required_artifacts:
+            required_artifacts.append(artifact)
 
     artifacts_present = []
     for artifact in required_artifacts:
@@ -317,8 +329,8 @@ def score_result(result, task):
     artifact_score = len(artifacts_present) / len(required_artifacts) if required_artifacts else 1.0
 
     # 5. Debate misuse: debate appeared when not in expected stack
-    debate_expected = "structured-debate" in expected
-    debate_appeared = bool(re.search(r"structured.{0,3}debate|debaterecord", output, re.IGNORECASE))
+    debate_expected = "work-gate debate" in expected
+    debate_appeared = bool(re.search(r"work-gate\s+debate|debate\s*record|debaterecord", output, re.IGNORECASE))
     debate_misuse = debate_appeared and not debate_expected
 
     # 6. Word count

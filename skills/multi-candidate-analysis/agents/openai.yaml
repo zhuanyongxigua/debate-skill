@@ -1,3 +1,0 @@
-version: 1
-openai:
-  default_prompt: "Use $multi-candidate-analysis to generate or evaluate multiple candidates, score them with task-specific criteria, and select or synthesize the best path."

@@ -1,7 +1,9 @@
-# Structured Debate Protocol
+# Work-Gate Debate Protocol
 
 ```yaml
 debate_record:
+  entry_case: "requirement_debate|single_proposal_debate|candidate_debate|judgment_debate"
+  debate_style: "parallel_positions|proposal_attack|frozen_candidates"
   execution_topology:
     mode: "same_runtime_multi_agent|heterogeneous_cli_agents|sequential_isolated"
     dispatch_skill: "agent-dispatch"
@@ -26,6 +28,10 @@ debate_record:
     - id: "A"
       artifact_type: "path|plan|answer|judgment|proposal"
       summary: ""
+  generated_before_freeze:
+    used: false
+    reason: ""
+    candidate_source: "user_provided|work-gate_candidate_analysis|critic_generated"
   debate_reason: ""
   critics:
     - role: "evidence_critic"
@@ -54,6 +60,14 @@ debate_record:
 
 Rules:
 
+- Choose the debate entry case before running the debate.
+- For `requirement_debate`, generate 2-4 candidates first, then freeze them.
+- For `single_proposal_debate`, freeze the proposal and debate adopt, revise,
+  reject, or probe.
+- For `candidate_debate`, use the provided candidates by default. Do not add
+  new candidates unless a missing baseline or control is needed.
+- For `judgment_debate`, freeze the conflicting judgments or claims as the
+  debate candidates.
 - Freeze candidates before critique.
 - Use `agent-dispatch` before launching child agents.
 - Cap to one independent critique round, one cross-review round, and

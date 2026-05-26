@@ -13,9 +13,9 @@ defends it with generic marketing language.
 
 ```yaml
 RoutePlan:
-  stack: [multi-candidate-analysis, work-gate final answer]
+  stack: [work-gate candidate analysis, work-gate final answer]
   why: "Open-ended positioning decision needs alternatives, rubric scoring, and a concise recommendation."
-  skipped: [work-gate direct answer, structured-debate]
+  skipped: [work-gate direct, work-gate debate]
   topology: "same_runtime_multi_agent"
   next: "CandidateAnalysis"
 ```

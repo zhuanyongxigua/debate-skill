@@ -2,7 +2,7 @@
 
 Use this policy as background when deciding between single-agent execution,
 independent sampling, same-runtime multi-agent work, heterogeneous models,
-structured debate, or different CLI harnesses.
+work-gate debate, or different CLI harnesses.
 
 For an actual current-session versus CLI decision, use `agent-dispatch`.
 
@@ -103,15 +103,21 @@ debate, review, judging, benchmarking, or cross-agent critique.
 
 ## Debate Gate
 
-Use structured debate only when all are true:
+Use `work-gate debate` only when the entry case is explicit and the gates pass:
 
-- At least two concrete candidates exist.
-- They conflict on a decision that matters.
+- `requirement_debate`: no candidates exist, so candidate generation happens
+  first and the generated candidates are frozen before critique.
+- `single_proposal_debate`: one proposal exists and the debate is adopt,
+  revise, reject, or probe.
+- `candidate_debate`: multiple candidates exist and conflict on a decision that
+  matters.
+- `judgment_debate`: conflicting judgments or claims exist about one artifact.
 - A project check, source check, test, or cheap probe cannot decide immediately.
 - The debate is bounded to one critique round plus arbitration unless the user
   explicitly asks for more.
 
-Do not use debate to create the first answers.
+Do not use unbounded debate to create first answers. If the task is just a raw
+requirement, generate candidates first, then freeze them before debate.
 
 ## Coding Agent Policy
 

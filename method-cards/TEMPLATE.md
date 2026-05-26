@@ -47,4 +47,5 @@ Output:
 
 ## Skill Implementation
 
-- `skills/<name>/SKILL.md`
+- `skills/<name>/SKILL.md` for installable skills, or
+- `skills/work-gate/SKILL.md` plus a `work-gate` mode/reference for internal methods.

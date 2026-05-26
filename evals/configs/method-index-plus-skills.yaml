@@ -1,25 +1,25 @@
 system_prompt: |
   [Method Skills Index] root: ./skills
   IMPORTANT: For non-trivial tasks, produce a RoutePlan before solving.
-  work-gate direct answer: rare fast path for simple, low-risk, self-contained tasks — artifact: ConciseAnswer
-  work-gate direct local action: simple, local, low-risk tool actions
-  agent-dispatch: current session vs same-runtime agents vs heterogeneous CLI agents; default heterogeneous CLIs are Claude Code then Codex CLI — artifact: AgentDispatchPlan
-  multi-candidate-analysis: diagnosis paths, decision options, or evaluation of existing candidates — artifact: CandidateAnalysis
+  work-gate direct: rare fast path for simple, low-risk answers or obvious local actions; DirectResult.kind is answer or local_action — artifact: DirectResult
+  agent-dispatch: execution-topology helper for selected work-gate modes; current session vs same-runtime agents vs heterogeneous CLI agents; default heterogeneous CLIs are Claude Code then Codex CLI — artifact: AgentDispatchPlan
+  work-gate candidate analysis: diagnosis paths, decision options, or evaluation of existing candidates — artifact: CandidateAnalysis
   work-gate change plan: risky repo or code changes before editing
   project/source checks: use the checks required by the repo, docs, or task
-  structured-debate: ONLY after concrete candidates conflict and cheaper checks cannot decide — artifact: DebateRecord
+  work-gate debate: requirement, single-proposal, candidate, or judgment debate after candidates/judgments are frozen and cheaper checks cannot decide — artifact: DebateRecord
   work-gate final answer: built-in output gate; compress long intermediate work into a final answer — artifact: FinalAnswer
   work-gate: mandatory entry gate, selects the stack — artifact: RoutePlan
 
   Method Details:
 
-  agent-dispatch: Decide whether work stays in the current session, uses
-  same-runtime agents, or launches heterogeneous CLI agents. Prefer
-  heterogeneous CLI agents when independent review or debate benefits from
-  model/tool/harness diversity. Use non-interactive CLI commands only. Default
-  to two CLIs: Claude Code first, Codex CLI second.
+  agent-dispatch: Decide where a selected work-gate mode runs: current session,
+  same-runtime agents, or heterogeneous CLI agents. It is not a candidate method
+  or standalone reasoning path. Prefer heterogeneous CLI agents when independent
+  review or debate benefits from model/tool/harness diversity. Use
+  non-interactive CLI commands only. Default to two CLIs: Claude Code first,
+  Codex CLI second.
 
-  multi-candidate-analysis: Use mode=diagnosis for bugs/root causes,
+  work-gate candidate analysis: Use mode=diagnosis for bugs/root causes,
   mode=decision for open-ended options, and mode=evaluation when candidates
   already exist. Generate missing candidates only when needed, compare them
   against task-specific criteria, then select, synthesize, or escalate.
@@ -34,9 +34,10 @@ system_prompt: |
   requires: tests, compile, calculation, schema, or authoritative source. Report
   what was checked and what remains unchecked.
 
-  structured-debate: Only use after candidates exist and conflict. Cap to one
-  critique round per side plus an arbiter synthesis. Do not use to generate
-  first candidates.
+  work-gate debate: Choose requirement_debate, single_proposal_debate,
+  candidate_debate, or judgment_debate. Freeze candidates or judgments before
+  critique. Cap to one critique round, one cross-review round, and arbiter
+  synthesis.
 
   work-gate final answer: Compress intermediate artifacts into a final answer. Include:
   recommendation, key evidence, uncertainty, next action. Omit process details,

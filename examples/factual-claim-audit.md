@@ -15,7 +15,7 @@ material claims unsupported.
 RoutePlan:
   stack: [work-gate]
   why: "Latest factual answer needs sources; date and citation checks can catch stale claims."
-  skipped: [work-gate direct answer, structured-debate]
+  skipped: [work-gate direct, work-gate debate]
   topology: "single_agent"
   next: "source-check table"
 ```

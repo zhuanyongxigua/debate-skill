@@ -16,8 +16,8 @@ Common signals:
 
 ```text
 work-gate
-  -> multi-candidate-analysis
-  -> structured-debate only if top candidates remain unresolved
+  -> work-gate candidate analysis
+  -> work-gate debate only if top candidates remain unresolved
   -> work-gate final answer
   -> work-gate change plan when execution begins
 ```
@@ -45,7 +45,7 @@ Input:
 How should I position this open-source agent skills repo?
 
 Route:
-multi-candidate-analysis -> work-gate final answer
+work-gate candidate analysis -> work-gate final answer
 
 Output:
 CandidateAnalysis comparing "work gate", "method standard library", and
