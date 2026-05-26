@@ -65,9 +65,8 @@ A RoutePlan passes only when:
 ## Composes With
 
 - Every other card. `work-gate` selects and orders them.
-- `agent-dispatch`: execution-topology helper used inside selected modes when
-  current session, same-runtime agents, or heterogeneous CLI agents must be
-  chosen.
+- `agent-launch`: CLI launch helper used after a selected mode or explicit user
+  request chooses one or more external CLI agents.
 - `work-gate candidate analysis`: internal mode for diagnosis, decision, and
   evaluation.
 - `work-gate debate`: internal mode for requirement, single-proposal, candidate,
@@ -87,8 +86,8 @@ A RoutePlan passes only when:
   unresolved conflict.
 - Selecting debate before evidence, probes, validators, or concrete candidates.
 - Confusing multi-agent execution topology with a method stack.
-- Treating `agent-dispatch` as a candidate method instead of a topology helper.
-- Choosing heterogeneous CLI agents without `agent-dispatch`.
+- Treating `agent-launch` as a candidate method or topology chooser.
+- Launching external CLI agents without an explicit `agent-launch` plan.
 - Ignoring a user-explicitly requested skill instead of using it as the method
   frame or explaining why it cannot be used.
 
@@ -99,8 +98,9 @@ A RoutePlan passes only when:
 - Direct mode is used only for simple low-risk self-contained questions or one
   obvious low-risk local action.
 - Route covers the main task risk and uses available project checks.
-- Agent execution topology goes through `agent-dispatch` when external or
-  heterogeneous agents are needed by the selected mode.
+- Agent execution topology is selected by `work-gate`; external CLI startup
+  goes through `agent-launch` when single external CLI or heterogeneous CLI
+  agents are selected.
 - Selected and skipped relevant methods have concrete reasons.
 - The next artifact matches the first selected non-gate method.
 - Execution follows the selected stack.

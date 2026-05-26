@@ -37,8 +37,8 @@ This is an internal `work-gate` mode, not a separate installable skill.
 
 ## Composes With
 
-- `agent-dispatch`: decides whether critics run in current session,
-  same-runtime agents, or heterogeneous CLI agents.
+- `agent-launch`: prepares external CLI critic launches when the parent route
+  has already selected single external CLI or heterogeneous CLI agents.
 - `work-gate candidate analysis`: generates or evaluates candidates before
   debate when needed.
 

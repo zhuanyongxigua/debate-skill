@@ -5,22 +5,22 @@ debate_record:
   entry_case: "requirement_debate|single_proposal_debate|candidate_debate|judgment_debate"
   debate_style: "parallel_positions|proposal_attack|frozen_candidates"
   execution_topology:
-    mode: "same_runtime_multi_agent|heterogeneous_cli_agents|sequential_isolated"
-    dispatch_skill: "agent-dispatch"
+    mode: "same_runtime_multi_agent|single_external_cli_agent|heterogeneous_cli_agents|sequential_isolated"
+    launch_skill: "none|agent-launch"
     permission_needed: false
     permission_status: "not_needed|requested|approved|blocked"
     cli_agents:
       - name: "codex"
         command: "codex exec"
         mode: "non_interactive"
-        timeout_seconds: 300
+        timeout_seconds: 900
         sandbox: "read-only|workspace-write|danger-full-access|profile_default|unknown"
         network: "not_needed|needed_enabled|needed_blocked|unknown"
         status: "planned|ran|blocked|unavailable"
       - name: "claude"
         command: "claude -p|claude --print"
         mode: "non_interactive"
-        timeout_seconds: 300
+        timeout_seconds: 900
         sandbox: "read-only|workspace-write|danger-full-access|profile_default|unknown"
         network: "not_needed|needed_enabled|needed_blocked|unknown"
         status: "planned|ran|blocked|unavailable"
@@ -69,7 +69,7 @@ Rules:
 - For `judgment_debate`, freeze the conflicting judgments or claims as the
   debate candidates.
 - Freeze candidates before critique.
-- Use `agent-dispatch` before launching child agents.
+- Use `agent-launch` before launching selected external CLI child agents.
 - Cap to one independent critique round, one cross-review round, and
   arbitration unless the user explicitly asks otherwise.
 - Ask critics for evidence, risk, assumptions, and probes.
@@ -88,15 +88,16 @@ Rules:
 - Use non-interactive CLI modes:
   - Claude Code: `claude -p` or `claude --print`
   - Codex CLI: `codex exec`
-- For Codex CLI, do not assume the default sandbox/profile can use network. If
-  the critic task needs SSH, package installs, external APIs, web access, or
-  remote docs, record sandbox/profile and network status before launch. Mark the
-  Codex critic `blocked` if network is needed but unavailable.
+- For Codex CLI, the `agent-launch` default is a network-capable sandbox:
+  `workspace-write` with `sandbox_workspace_write.network_access=true`. Record
+  sandbox/profile and network status before launch. Mark the Codex critic
+  `blocked` if a parent explicitly disabled network or the needed access is
+  broader than this sandbox allows.
 - Do not launch interactive TUI sessions for child agents.
 - Use read-only, plan, or no-edit modes when available. Do not let child agents
   edit files unless implementation was explicitly requested.
 - Wait patiently for non-interactive CLI agents. Use a long timeout for normal
-  model latency; 5 minutes is a reasonable default.
+  model latency; 900 seconds is the default for ordinary model CLI calls.
 - Do not kill a child agent only because the parent harness prints a transient
   parser/router warning such as `failed to parse function arguments`, `unknown
   variant`, or a tool-call parse warning. Continue waiting if the child retries,

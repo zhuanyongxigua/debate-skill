@@ -46,8 +46,8 @@ A RoutePlan passes only when all are true:
 - `why` ties the stack to concrete task signals, risks, evidence needs,
   validators, or expected artifacts.
 - `skipped` names relevant methods that might be tempting but are not selected.
-- `topology` states single agent, same-runtime multi-agent, or heterogeneous CLI
-  agents.
+- `topology` states current-session single agent, single external CLI agent,
+  same-runtime multi-agent, or heterogeneous CLI agents.
 - `next` names the next artifact or action required by the selected stack.
 - Direct answering and direct local tool execution appear only as
   `work-gate direct`.
@@ -67,8 +67,8 @@ Each selected method must produce or update its expected artifact:
 - `work-gate final answer` -> concise result, rationale, risk, next action
 - `work-gate candidate analysis` -> `CandidateAnalysis`
 - `work-gate debate` -> `DebateRecord`
-- `agent-dispatch` -> `AgentDispatchPlan` only as an execution-topology
-  substep for a selected `work-gate` mode
+- `agent-launch` -> `AgentLaunchPlan` only as a CLI launch substep after the
+  user or selected `work-gate` mode has chosen external CLI agents
 
 Do not list a method in `stack` unless you will follow its method frame. If the
 selected stack becomes impossible or unnecessary, emit a revised RoutePlan
@@ -135,10 +135,13 @@ Use this priority order unless the user explicitly asks otherwise:
   useful.
 - Multi-agent work is an execution topology, not a substitute for retrieval,
   tests, schemas, or clear artifacts.
-- Use `agent-dispatch` only as an execution-topology helper for a selected
-  method mode, usually `work-gate candidate analysis` or `work-gate debate`.
-  Do not treat it as a candidate method, mock candidate, or standalone answer
-  path.
+- Use `agent-launch` only after the user or selected method mode has chosen
+  external CLI agents. Do not ask `agent-launch` to decide whether CLI agents
+  are worth using, and do not treat it as a candidate method, mock candidate,
+  or standalone answer path.
+- If the user explicitly asks for Claude Code, Codex CLI, Copilot CLI, or other
+  external CLI agents, preserve that launch intent unless the selected CLI is
+  unavailable, unsafe, or blocked by permissions.
 - For coding agent work, prefer independent diagnosis or patch candidates plus
   project checks before language debate.
 - Do not mix different harnesses and different models unless the task is
@@ -158,7 +161,7 @@ Use this priority order unless the user explicitly asks otherwise:
 | Single-file testable code | `work-gate direct` when obvious, otherwise `work-gate change plan` |
 | Web, shell, browser, or tool operation | `work-gate direct` for one obvious step, otherwise plan the tool loop in the RoutePlan |
 | Evaluation, ranking, review, judging | `work-gate candidate analysis` in evaluation mode |
-| Cross-agent review, debate, or CLI agent choice | selected `work-gate` mode with `agent-dispatch` as topology helper |
+| Cross-agent review, debate, or explicit CLI agents | selected `work-gate` mode with `agent-launch` for concrete CLI startup |
 | Medical, legal, financial, safety, security, compliance | `work-gate` with conservative source and human-review boundaries |
 | Puzzle, search, planning with backtracking | `work-gate` with explicit branch/check strategy |
 | Long, noisy, multi-candidate, or executive output | `work-gate final answer` after the selected method stack |
@@ -170,16 +173,19 @@ Choose execution topology after choosing the method stack.
 
 - Use `single_agent` when the task is simple, tool-bound, or has a strong
   project check.
+- Use `single_external_cli_agent` when the user or selected parent mode has
+  chosen exactly one external CLI agent. Preserve explicit named-CLI requests
+  unless the selected CLI is unavailable, unsafe, or blocked by permissions.
 - Use `same_runtime_multi_agent` when independent candidates, judges, critics,
   or path generators are useful and heterogeneity is not required.
-- Use `agent-dispatch` for any non-trivial decision about current session versus
-  same-runtime agents versus heterogeneous CLI agents, but keep it attached to
-  the selected `work-gate` mode. For example, use it to decide how to run
-  candidate generation, judging, critic review, or debate; do not route to
-  `agent-dispatch` as the work itself.
-- When `agent-dispatch` selects heterogeneous CLI agents, prefer two CLIs by
-  default: Claude Code first, Codex CLI second. Use non-interactive commands
-  only. Add more CLIs only when the user explicitly asks.
+- When the user explicitly asks for external CLI agents, or when the selected
+  method sets `topology: single_external_cli_agent` or
+  `topology: heterogeneous_cli_agents`, use `agent-launch` for the concrete
+  non-interactive CLI startup plan. Do not use `agent-launch` to decide whether
+  the work should stay in the current session.
+- For heterogeneous CLI work, prefer two selected CLIs by default: Claude Code
+  first, Codex CLI second. Use non-interactive commands only. Add more CLIs only
+  when the user explicitly asks.
 - Do not use extra agents to replace a project check, source check, cheap probe,
   or user approval.
 
@@ -248,8 +254,9 @@ Debate gates:
   arbitration unless the user explicitly asks for more.
 
 When the user asks whether to use debate, multi-agent, heterogeneous models, or
-different CLI harnesses, select the relevant work mode first, then use
-`agent-dispatch` to choose the execution topology when needed.
+different CLI harnesses, select the relevant work mode and topology first. If
+the selected topology uses external CLIs, use `agent-launch` for the startup
+plan.
 
 Return `DebateRecord`. Use `references/debate-protocol.md` for the full artifact
 shape.

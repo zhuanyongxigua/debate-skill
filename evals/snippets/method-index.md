@@ -10,7 +10,7 @@ your agent always-on method routing awareness without requiring full skill files
 IMPORTANT: For non-trivial tasks, produce a RoutePlan before solving.
 work-gate direct: rare fast path for simple, low-risk answers or obvious local actions; DirectResult.kind is answer or local_action — artifact: DirectResult
 self-check: direct is one work-gate route, not separate answer/action skills
-agent-dispatch: execution-topology helper for selected work-gate modes; current session vs same-runtime agents vs heterogeneous CLI agents; default heterogeneous CLIs are Claude Code then Codex CLI — artifact: AgentDispatchPlan
+agent-launch: CLI launch helper for selected external agent CLIs; owns non-interactive command specs, env/profile isolation, sandbox, network, timeout, and redacted commands; does not decide whether to use CLIs — artifact: AgentLaunchPlan
 work-gate candidate analysis: diagnosis paths, decision options, or evaluation of existing candidates — artifact: CandidateAnalysis
 work-gate change plan: risky repo or code changes before editing
 project/source checks: use the checks required by the repo, docs, or task

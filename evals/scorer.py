@@ -20,7 +20,7 @@ DEFAULT_TASKS_FILE = EVALS_DIR / "routing-tasks.jsonl"
 RESULTS_DIR = EVALS_DIR / "results"
 
 METHOD_TO_ARTIFACT = {
-    "agent-dispatch": "AgentDispatchPlan",
+    "agent-launch": "AgentLaunchPlan",
     "work-gate candidate analysis": "CandidateAnalysis",
     "work-gate change plan": "ChangePlan",
     "work-gate direct": "DirectResult",
@@ -30,7 +30,7 @@ METHOD_TO_ARTIFACT = {
 }
 
 ARTIFACT_PATTERNS = {
-    "AgentDispatchPlan": r"agentdispatchplan|agent[\s\-_]*dispatch[\s\-_]*plan|heterogeneous[\s\-_]*cli|codex exec|claude\\s+(-p|--print)",
+    "AgentLaunchPlan": r"agentlaunchplan|agent[\s\-_]*launch[\s\-_]*plan|heterogeneous[\s\-_]*cli|codex exec|claude\s+(-p|--print)",
     "RoutePlan": r"routeplan\s*:",
     "CandidateAnalysis": r"candidateanalysis|candidate[\s\-_]*analysis|candidate\s+[a-c1-3]|hypothesis|proposal|option|root cause",
     "ChangePlan": r"changeplan\s*:|change[\s\-_]*plan|scoped file changes",
@@ -298,7 +298,22 @@ def score_result(result, task):
             critical_found.append(m)
     critical_recall = len(critical_found) / len(expected) if expected else 1.0
 
-    # 3. Avoid violations (methods/patterns that should not appear)
+    # 3. Required explanation recall
+    must_explain = task.get("must_explain", [])
+    must_explain_found = []
+    for item in must_explain:
+        item_norm = normalize_key(item)
+        if item_norm in output_norm:
+            must_explain_found.append(item)
+    must_explain_recall = len(must_explain_found) / len(must_explain) if must_explain else 1.0
+
+    # 4. Expected topology
+    expected_topology = task.get("expected_topology")
+    topology_matched = True
+    if expected_topology:
+        topology_matched = normalize_key(expected_topology) in output_norm
+
+    # 5. Avoid violations (methods/patterns that should not appear)
     avoid = task.get("avoid", [])
     avoid_violations = []
     for a in avoid:
@@ -311,7 +326,7 @@ def score_result(result, task):
             avoid_violations.append(a)
     avoid_violated = len(avoid_violations) > 0
 
-    # 4. Artifact presence
+    # 6. Artifact presence
     required_artifacts = []
     for method in expected:
         artifact = METHOD_TO_ARTIFACT.get(method)
@@ -328,12 +343,12 @@ def score_result(result, task):
             artifacts_present.append(artifact)
     artifact_score = len(artifacts_present) / len(required_artifacts) if required_artifacts else 1.0
 
-    # 5. Debate misuse: debate appeared when not in expected stack
+    # 7. Debate misuse: debate appeared when not in expected stack
     debate_expected = "work-gate debate" in expected
     debate_appeared = bool(re.search(r"work-gate\s+debate|debate\s*record|debaterecord", output, re.IGNORECASE))
     debate_misuse = debate_appeared and not debate_expected
 
-    # 6. Word count
+    # 8. Word count
     word_count = len(output.split())
 
     return {
@@ -344,6 +359,11 @@ def score_result(result, task):
         "critical_recall": round(critical_recall, 2),
         "critical_found": critical_found,
         "critical_missing": [m for m in expected if m not in critical_found],
+        "must_explain_recall": round(must_explain_recall, 2),
+        "must_explain_found": must_explain_found,
+        "must_explain_missing": [m for m in must_explain if m not in must_explain_found],
+        "expected_topology": expected_topology,
+        "topology_matched": topology_matched,
         "avoid_violated": avoid_violated,
         "avoid_violations": avoid_violations,
         "artifact_score": round(artifact_score, 2),
@@ -363,6 +383,8 @@ def aggregate(scores):
         "n": n,
         "route_plan_rate": round(sum(s["route_plan_emitted"] for s in scores) / n, 3),
         "avg_critical_recall": round(sum(s["critical_recall"] for s in scores) / n, 3),
+        "avg_must_explain_recall": round(sum(s["must_explain_recall"] for s in scores) / n, 3),
+        "topology_match_rate": round(sum(s["topology_matched"] for s in scores) / n, 3),
         "avoid_violation_rate": round(sum(s["avoid_violated"] for s in scores) / n, 3),
         "avg_artifact_score": round(sum(s["artifact_score"] for s in scores) / n, 3),
         "debate_misuse_rate": round(sum(s["debate_misuse"] for s in scores) / n, 3),
@@ -435,8 +457,8 @@ def main():
     if has_layer2:
         print("\n--- Layer 1: Routing ---")
 
-    col = [35, 4, 10, 8, 10, 11, 11, 8]
-    headers = ["Condition", "N", "RoutePlan%", "Recall", "Artifact", "AvoidViol%", "DebateMis%", "AvgTok"]
+    col = [35, 4, 10, 8, 8, 8, 10, 11, 11, 8]
+    headers = ["Condition", "N", "RoutePlan%", "Stack", "Explain", "Topology", "Artifact", "AvoidViol%", "DebateMis%", "AvgTok"]
     header_line = "  ".join(h.ljust(w) if i == 0 else h.rjust(w) for i, (h, w) in enumerate(zip(headers, col)))
     print(header_line)
     print("-" * len(header_line))
@@ -448,10 +470,12 @@ def main():
             str(agg["n"]).rjust(col[1]),
             f"{agg['route_plan_rate']*100:.1f}%".rjust(col[2]),
             f"{agg['avg_critical_recall']:.2f}".rjust(col[3]),
-            f"{agg['avg_artifact_score']:.2f}".rjust(col[4]),
-            f"{agg['avoid_violation_rate']*100:.1f}%".rjust(col[5]),
-            f"{agg['debate_misuse_rate']*100:.1f}%".rjust(col[6]),
-            str(agg["avg_tokens"]).rjust(col[7]),
+            f"{agg['avg_must_explain_recall']:.2f}".rjust(col[4]),
+            f"{agg['topology_match_rate']:.2f}".rjust(col[5]),
+            f"{agg['avg_artifact_score']:.2f}".rjust(col[6]),
+            f"{agg['avoid_violation_rate']*100:.1f}%".rjust(col[7]),
+            f"{agg['debate_misuse_rate']*100:.1f}%".rjust(col[8]),
+            str(agg["avg_tokens"]).rjust(col[9]),
         ]
         print("  ".join(row))
 

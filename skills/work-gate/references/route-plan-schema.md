@@ -14,7 +14,7 @@ RoutePlan:
   stack: []
   why: ""
   skipped: []
-  topology: "single_agent|same_runtime_multi_agent|heterogeneous_cli_agents"
+  topology: "single_agent|single_external_cli_agent|same_runtime_multi_agent|heterogeneous_cli_agents"
   next: ""
 ```
 
@@ -48,7 +48,7 @@ RoutePlan:
     has_project_check: false
     requires_codebase_context: false
     requires_tool_use: false
-    needs_agent_dispatch: false
+    needs_agent_launch: false
     needs_multi_agent: false
     needs_heterogeneous_agents: false
     risk_level: "low|medium|high"
@@ -73,9 +73,9 @@ RoutePlan:
     condition: ""
     max_rounds: 1
   execution_topology:
-    mode: "single_agent|same_runtime_multi_agent|heterogeneous_cli_agents"
-    dispatch_method: "none|agent-dispatch"
-    dispatch_role: "none|topology_helper_for_selected_method"
+    mode: "single_agent|single_external_cli_agent|same_runtime_multi_agent|heterogeneous_cli_agents"
+    launch_skill: "none|agent-launch"
+    launch_role: "none|cli_launch_helper_for_selected_external_agents"
     reason: ""
     agents:
       - role: ""
@@ -148,24 +148,33 @@ safe fallback.
 
 Choose execution topology after selecting the method stack.
 
-Use `single_agent` when the task is simple, tool-bound, or has a strong project check.
+Use `single_agent` when the current session can handle the task directly, the
+task is tool-bound, or there is a strong project check.
+
+Use `single_external_cli_agent` when the user or parent route selected exactly
+one external CLI agent such as Claude Code, Codex CLI, or Copilot CLI. This is
+still an external CLI launch and must use `agent-launch` for startup details.
 
 Use `same_runtime_multi_agent` when independent generation or judging is useful
 but the task does not need model, tool, or harness diversity.
 
-Use `heterogeneous_cli_agents` when model, tool, or harness diversity can reduce
-correlated error: adversarial review across systems, benchmark comparison,
-high-risk review, debate with independent critics, or explicit user request for
-different agents such as Claude Code and Codex. Inspect available CLIs first.
-Ask before running external CLI commands when they require network access,
-credentials, broader filesystem access, or other elevated permissions.
+Use `heterogeneous_cli_agents` when two or more selected external CLI agents add
+model, tool, or harness diversity: adversarial review across systems, benchmark
+comparison, high-risk review, debate with independent critics, or explicit user
+request for different agents such as Claude Code and Codex. Inspect available
+CLIs first. Ask before running external CLI commands when they require network
+access, credentials, broader filesystem access, or other elevated permissions.
 
-When the route needs a real current-session versus CLI decision, set
-`dispatch_method: "agent-dispatch"` and keep dispatch attached to the selected
-`work-gate` mode. Do not list `agent-dispatch` as the reasoning method or as a
-candidate in a comparison. It is a topology helper for running candidate
-analysis, judging, critic review, debate, or cross-agent review.
+Preserve explicit user requests for named external CLIs unless the selected CLI
+is unavailable, unsafe, or blocked by permissions.
 
-Default heterogeneous dispatch uses two non-interactive CLIs at most: Claude
+When the route selects one or more external CLI agents, set
+`launch_skill: "agent-launch"` and keep launch attached to the selected
+`work-gate` mode. Do not ask `agent-launch` to decide whether CLI agents are
+worth using, and do not list it as a reasoning method or candidate in a
+comparison. It is a CLI launch helper for selected candidate analysis, judging,
+critic review, debate, or cross-agent review agents.
+
+Default heterogeneous CLI work uses two non-interactive CLIs at most: Claude
 Code first, Codex CLI second. Use additional CLIs only when explicitly
 requested.

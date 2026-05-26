@@ -42,9 +42,9 @@ This is an internal `work-gate` mode, not a separate installable skill.
 
 - `work-gate`: owns this mode and converts the selected candidate into a direct
   action, change plan, debate, or final answer.
-- `agent-dispatch`: decides current session, same-runtime agents, or
-  heterogeneous CLI agents when independent candidates or scoring need external
-  agents.
+- `agent-launch`: prepares external CLI launches when the parent route has
+  already selected single external CLI or heterogeneous CLI agents for
+  independent candidates or scoring.
 - `work-gate debate`: resolves unresolved conflict between top candidates.
 - `work-gate final answer`: compresses the analysis into a concise recommendation.
 

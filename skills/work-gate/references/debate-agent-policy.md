@@ -4,7 +4,9 @@ Use this policy as background when deciding between single-agent execution,
 independent sampling, same-runtime multi-agent work, heterogeneous models,
 work-gate debate, or different CLI harnesses.
 
-For an actual current-session versus CLI decision, use `agent-dispatch`.
+For an actual current-session versus CLI decision, use `work-gate` topology in
+the `RoutePlan`. Use `agent-launch` only after external CLI agents have been
+selected by the user or parent route.
 
 ## Core Rule
 
@@ -18,15 +20,17 @@ Ask:
 4. Is model diversity needed, or is it just extra cost?
 5. Are we evaluating models, or full agent harnesses?
 
-## Default Dispatch Bias
+## Default Topology Bias
 
 Use the current session for simple, tool-bound, or directly checkable tasks.
 When independent agent work is useful and no deterministic check decides the
-task, prefer `agent-dispatch`; it should lean toward heterogeneous CLI agents
-for robust cross-agent review, debate, benchmarking, or high-risk second
-opinions.
+task, `work-gate` may select same-runtime or heterogeneous agents. If the user
+explicitly asks for Claude Code, Codex CLI, Copilot CLI, or another external
+agent, preserve that CLI selection unless it is unsafe, unavailable, or blocked;
+use `single_external_cli_agent` for one selected CLI and
+`heterogeneous_cli_agents` for two or more selected CLIs.
 
-Default heterogeneous dispatch uses two CLIs: Claude Code first, Codex CLI
+Default heterogeneous CLI work uses two CLIs: Claude Code first, Codex CLI
 second. Add other CLIs only when the user explicitly asks or approves fallback.
 
 ## Same Model Role-Play Versus Fresh Sessions
@@ -48,8 +52,9 @@ Use the same harness when comparing model behavior. Changing both harness and
 model confounds the result because system prompts, tool permissions, context
 management, edit strategy, and test execution all change.
 
-Use `agent-dispatch` for different CLI harnesses when the question is full-stack
-agent performance or robust independent review:
+Use `work-gate` topology for different CLI harnesses when the question is
+full-stack agent performance or robust independent review, then use
+`agent-launch` for the concrete startup plan:
 
 - "Claude Code + model A versus Codex + model B"
 - cross-agent review of a risky architecture plan
@@ -61,17 +66,18 @@ are needed.
 
 For Codex CLI specifically, do not assume a child `codex exec` process can use
 network just because the command exists. If the task needs SSH, package
-registries, external APIs, web access, or remote docs, the dispatch plan must
-state the Codex sandbox/profile and whether network is enabled, approved,
+registries, external APIs, web access, or remote docs, the `AgentLaunchPlan`
+must state the Codex sandbox/profile and whether network is enabled, approved,
 blocked, or unknown. If network is blocked, report Codex as blocked for that
 capability instead of treating the failure as a model-quality result.
 
 ## CLI Agent Invocation Rules
 
-Use `agent-dispatch` whenever `work-gate` routes to heterogeneous CLI agents for
-debate, review, judging, benchmarking, or cross-agent critique.
+Use `agent-launch` whenever `work-gate` routes to `single_external_cli_agent` or
+`heterogeneous_cli_agents` for debate, review, judging, benchmarking, or
+cross-agent critique.
 
-- Default heterogeneous CLI dispatch in this repo is Claude Code plus Codex CLI.
+- Default heterogeneous CLI launch in this repo is Claude Code plus Codex CLI.
 - Do not invoke Gemini or other CLIs unless the user explicitly asks or approves
   fallback.
 - Prefer non-interactive modes:
@@ -84,7 +90,7 @@ debate, review, judging, benchmarking, or cross-agent critique.
 - Do not let child agents edit files unless the user explicitly requested
   implementation.
 - Wait patiently for non-interactive CLI agents. Use a long timeout for normal
-  model latency; 5 minutes is a reasonable default.
+  model latency; 900 seconds is the default for ordinary model CLI calls.
 - Do not kill a child agent only because the parent harness prints a transient
   parser/router warning such as `failed to parse function arguments`, `unknown
   variant`, or a tool-call parse warning. Continue waiting if the child retries,

@@ -51,9 +51,10 @@ Layer 3 additional metrics:
 
 ## Layers
 
-**Layer 1 — Routing eval** (`routing-tasks.jsonl`, 28 tasks):
+**Layer 1 — Routing eval** (`routing-tasks.jsonl`, 31 tasks):
 Tests whether the agent selects the right method stack. Scoring is string
-matching: do expected method names and artifact names appear in the output?
+matching: do expected method names, required explanation terms, topology enum,
+and artifact names appear in the output?
 
 **Layer 2 — Artifact quality eval** (`tasks/artifact-tasks.jsonl`, 10 tasks):
 Tests whether artifacts have the right internal structure. Two scoring modes:
@@ -109,10 +110,10 @@ Scale thresholds:
 | 3 | current | smoke test, runner works |
 | 10 | early signal | internal record only |
 | 18 | v0 credible | "initial outcome eval" |
-| 24–30 | v1 recommended | show pass-rate trends, README-worthy |
+| 24–32 | v1 recommended | show pass-rate trends, README-worthy |
 | 50+ | serious benchmark | stability + category breakdown |
 
-### Planned fixture categories (target: 24–30)
+### Planned fixture categories (target: 24–32)
 
 **A. Auth / Session / Security (6 fixtures)**
 
@@ -216,7 +217,7 @@ evals/fixtures/<fixture-id>/
 Existing 3 fixtures use a single `tests/` file; `public_tests` and `hidden_tests`
 in `meta.json` point to specific node IDs within it.
 
-### Scoring goals for v1 (24-30 fixtures)
+### Scoring goals for v1 (24-32 fixtures)
 
 Primary claim:
 
@@ -332,7 +333,7 @@ evals/
   scorer.py                        Layer 1 + Layer 2 scorer
   layer3_runner.py                 Layer 3 harness (applies patch, runs pytest)
   layer3_scorer.py                 Layer 3 scorer (pass rate by condition + fixture)
-  routing-tasks.jsonl              28 Layer 1 routing tasks
+  routing-tasks.jsonl              31 Layer 1 routing tasks
   route-rubric.md                  manual rubric for RoutePlans
   tasks/
     artifact-tasks.jsonl           10 Layer 2 artifact quality tasks

@@ -8,7 +8,7 @@ smallest stack that covers the user's intent, risk, and required artifacts.
 | Method | Best for | Avoid when | Primary artifact |
 | --- | --- | --- | --- |
 | `work-gate` | Route-before-work entry protocol, direct mode, code-change planning, and tool-loop planning | A previous RoutePlan already selected a method and the current step is just execution | RoutePlan / ChangePlan |
-| `agent-dispatch` | Execution-topology helper for a selected `work-gate` mode: current session, same-runtime agents, or heterogeneous CLI agents | No parent mode needs independent agents, or a deterministic check can decide now | AgentDispatchPlan |
+| `agent-launch` | CLI launch helper for selected external agent CLIs: command specs, env/profile isolation, sandbox, network, timeout, and redacted commands | No external CLI agent has been selected by the user or parent route | AgentLaunchPlan |
 
 Internal `work-gate` modes:
 
@@ -77,19 +77,22 @@ preserve human-review boundaries. Do not let model debate be final authority.
 
 ### Debate, Ensemble, and Agent Harness Choice
 
-Use `agent-dispatch` only when a selected mode may involve independent agents or
-external CLI agents. It is not a candidate method and should not appear as a
-standalone option in candidate analysis.
+`work-gate` owns the choice between current session, single external CLI,
+same-runtime agents, and heterogeneous CLI agents. Use `agent-launch` only after
+the user or selected route has already chosen external CLI agents. It is not a
+candidate method and should not appear as a standalone option in candidate
+analysis.
 
-Dispatch bias inside `agent-dispatch`:
+If the user explicitly asks for Claude Code, Codex CLI, Copilot CLI, or another
+external CLI, preserve that launch intent unless the selected CLI is
+unavailable, unsafe, or blocked by permissions.
 
-1. Current session for simple, tool-bound, or directly checkable tasks.
-2. Heterogeneous CLI harnesses when independent review, debate, benchmark, or
-   high-risk second opinion benefits from model/tool/harness diversity.
-3. Same-runtime multi-agent roles when independence helps but heterogeneity is
-   not worth the cost or permissions.
-4. Heterogeneous models in the same harness when model diversity is the
-   experiment or when weaker models act as critics/test writers.
+When external CLI agents are selected, `agent-launch` supplies the launch
+defaults and constraints: non-interactive command shape, env/profile isolation,
+sandbox, network, approval, timeout, stop policy, and redacted display command.
+Single external CLI, same-runtime, and heterogeneous execution remain
+`work-gate` topology choices; `agent-launch` only handles launching the selected
+external CLIs.
 
 Use `work-gate debate` after independent candidates exist or when the debate
 entry case is explicit. Do not use role-play inside one shared context when
@@ -146,12 +149,16 @@ Do not expose change planning as a separate skill.
 
 Treat multi-agent work as execution topology, not as a method primitive.
 
-Use `agent-dispatch` to choose the execution topology for a selected work mode:
-candidate generation, rubric scoring, critic review, debate, benchmarking, or
-cross-agent review.
+Choose the execution topology in `work-gate` for a selected work mode: candidate
+generation, rubric scoring, critic review, debate, benchmarking, or cross-agent
+review. Use `agent-launch` only for the concrete startup plan when that topology
+uses external CLI agents.
 
 Use the current session when the task is simple, tool-bound, or project checks
 can decide.
+
+Use `single_external_cli_agent` when exactly one external CLI has been selected,
+usually by explicit user request.
 
 Use same-runtime fresh-session multi-agent execution when independence is useful
 but heterogeneity is not required:
@@ -169,7 +176,7 @@ part of the requirement:
 - explicit user request for Codex plus Claude Code or another CLI
 - tasks where same-runtime correlation would undermine the result
 
-Default heterogeneous dispatch uses at most two CLIs: Claude Code first, Codex
+Default heterogeneous CLI work uses at most two CLIs: Claude Code first, Codex
 CLI second. Use other CLIs only when the user explicitly asks or approves a
 fallback. All CLI child agents must be non-interactive. Ask before running
 external tools that require network, credentials, broad filesystem access, or

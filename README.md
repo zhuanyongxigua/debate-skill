@@ -125,8 +125,8 @@ The full machine-readable `RoutePlan` schema lives in
 | Open-ended product or strategy decision | `work-gate candidate analysis -> work-gate final answer` |
 | Creative naming or copy with many options | `work-gate candidate analysis -> work-gate final answer` |
 | Subjective evaluation or ranking | `work-gate candidate analysis` in evaluation mode |
-| Cross-agent review or CLI agent choice | selected `work-gate` mode with `agent-dispatch` as topology helper |
-| Concrete candidates still tied | `work-gate debate` with `agent-dispatch` when independent agents are needed |
+| Cross-agent review or explicit CLI agents | selected `work-gate` mode with `agent-launch` for concrete CLI startup |
+| Concrete candidates still tied | `work-gate debate`; use `agent-launch` only if external CLI critics are selected |
 | High-risk medical, legal, financial, safety, or compliance question | `work-gate` with source and human-review boundaries |
 | Long or noisy intermediate work | `work-gate final answer` |
 
@@ -147,7 +147,7 @@ analysis and debate are internal `work-gate` modes, not separate skills.
 | Method | Use it for | Primary artifact |
 | --- | --- | --- |
 | [`work-gate`](method-cards/work-gate.md) | Work-entry gate and method selection | RoutePlan |
-| [`agent-dispatch`](method-cards/agent-dispatch.md) | Execution topology helper used by candidate analysis, debate, review, and CLI-agent workflows | AgentDispatchPlan |
+| [`agent-launch`](method-cards/agent-launch.md) | CLI launch helper for selected external agent CLIs, including env, sandbox, network, timeout, and redacted commands | AgentLaunchPlan |
 | [`candidate-analysis`](method-cards/candidate-analysis.md) | Internal mode for multiple diagnosis paths, options, outputs, or plans | CandidateAnalysis |
 | [`debate`](method-cards/debate.md) | Internal mode for requirement, single-proposal, candidate, or judgment debate | DebateRecord |
 
@@ -222,12 +222,18 @@ conflicts between concrete candidates, not a default way to think.
 
 Multi-agent work is an execution topology, not a method by itself.
 
-Use `agent-dispatch` inside the selected `work-gate` mode when candidate
-analysis, debate, review, or benchmarking needs independent agents or external
-CLI agents. It chooses current session, same-runtime agents, or heterogeneous
-CLI agents. It is not a candidate method or a standalone reasoning path. For
-heterogeneous CLI work, the default is two non-interactive CLIs: Claude Code
-first and Codex CLI second. Add more CLIs only when explicitly requested.
+`work-gate` owns execution topology: current session, single external CLI,
+same-runtime agents, or heterogeneous CLI agents.
+
+Use `agent-launch` only after the user or selected parent method has already
+chosen external CLI agents. It prepares or runs bounded non-interactive CLI
+launches with shared provider defaults for environment isolation, sandbox,
+network, timeout, stop policy, prompt transport, and redacted commands. It does
+not decide whether CLI agents are worth using. Explicit user requests for named
+CLIs should be preserved unless the selected CLI is unavailable, unsafe, or
+blocked by permissions. For heterogeneous CLI work, the default selected pair
+remains Claude Code first and Codex CLI second unless the user requested a
+different set.
 
 ## Contributing
 

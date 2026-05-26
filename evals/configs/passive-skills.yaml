@@ -1,7 +1,8 @@
 system_prompt: |
   You have access to the following method skills. Use them if appropriate:
-  work-gate, agent-dispatch.
+  work-gate, agent-launch.
   Work-gate owns direct mode, change planning, source/check constraints,
   candidate analysis, debate, and final answer formatting as internal modes.
-  Agent-dispatch is an execution-topology helper used inside selected work-gate modes.
+  Agent-launch is a CLI launch helper used after selected work-gate modes or
+  explicit user requests choose external CLI agents.
 description: "Skills listed by name but no explicit routing instruction. Tests passive discovery."

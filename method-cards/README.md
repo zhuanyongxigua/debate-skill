@@ -14,7 +14,7 @@ Cards can be composed into method stacks by the root meta skill,
 | Card | Method type | Primary artifact |
 | --- | --- | --- |
 | [`work-gate`](work-gate.md) | Work-entry gate | RoutePlan |
-| [`agent-dispatch`](agent-dispatch.md) | Execution topology helper for selected work-gate modes | AgentDispatchPlan |
+| [`agent-launch`](agent-launch.md) | CLI launch helper for selected external agent CLIs | AgentLaunchPlan |
 | [`candidate-analysis`](candidate-analysis.md) | Internal work-gate candidate generation, comparison, and rubric evaluation | CandidateAnalysis |
 | [`debate`](debate.md) | Internal work-gate debate and conflict resolution | DebateRecord |
 
@@ -38,8 +38,9 @@ Prefer the smallest card stack that controls the main risk:
 - If there are no candidates yet and debate is requested, use
   `requirement_debate`: generate candidates, freeze them, then debate.
 - If candidates conflict and no cheaper check can decide, use `work-gate debate`.
-- If independent agents or external CLIs may be useful, use `agent-dispatch`
-  inside the selected `work-gate` mode; do not treat it as a candidate method.
+- If external CLIs have been explicitly requested or selected by the parent
+  route, use `agent-launch` for concrete CLI startup; do not treat it as a
+  candidate method or topology chooser.
 - If method work is long or noisy, use the work-gate final answer gate.
 
 ## Card Format

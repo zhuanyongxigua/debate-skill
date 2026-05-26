@@ -38,7 +38,7 @@ Use lowercase kebab-case names for installable skills:
 
 ```text
 work-gate
-agent-dispatch
+agent-launch
 ```
 
 Use `work-gate <mode>` names for internal gate modes, such as `work-gate
@@ -47,10 +47,10 @@ candidate analysis` and `work-gate debate`.
 Prefer method names over marketing names. The name should tell an agent what to
 do.
 
-Installable skills should stay sparse. Prefer names such as `work-gate` and
-`agent-dispatch` for entry protocols or execution topology. Candidate analysis,
-debate, direct mode, change plans, and finalization currently live inside
-`work-gate`.
+Installable skills should stay sparse. Prefer names such as `work-gate` for
+entry protocols and `agent-launch` for reusable CLI launch behavior. Candidate
+analysis, debate, direct mode, change plans, and finalization currently live
+inside `work-gate`.
 
 ## Quality Bar
 

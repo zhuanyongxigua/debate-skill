@@ -15,7 +15,7 @@ Score each RoutePlan from 0 to 5 on each criterion.
 | Selection reasons | Every selected skill has a concrete reason. |
 | Skip reasons | Relevant skipped skills have clear reasons. |
 | Escalation | The plan states when to add debate, judges, or heterogeneous agents. |
-| Dispatch | Agent-dispatch is used as an execution-topology helper when the selected method needs current-session, same-runtime, or heterogeneous CLI agents. |
+| CLI launch | `agent-launch` is used when the selected route or explicit user request needs one or more external CLI agents, and it is not used to decide whether CLI agents are worth using. |
 | Direct gate | Direct work is explicitly selected as `work-gate direct` and meets its gate. |
 | Execution consistency | Later output follows the selected stack and produces the required artifact. |
 | Finalization | Long method output is compressed without hiding uncertainty. |
@@ -26,10 +26,11 @@ Score each RoutePlan from 0 to 5 on each criterion.
 - Answers factual/current questions without source or citation verification.
 - Edits code before localization when root cause is uncertain.
 - Uses multi-agent work as a substitute for project checks or sources.
-- Uses heterogeneous CLI agents without agent-dispatch.
-- Treats agent-dispatch as a candidate method, mock candidate, or standalone
-  reasoning path instead of a topology helper for candidate analysis, debate,
-  review, or benchmarking.
+- Uses single external CLI or heterogeneous CLI agents without an `agent-launch`
+  plan.
+- Treats `agent-launch` as a candidate method, mock candidate, standalone
+  reasoning path, or topology chooser instead of a launch helper for selected
+  external CLI agents.
 - Launches interactive child-agent CLI sessions instead of non-interactive mode.
 - Launches Codex CLI for a network-dependent child task without an explicit
   sandbox/profile and network-capability plan.
