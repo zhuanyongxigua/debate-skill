@@ -1,6 +1,6 @@
 # Meta Method Skills
 
-**Meta skills and method cards for AI agents.**
+**Meta skills and routing rules for AI agents.**
 
 Agents often fail before they start.
 
@@ -19,17 +19,16 @@ Meta Method Skills help agents pass a work gate before they choose the answer.
 This repo packages practical agent workflows as small, reusable **meta skills**.
 
 Each meta skill helps an agent decide, guide, or structure how work should be
-done. Each **Method Card** is the human-readable specification for one method.
+done. The routing catalog records the method choices and artifacts that
+`work-gate` can select.
 
 - `skills/` contains the installable agent-facing skill implementations.
-- `method-cards/` contains the human-facing method specs, contribution format,
-  and public catalog.
-- `recipes/` shows how cards compose into common workflows.
+- `skills/work-gate/references/method-catalog.md` contains the routing catalog.
 - `evals/` contains starter tasks and rubrics for measuring routing quality.
 
 No runtime. No framework. No orchestration engine.
 
-Just composable meta skills, method cards, and routing rules for choosing better
+Just composable meta skills, a method catalog, and routing rules for choosing better
 agent workflows.
 
 ## The Core Idea
@@ -60,7 +59,7 @@ smallest sufficient method stack:
 - debate only when concrete candidates conflict and no cheaper check can decide
 - use the built-in final answer gate to compress long intermediate work
 
-Debate is a method card, not the default method.
+Debate is a bounded `work-gate` mode, not the default method.
 
 ## Strict Mode
 
@@ -133,23 +132,21 @@ The full machine-readable `RoutePlan` schema lives in
 `work-gate direct` is a narrow fast path for simple, self-contained,
 low-risk questions. It is not the default route.
 
-## Meta Skills and Method Cards
+## Meta Skills and Method Catalog
 
-Each method has two possible layers:
-
-1. A **Method Card**: the human-readable spec.
-2. An implementation: either an installable agent-facing `SKILL.md` or an
-   internal `work-gate` mode.
+Each method is either an installable agent-facing `SKILL.md` or an internal
+`work-gate` mode. The compact routing catalog lives in
+[`skills/work-gate/references/method-catalog.md`](skills/work-gate/references/method-catalog.md).
 
 The current core set is intentionally small: 2 installable skills. Candidate
 analysis and debate are internal `work-gate` modes, not separate skills.
 
 | Method | Use it for | Primary artifact |
 | --- | --- | --- |
-| [`work-gate`](method-cards/work-gate.md) | Work-entry gate and method selection | RoutePlan |
-| [`agent-launch`](method-cards/agent-launch.md) | CLI launch helper for selected external agent CLIs, including env, sandbox, network, timeout, and redacted commands | AgentLaunchPlan |
-| [`candidate-analysis`](method-cards/candidate-analysis.md) | Internal mode for multiple diagnosis paths, options, outputs, or plans | CandidateAnalysis |
-| [`debate`](method-cards/debate.md) | Internal mode for requirement, single-proposal, candidate, or judgment debate | DebateRecord |
+| [`work-gate`](skills/work-gate/SKILL.md) | Work-entry gate and method selection | RoutePlan |
+| [`agent-launch`](skills/agent-launch/SKILL.md) | CLI launch helper for selected external agent CLIs, including env, sandbox, network, timeout, and redacted commands | AgentLaunchPlan |
+| `work-gate candidate analysis` | Internal mode for multiple diagnosis paths, options, outputs, or plans | CandidateAnalysis |
+| `work-gate debate` | Internal mode for requirement, single-proposal, candidate, or judgment debate | DebateRecord |
 
 Built into `work-gate`: direct mode, change planning, source/check constraints,
 candidate analysis, debate, and final answer formatting. These are gate modes,
@@ -161,22 +158,6 @@ scoring. If candidates already exist, use evaluation mode and skip generation.
 Built into `work-gate debate`: requirement debate, single-proposal debate,
 candidate debate, and judgment debate. Existing candidates are frozen directly;
 raw requirements generate candidates first, then debate only if useful.
-
-## Recipes
-
-Recipes compose cards into common agent workflows:
-
-- [`coding-bug-fix`](recipes/coding-bug-fix.md): localize before editing
-- [`factual-claim-audit`](recipes/factual-claim-audit.md): verify sources, audit claims, remove unsupported claims
-- [`open-ended-decision`](recipes/open-ended-decision.md): generate proposals, critique, synthesize, verify
-
-## Examples
-
-Examples show before/after routing for concrete tasks:
-
-- [`repo-debugging-401`](examples/repo-debugging-401.md): localize intermittent auth failures before editing
-- [`factual-claim-audit`](examples/factual-claim-audit.md): map current claims to sources before answering
-- [`positioning-decision`](examples/positioning-decision.md): compare positioning options before recommending one
 
 ## Evals
 
@@ -193,12 +174,6 @@ skills/
     SKILL.md
     agents/
     references/
-method-cards/
-  *.md                 human-facing method card specs
-recipes/
-  *.md                 card compositions for common workflows
-examples/
-  *.md                 before/after routed examples
 evals/
   *.jsonl, *.md        route selection eval seed and rubric
 ```
@@ -211,9 +186,9 @@ It does not run agents, schedule tasks, manage memory, or replace coding tools.
 It is a lightweight control layer for agent behavior: a way to name, choose, and
 compose the methods an agent should use.
 
-It is also not a prompt pack. A good method card is not just a prompt; it
-defines use and avoid conditions, required inputs, produced artifacts,
-composition rules, failure modes, and evaluation hooks.
+It is also not a prompt pack. A good method entry is not just a prompt; it
+defines use and avoid conditions, required artifacts, composition rules, failure
+modes, and evaluation hooks in the skill docs, routing catalog, or evals.
 
 Debate is included, but it is not centered. Debate is a fallback for unresolved
 conflicts between concrete candidates, not a default way to think.
@@ -237,10 +212,8 @@ different set.
 
 ## Contributing
 
-New method cards should follow the [Method Card template](method-cards/TEMPLATE.md).
-
-A good card is not just a prompt. It has clear use/avoid conditions, a named
-artifact, composition rules, failure modes, and at least one evaluation hook.
+New methods should update the relevant `SKILL.md`, the work-gate method catalog,
+and at least one eval when behavior changes.
 
 ## License
 
