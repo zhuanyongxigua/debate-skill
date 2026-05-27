@@ -17,7 +17,7 @@ It does not answer:
 
 - whether the work should stay in the current session
 - whether same-runtime agents would be cheaper
-- whether a debate, review, or candidate analysis is useful
+- whether a debate, review, or multi-proposal exploration is useful
 - how child outputs should be judged or merged
 
 Do not down-route an explicit CLI request to the current session because the
@@ -45,8 +45,8 @@ launched safely, record it as `blocked` or `unavailable` instead.
 - no transcript or artifact directory format beyond launch metadata
 - no repeated polling strategy
 
-Use a parent orchestrator such as `cli-debate`, `cli-delegator`, `work-gate
-debate`, review, benchmarking, or a project-specific harness for those
+Use a parent orchestrator such as `debate-router`, `cli-debate`,
+`cli-delegator`, review, benchmarking, or a project-specific harness for those
 responsibilities.
 
 ## Launch Rules
@@ -164,7 +164,7 @@ Return an `AgentLaunchPlan`:
 ```yaml
 AgentLaunchPlan:
   launch_intent: "user_requested|parent_selected|fallback_selected"
-  owner: "work-gate|cli-debate|cli-delegator|review|benchmark|other"
+  owner: "debate-router|cli-debate|cli-delegator|review|benchmark|other"
   selected_agents:
     - name: "codex-cli"
       provider: "codex-cli"

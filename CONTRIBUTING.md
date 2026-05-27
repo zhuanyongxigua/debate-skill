@@ -1,65 +1,71 @@
 # Contributing
 
-This repo is organized around Meta Method Skills and a compact routing catalog.
+This repo is organized around a small number of installable agent skills.
 
-A contribution should make agent behavior easier to route, execute, or evaluate.
-Avoid adding broad prompts that say "think carefully" without a concrete method,
-artifact, or evaluation hook.
+A contribution should make agent behavior easier to execute or evaluate without
+turning the skills into a broad prompt pack.
 
-Only broad entry points should become installable agent-facing skills.
-Lightweight methods should usually be implemented as `work-gate` modes or
-references instead of separate skills.
+## Current Skills
 
-## Adding or Updating a Method
+- `debate-router`: explicit debate entry classification plus bounded debate
+  execution.
+- `agent-launch`: shared launch specs and defaults for selected local agent
+  CLIs.
 
-1. Update the relevant `skills/<name>/SKILL.md` or `skills/work-gate/SKILL.md`.
-2. Update `skills/work-gate/references/method-catalog.md` when routing changes.
-3. Add or update eval coverage for new routing behavior.
-4. If the method should be installable by an agent, justify why it should not be a
-   `work-gate` mode first. Then add a matching `skills/<name>/SKILL.md`.
+## Updating A Skill
+
+1. Update the relevant `skills/<name>/SKILL.md`.
+2. Update any directly referenced `references/` or `scripts/` files.
+3. Update eval tasks, rubrics, or scorer checks when behavior changes.
+4. Keep global orchestration concerns out of narrow skills.
+
+## Boundaries
+
+`debate-router` should stay narrow:
+
+- It does not decide whether debate is necessary.
+- It does not provide non-debate workflow modes.
+- It classifies the debate input shape and produces `DebateRecord`.
+
+`agent-launch` should stay narrow:
+
+- It does not decide whether external CLIs should be used.
+- It does not own debate turns, transcripts, arbitration, supervisor loops, PID
+  tracking, resume/stop, or polling.
+- It builds and records CLI launch specs for agents already selected by the
+  user or parent workflow.
 
 ## Method Requirements
 
-Every method should have:
+Every skill should have:
 
-- clear "Use when" conditions
-- clear "Avoid when" conditions
-- required context or inputs
-- named artifacts
-- composition rules
+- clear "Use when" conditions in frontmatter
+- explicit non-goals
+- required inputs and artifacts
+- composition rules with other skills
 - known failure modes
-- evaluation signals
-- at least one eval when it affects routing
+- at least one eval when routing or artifact behavior changes
 
 ## Naming
 
 Use lowercase kebab-case names for installable skills:
 
 ```text
-work-gate
+debate-router
 agent-launch
 ```
 
-Use `work-gate <mode>` names for internal gate modes, such as `work-gate
-candidate analysis` and `work-gate debate`.
-
-Prefer method names over marketing names. The name should tell an agent what to
-do.
-
-Installable skills should stay sparse. Prefer names such as `work-gate` for
-entry protocols and `agent-launch` for reusable CLI launch behavior. Candidate
-analysis, debate, direct mode, change plans, and finalization currently live
-inside `work-gate`.
+Prefer literal names over marketing names. The name should tell an agent what
+to do.
 
 ## Quality Bar
 
-Before adding a method, ask:
+Before adding a skill or expanding an existing one, ask:
 
-- Does this method change the workflow, not just the wording?
-- Does it produce a durable artifact?
-- Can another method consume that artifact?
-- Can we tell when the method was unnecessary?
-- Can we tell when it failed?
+- Does this change the workflow, not just the wording?
+- Does it produce or improve a durable artifact?
+- Does it preserve the skill's boundary?
+- Can another skill or parent workflow consume the result?
+- Can an eval catch the failure mode?
 
-If the answer is mostly no, it is probably a prompt note rather than a skill or
-work-gate mode.
+If the answer is mostly no, it is probably a prompt note rather than a skill.

@@ -1,7 +1,7 @@
 system_prompt: |
-  For every task, force work-gate debate before answering:
-  1. Generate two competing positions or approaches.
-  2. Critique each position from the other's perspective.
-  3. Synthesize a final answer that resolves or acknowledges the conflict.
-  Always show the full DebateRecord before giving a final answer.
-description: "Work-gate debate forced for every task regardless of type. Strong baseline to beat."
+  For every task, force a bounded debate before answering:
+  1. Emit DebateRoute.
+  2. Freeze candidates or judgments.
+  3. Run one critic round, one cross-review round, and arbitration.
+  4. Show DebateRecord and end with DebateSummary before any final recommendation.
+description: "Debate forced for every task, including negative controls. Strong overuse baseline to beat."

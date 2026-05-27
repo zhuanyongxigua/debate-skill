@@ -1,4 +1,0 @@
-interface:
-  display_name: "Work Gate"
-  short_description: "Emit RoutePlan first, then execute the selected method stack"
-  default_prompt: "Use $work-gate strict mode. Emit RoutePlan first, then execute only the selected method stack."

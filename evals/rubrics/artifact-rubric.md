@@ -1,76 +1,75 @@
 # Artifact Quality Rubric
 
-Layer 2 eval rubric. Each criterion scored 0–3:
+Layer 2 eval rubric for debate artifacts. Each criterion is scored 0-3:
 
 - **0**: absent or wrong
 - **1**: present but vague or generic
 - **2**: present and mostly correct
 - **3**: present, concrete, and complete
 
----
-
-## CandidateAnalysis (work-gate candidate analysis)
-
-### Diagnosis mode
+## DebateRoute
 
 | Criterion | Score 0 | Score 3 |
 | --- | --- | --- |
-| Path count | Only 1 path or none | 3+ distinct root cause paths |
-| Hypothesis specificity | "Maybe the auth is broken" | "Cookie domain mismatch between api.example.com and example.com" |
-| Evidence to collect | Missing or generic | Names a specific file, log line, or command to run |
-| Invalidation condition | Missing | "Rules out if cookie domain matches in nginx config" |
-| Path independence | All paths are variations of one idea | Each path represents a genuinely distinct failure mode |
+| Entry case | Missing or wrong | Correctly names one of the four entry cases |
+| Style | Missing | Names the matching debate style |
+| Topology | Missing | Preserves current-session, same-runtime, single CLI, or heterogeneous CLI topology |
+| Next artifact | Missing | Points to `DebateRecord` |
 
-**Minimum passing bar**: 2+ paths, each with a concrete hypothesis and at least one evidence probe.
-
-### Decision mode
+## DebateRecord
 
 | Criterion | Score 0 | Score 3 |
 | --- | --- | --- |
-| Proposal count | 1 option or none | 2+ named, distinct proposals |
-| Proposal independence | All proposals are the same idea reworded | Each proposal represents a genuinely different approach |
-| Critic table | Missing | Table comparing proposals on key dimensions |
-| Synthesis | "Both are fine" | Names a preferred option with concrete reasoning |
-| Validation triggers | Missing | Names conditions that would change the recommendation |
+| Frozen candidates | Missing | Preserves or generates candidates before critique |
+| Proposal normalization | Missing for raw requirements | Records proposer source, deduplication, stable IDs, and degraded state when needed |
+| Degraded or reopen | Missing for raw requirements | Records reopen count, reopen limit, degraded terminal reason, or not-needed status |
+| Critic findings | Missing | Includes role-specific findings with evidence, risk, or assumptions |
+| Cross-review | Missing | Critics inspect and respond to opposing findings |
+| Arbiter decision | Missing | Selects, combines, revises, rejects, probes, escalates, or blocks with reasons |
+| Evidence basis | Missing | Cites evidence, checks, constraints, risks, or next probes |
 
-**Minimum passing bar**: 2+ independent proposals, a comparison, and a named synthesis.
-
----
-
-## ChangePlan (work-gate)
+## DebateSummary
 
 | Criterion | Score 0 | Score 3 |
 | --- | --- | --- |
-| Goal statement | Missing or circular | One sentence naming the specific behavior to fix |
-| File list | Missing | Names specific files with paths |
-| Change description | "Fix the bug" | Describes the exact change per file |
-| Validation commands | Missing | Runnable commands: `pnpm test`, `pytest tests/auth.py`, etc. |
-| Non-goals or rollback | Missing | States what is out of scope or how to revert |
+| Input classification | Missing | Says requirement, single proposal, multiple candidates, or conflicting judgments |
+| Status envelope | Missing | Uses `completed`, `degraded`, or `blocked` with a concise reason |
+| Classification reason | Missing | Briefly explains why this input shape was chosen |
+| Process summary | Missing | Briefly summarizes freeze, critique, cross-review, and arbitration |
+| Final recommendation | Missing | Provides the final recommendation and rationale |
+| Source proposals | Missing | Names up to two frozen proposal IDs that materially contributed |
+| Sourced amendments | Missing when fragments are salvaged | Cites source proposal, excerpt, interpretation, rationale, and debate basis |
+| Derivation | Missing | Explains how the final came from source proposals and amendments |
 
-**Minimum passing bar**: named files, at least one runnable validation command.
-
----
-
-## SourceCheckTable (work-gate)
+## AgentLaunchPlan
 
 | Criterion | Score 0 | Score 3 |
 | --- | --- | --- |
-| Record structure | Free prose | Source-check table with headers |
-| Claim column | Missing | Each row is a specific, testable claim |
-| Source column | Missing | Names an authoritative URL or document |
-| Support status column | Missing | Each claim marked: supported / unsupported / uncertain |
-| Unsupported claims flagged | All claims treated as true | At least one claim flagged as unverified or uncertain |
+| Selected agents | Missing | Names selected CLI agents and roles |
+| Command spec | Missing | Uses non-interactive command shape |
+| Sandbox/network | Missing for Codex | Records sandbox and network intent |
+| Timeout | Missing | Records timeout or wait policy |
+| Boundary | Wrong owner | Does not decide whether debate or CLIs are useful |
 
-**Minimum passing bar**: source-check table with claim + source + status columns, at least one claim explicitly flagged.
+## Failure Flags
 
----
-
-## Failure Flags (Layer 2)
-
-- CandidateAnalysis with only one path.
-- ChangePlan with no specific filenames.
-- ChangePlan with no runnable validation command.
-- SourceCheckTable with no source column.
-- SourceCheckTable where every claim is marked "supported" without sources.
-- CandidateAnalysis that names options but provides no comparison.
-- CandidateAnalysis where "synthesis" is just "it depends."
+- No `DebateRoute`.
+- No `DebateRecord`.
+- No `DebateSummary`.
+- No frozen candidates or judgments.
+- Raw requirement debate enters normal debate with fewer than two distinct
+  normalized proposals.
+- Cross-review omitted.
+- Arbiter decides by vote count or confidence only.
+- Final recommendation salvages a fragment without debate basis and arbiter
+  acceptance.
+- Rejected proposal appears as a source proposal when only one amendment was
+  accepted from it.
+- Degraded or blocked output changes shape instead of using the normal
+  `DebateSummary` envelope with status.
+- `source_proposals` is ordered by pre-debate rank rather than final
+  contribution.
+- A proposer is the sole critic validating its own proposal without recording
+  the limitation.
+- External CLI selected but no `AgentLaunchPlan`.
+- `agent-launch` used as a reasoning method rather than a launch helper.

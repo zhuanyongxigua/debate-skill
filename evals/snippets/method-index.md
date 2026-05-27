@@ -1,28 +1,17 @@
 # Method Skills Index Snippet
 
 Paste this block into your `AGENTS.md`, `CLAUDE.md`, or system prompt to give
-your agent always-on method routing awareness without requiring full skill files.
+your agent compact awareness of the current skills.
 
 ---
 
 ```
 [Method Skills Index] root: ./skills
-IMPORTANT: For non-trivial tasks, produce a RoutePlan before solving.
-work-gate direct: rare fast path for simple, low-risk answers or obvious local actions; DirectResult.kind is answer or local_action — artifact: DirectResult
-self-check: direct is one work-gate route, not separate answer/action skills
-agent-launch: CLI launch helper for selected external agent CLIs; owns non-interactive command specs, env/profile isolation, sandbox, network, timeout, and redacted commands; does not decide whether to use CLIs — artifact: AgentLaunchPlan
-work-gate candidate analysis: diagnosis paths, decision options, or evaluation of existing candidates — artifact: CandidateAnalysis
-work-gate change plan: risky repo or code changes before editing
-project/source checks: use the checks required by the repo, docs, or task
-work-gate debate: requirement, single-proposal, candidate, or judgment debate after candidates/judgments are frozen and cheaper checks cannot decide — artifact: DebateRecord
-work-gate final answer: built-in output gate; compress long intermediate work into a final answer — artifact: FinalAnswer
-work-gate: mandatory entry gate, selects the stack — artifact: RoutePlan
+debate-router: explicit-only debate router. Use only when the user or parent workflow explicitly asks to route/run a debate. Emit DebateRoute first, classify entry_case as requirement_debate, single_proposal_debate, candidate_debate, or judgment_debate, freeze candidates/judgments, run bounded critique + cross-review + arbitration, return DebateRecord, and end with DebateSummary containing status, final_recommendation, source_proposals, sourced_amendments, and derivation.
+agent-launch: CLI launch helper for selected external agent CLIs; owns non-interactive command specs, env/profile isolation, sandbox, network, timeout, and redacted commands; does not decide whether to use CLIs or whether debate is useful. Artifact: AgentLaunchPlan.
+self-check: explicit debate request means debate runs or a blocker is recorded; do not down-route to a non-debate workflow, RoutePlan, or broad entry gate.
 ```
 
 ---
 
-This index removes the model's trigger decision point: instead of asking
-"should I use a skill?", the model always knows what skills exist and when to
-use them. Full skill files in `skills/` are loaded on demand for method details.
-
-See `evals/configs/method-index.yaml` for how this is used in eval condition D.
+See `evals/configs/method-index.yaml` for how this is used in eval conditions.

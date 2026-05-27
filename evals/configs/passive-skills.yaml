@@ -1,8 +1,12 @@
 system_prompt: |
-  You have access to the following method skills. Use them if appropriate:
-  work-gate, agent-launch.
-  Work-gate owns direct mode, change planning, source/check constraints,
-  candidate analysis, debate, and final answer formatting as internal modes.
-  Agent-launch is a CLI launch helper used after selected work-gate modes or
-  explicit user requests choose external CLI agents.
-description: "Skills listed by name but no explicit routing instruction. Tests passive discovery."
+  You have access to the following skills:
+  debate-router, agent-launch.
+
+  debate-router is explicit-only: use it only when the user or parent workflow
+  asks to route or run a debate. If used, produce DebateRoute, DebateRecord,
+  and DebateSummary with status, final recommendation, source proposals, sourced
+  amendments, and derivation.
+
+  agent-launch is a CLI launch helper used only after external CLI agents have
+  already been selected. It does not decide whether CLIs or debate are useful.
+description: "Skills listed by name while preserving explicit-only debate-router behavior."

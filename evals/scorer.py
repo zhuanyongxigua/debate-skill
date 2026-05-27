@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-Scorer for Method Skills eval (Layer 1 routing + Layer 2 artifact quality).
+Scorer for debate-router and agent-launch evals.
 
 Usage:
-    python scorer.py                                            # Layer 1, routing-tasks
-    python scorer.py --tasks tasks/artifact-tasks.jsonl        # Layer 2, heuristic checks
-    python scorer.py --tasks tasks/artifact-tasks.jsonl --llm-judge  # Layer 2 + LLM quality score
-    python scorer.py --task art_repo_401
+    python scorer.py
+    python scorer.py --tasks tasks/artifact-tasks.jsonl
+    python scorer.py --task explicit-candidate-debate
     python scorer.py --out results/scores.jsonl
 """
 
@@ -21,25 +20,23 @@ RESULTS_DIR = EVALS_DIR / "results"
 
 METHOD_TO_ARTIFACT = {
     "agent-launch": "AgentLaunchPlan",
-    "work-gate candidate analysis": "CandidateAnalysis",
-    "work-gate change plan": "ChangePlan",
-    "work-gate direct": "DirectResult",
-    "work-gate final answer": "FinalAnswer",
-    "work-gate": "RoutePlan",
-    "work-gate debate": "DebateRecord",
+    "debate-router": "DebateRecord",
 }
 
 ARTIFACT_PATTERNS = {
-    "AgentLaunchPlan": r"agentlaunchplan|agent[\s\-_]*launch[\s\-_]*plan|heterogeneous[\s\-_]*cli|codex exec|claude\s+(-p|--print)",
-    "RoutePlan": r"routeplan\s*:",
-    "CandidateAnalysis": r"candidateanalysis|candidate[\s\-_]*analysis|candidate\s+[a-c1-3]|hypothesis|proposal|option|root cause",
-    "ChangePlan": r"changeplan\s*:|change[\s\-_]*plan|scoped file changes",
-    "SourceCheckTable": r"source[\s\-_]*check|source table|citation[\s\-_]*check",
-    "DirectResult": r"directresult|work-gate\s+direct|direct[\s\-_]*(answer|action|local)",
-    "FinalAnswer": r"finalanswer|final[\s\-_]*answer",
+    "AgentLaunchPlan": (
+        r"agentlaunchplan|agent[\s\-_]*launch[\s\-_]*plan|"
+        r"codex exec|claude\s+(-p|--print)|copilot.+--prompt"
+    ),
+    "DebateRoute": r"debateroute\s*:",
     "DebateRecord": r"debaterecord|debate[\s\-_]*record",
-    "CandidateAnalysisScorecard": r"scorecard|rubric|criterion[\s\-_]*scores|aggregate[\s\-_]*ranking",
+    "DebateSummary": r"debatesummary|debate[\s\-_]*summary|input[\s\-_]*classification",
 }
+
+DEBATE_APPEARED_RE = re.compile(
+    r"debate[\s\-_]*router|debateroute\s*:|debaterecord|debate[\s\-_]*record",
+    re.IGNORECASE,
+)
 
 
 def normalize_key(value):
@@ -60,96 +57,88 @@ def load_tasks(tasks_file=None):
     return tasks
 
 
-# ---------------------------------------------------------------------------
-# Layer 2: heuristic artifact quality checks
-# ---------------------------------------------------------------------------
-
 def _count_pattern(output, pattern):
     return len(re.findall(pattern, output, re.IGNORECASE))
 
 
-def score_pathcards_quality(output):
-    path_count = max(
-        _count_pattern(output, r"\bpath\s*\d+\b"),
-        _count_pattern(output, r"\bhypothesis\s*\d+\b"),
-        _count_pattern(output, r"##?\s*(path|hypothesis|root cause)\b"),
+def score_debate_record_quality(output, expected=None):
+    has_entry_case = bool(
+        re.search(
+            r"requirement_debate|single_proposal_debate|candidate_debate|judgment_debate",
+            output,
+            re.IGNORECASE,
+        )
     )
-    has_hypothesis = bool(re.search(r"\bhypothes[ie]s\b|\broot cause\b", output, re.IGNORECASE))
-    has_evidence = bool(re.search(r"\bevidence\b|\bprobe\b|\bcheck\b|\bcommand\b|\brun\b", output, re.IGNORECASE))
-    has_invalidation = bool(re.search(r"\binvalidat|\brules?\s+out\b|\beliminate|\bdisprove\b|\bif\s+\w+\s+then\s+rule", output, re.IGNORECASE))
-    path_score = min(path_count / 3, 1.0)
-    return {
-        "path_count": path_count,
-        "has_hypothesis": has_hypothesis,
-        "has_evidence": has_evidence,
-        "has_invalidation": has_invalidation,
-        "quality_score": round(path_score * 0.4 + has_hypothesis * 0.2 + has_evidence * 0.2 + has_invalidation * 0.2, 2),
-    }
-
-
-def score_changeplan_quality(output):
-    has_goal = bool(re.search(r"\bgoal\b|\bobjective\b|\baim\b|\bfix\b", output, re.IGNORECASE))
-    has_files = bool(re.search(r"\.(py|ts|js|go|rb|java|rs|yaml|yml|json|toml|conf|nginx)\b|src/|lib/|app/", output, re.IGNORECASE))
-    has_validation = bool(re.search(r"\b(npm|pnpm|yarn|pytest|go test|cargo test|mvn|gradle)\b|run tests|pnpm test|npm test", output, re.IGNORECASE))
-    has_rollback = bool(re.search(r"\brollback\b|\brevert\b|\bnon.goal\b|\bout of scope\b", output, re.IGNORECASE))
-    return {
-        "has_goal": has_goal,
-        "has_files": has_files,
-        "has_validation": has_validation,
-        "has_rollback": has_rollback,
-        "quality_score": round(has_goal * 0.2 + has_files * 0.3 + has_validation * 0.35 + has_rollback * 0.15, 2),
-    }
-
-
-def score_sourcecheck_quality(output):
-    has_table = bool(re.search(r"\|.+\|.+\|", output))
-    has_source_col = bool(re.search(r"\|\s*source\b|\|\s*reference\b|\|\s*citation\b", output, re.IGNORECASE))
-    has_status_col = bool(re.search(r"\|\s*support|\|\s*status\b|\|\s*verified\b|\|\s*confirmed\b", output, re.IGNORECASE))
-    has_unsupported = bool(re.search(r"\bunsupported\b|\bunverified\b|\buncertain\b|\bcannot confirm\b", output, re.IGNORECASE))
-    return {
-        "has_table": has_table,
-        "has_source_col": has_source_col,
-        "has_status_col": has_status_col,
-        "has_unsupported_flag": has_unsupported,
-        "quality_score": round(has_table * 0.2 + has_source_col * 0.3 + has_status_col * 0.3 + has_unsupported * 0.2, 2),
-    }
-
-
-def score_decisionmemo_quality(output):
-    proposal_count = max(
-        _count_pattern(output, r"\b(proposal|option|approach)\s+[a-c1-3]\b"),
-        _count_pattern(output, r"##?\s*(proposal|option|approach)\s+[a-c1-3\:]"),
+    has_frozen = bool(re.search(r"frozen|freeze|candidate|judgment|proposal", output, re.IGNORECASE))
+    has_generation = bool(re.search(r"proposal_generation|proposer|raw proposal|candidate positions", output, re.IGNORECASE))
+    has_normalization = bool(re.search(r"proposal_normalization|dedup|distinct|stable id|normalized", output, re.IGNORECASE))
+    has_degraded_or_reopen = bool(re.search(r"degraded_or_reopen|reopen_limit|reopen_count|terminal_reason", output, re.IGNORECASE))
+    has_critics = bool(re.search(r"critic|critique|finding|risk|assumption", output, re.IGNORECASE))
+    has_cross_review = bool(re.search(r"cross[\s\-_]*review|reviewed_critic_role", output, re.IGNORECASE))
+    has_arbiter = bool(re.search(r"arbiter|arbitration|decision|selected_candidate", output, re.IGNORECASE))
+    has_evidence = bool(re.search(r"evidence|basis|constraint|test|source|probe|risk", output, re.IGNORECASE))
+    candidate_count = max(
+        _count_pattern(output, r"\bcandidate\s+[a-d1-4]\b"),
+        _count_pattern(output, r"\bid:\s*[\"']?[A-D1-4]"),
     )
-    has_critic = bool(re.search(r"\bcritic\b|\bcritique\b|\bweakness\b|\bcon\b|\bdisadvantage\b", output, re.IGNORECASE))
-    has_synthesis = bool(re.search(r"\bsynthesis\b|\brecommend\b|\bconclusion\b|\bchose\b|\bbest\b|\bprefer\b", output, re.IGNORECASE))
-    has_triggers = bool(re.search(r"\bvalidation trigger\b|\bpremortem\b|\bpre.mortem\b|\bif\s+\w+\s+(changes?|fails?|grows?)\b", output, re.IGNORECASE))
-    proposal_score = min(proposal_count / 2, 1.0)
+    quality_score = round(
+        has_entry_case * 0.15
+        + has_frozen * 0.15
+        + max(has_generation, has_normalization, has_degraded_or_reopen) * 0.1
+        + has_critics * 0.15
+        + has_cross_review * 0.2
+        + has_arbiter * 0.15
+        + has_evidence * 0.1,
+        2,
+    )
     return {
-        "proposal_count": proposal_count,
-        "has_critic_table": has_critic,
-        "has_synthesis": has_synthesis,
-        "has_validation_triggers": has_triggers,
-        "quality_score": round(proposal_score * 0.35 + has_critic * 0.25 + has_synthesis * 0.25 + has_triggers * 0.15, 2),
+        "has_entry_case": has_entry_case,
+        "has_frozen_candidates_or_judgments": has_frozen,
+        "has_proposal_generation": has_generation,
+        "has_proposal_normalization": has_normalization,
+        "has_degraded_or_reopen": has_degraded_or_reopen,
+        "has_critics": has_critics,
+        "has_cross_review": has_cross_review,
+        "has_arbiter": has_arbiter,
+        "has_evidence_basis": has_evidence,
+        "candidate_count_hint": candidate_count,
+        "quality_score": quality_score,
     }
 
 
-def score_candidateanalysis_quality(output, expected=None):
-    expected = expected or {}
-    diagnosis = score_pathcards_quality(output)
-    decision = score_decisionmemo_quality(output)
-    if "min_paths" in expected:
-        return {"mode_detected": "diagnosis", **diagnosis}
-    if "min_proposals" in expected:
-        return {"mode_detected": "decision", **decision}
-    if diagnosis["quality_score"] >= decision["quality_score"]:
-        return {"mode_detected": "diagnosis", **diagnosis}
-    return {"mode_detected": "decision", **decision}
+def score_debate_summary_quality(output, expected=None):
+    has_status = bool(re.search(r"\bstatus\b|status_reason|degraded|blocked|completed", output, re.IGNORECASE))
+    has_final = bool(re.search(r"final_recommendation|final recommendation|recommendation", output, re.IGNORECASE))
+    has_source_proposals = bool(re.search(r"source_proposals|source proposals|base_proposal_id", output, re.IGNORECASE))
+    has_amendments = bool(re.search(r"sourced_amendments|sourced amendments|accepted amendment", output, re.IGNORECASE))
+    has_debate_basis = bool(re.search(r"debate_basis|supported_by|challenged_by|arbiter_reason", output, re.IGNORECASE))
+    has_derivation = bool(re.search(r"derivation|derived from|contribution", output, re.IGNORECASE))
+    has_classification = bool(re.search(r"input_classification|requirement|single_proposal|multiple_candidates|conflicting_judgments", output, re.IGNORECASE))
+    quality_score = round(
+        has_final * 0.2
+        + has_status * 0.05
+        + has_source_proposals * 0.15
+        + has_amendments * 0.15
+        + has_debate_basis * 0.15
+        + has_derivation * 0.2
+        + has_classification * 0.1,
+        2,
+    )
+    return {
+        "has_final_recommendation": has_final,
+        "has_status": has_status,
+        "has_source_proposals": has_source_proposals,
+        "has_sourced_amendments": has_amendments,
+        "has_debate_basis": has_debate_basis,
+        "has_derivation": has_derivation,
+        "has_input_classification": has_classification,
+        "quality_score": quality_score,
+    }
 
 
 ARTIFACT_QUALITY_SCORERS = {
-    "CandidateAnalysis": score_candidateanalysis_quality,
-    "ChangePlan": score_changeplan_quality,
-    "SourceCheckTable": score_sourcecheck_quality,
+    "DebateRecord": score_debate_record_quality,
+    "DebateSummary": score_debate_summary_quality,
 }
 
 
@@ -160,173 +149,52 @@ def score_layer2_heuristic(output, task):
     results = {}
     for artifact, scorer in ARTIFACT_QUALITY_SCORERS.items():
         if artifact in artifact_quality:
-            if artifact == "CandidateAnalysis":
-                results[artifact] = scorer(output, artifact_quality[artifact])
-            else:
-                results[artifact] = scorer(output)
+            results[artifact] = scorer(output, artifact_quality[artifact])
     avg = sum(v["quality_score"] for v in results.values()) / len(results) if results else 0.0
     return {"per_artifact": results, "avg_quality_score": round(avg, 2)}
 
 
-# ---------------------------------------------------------------------------
-# Layer 2: LLM judge (optional, requires API key)
-# ---------------------------------------------------------------------------
-
-LLM_JUDGE_PROMPTS = {
-    "CandidateAnalysis": """Score this CandidateAnalysis artifact from a work-gate candidate analysis method.
-
-Task: {task}
-
-Output:
-{output}
-
-Score each criterion 0-3 (0=absent, 1=vague, 2=mostly correct, 3=concrete and complete):
-- candidate_independence: Are candidates genuinely distinct?
-- task_fit: Do the candidate fields fit the task mode (diagnosis paths for bugs, proposals for decisions)?
-- comparison_quality: Are candidates compared on concrete task-relevant criteria?
-- selection_quality: Is the selected candidate or synthesis justified with evidence, tradeoffs, or validation triggers?
-
-Respond in YAML only:
-scores:
-  candidate_independence: <0-3>
-  task_fit: <0-3>
-  comparison_quality: <0-3>
-  selection_quality: <0-3>
-total: <sum of scores>
-max: 12
-notes: <one sentence>""",
-
-    "ChangePlan": """Score this ChangePlan artifact.
-
-Task: {task}
-
-Output:
-{output}
-
-Score each criterion 0-3 (0=absent, 1=vague, 2=mostly correct, 3=concrete and complete):
-- goal_clarity: Is the goal specific and testable?
-- file_specificity: Are specific files named with paths?
-- validation_runnability: Are validation commands concrete and runnable?
-- scope_definition: Are non-goals or rollback steps included?
-
-Respond in YAML only:
-scores:
-  goal_clarity: <0-3>
-  file_specificity: <0-3>
-  validation_runnability: <0-3>
-  scope_definition: <0-3>
-total: <sum of scores>
-max: 12
-notes: <one sentence>""",
-
-    "SourceCheckTable": """Score this source/citation check artifact.
-
-Task: {task}
-
-Output:
-{output}
-
-Score each criterion 0-3 (0=absent, 1=vague, 2=mostly correct, 3=concrete and complete):
-- table_structure: Is it a proper table with headers?
-- source_specificity: Does each row cite a specific authoritative source?
-- status_accuracy: Does each row have a clear supported/unsupported/uncertain status?
-- unsupported_flagging: Are at least some claims flagged as unverified (not everything rubber-stamped)?
-
-Respond in YAML only:
-scores:
-  table_structure: <0-3>
-  source_specificity: <0-3>
-  status_accuracy: <0-3>
-  unsupported_flagging: <0-3>
-total: <sum of scores>
-max: 12
-notes: <one sentence>""",
-
-}
-
-
-def score_llm_judge(output, task, client):
-    import yaml as _yaml
-    artifact_quality = task.get("artifact_quality", {})
-    if not artifact_quality:
-        return {}
-
-    results = {}
-    for artifact in artifact_quality:
-        prompt_template = LLM_JUDGE_PROMPTS.get(artifact)
-        if not prompt_template:
-            continue
-        prompt = prompt_template.format(task=task["task"], output=output[:3000])
-        try:
-            resp = client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=512,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            text = resp.content[0].text
-            parsed = _yaml.safe_load(text)
-            results[artifact] = {
-                "scores": parsed.get("scores", {}),
-                "total": parsed.get("total", 0),
-                "max": parsed.get("max", 12),
-                "normalized": round(parsed.get("total", 0) / parsed.get("max", 12), 2),
-                "notes": parsed.get("notes", ""),
-            }
-        except Exception as e:
-            results[artifact] = {"error": str(e)}
-
-    if results:
-        valid = [v["normalized"] for v in results.values() if "normalized" in v]
-        avg = round(sum(valid) / len(valid), 2) if valid else 0.0
-        results["avg_llm_quality"] = avg
-    return results
+def _avoid_violations(output_norm, avoid):
+    violations = []
+    for item in avoid:
+        key_words = [
+            normalize_key(w)
+            for w in re.findall(r"[A-Za-z0-9_-]+", item.lower())
+            if len(normalize_key(w)) > 4
+        ]
+        if key_words and all(word in output_norm for word in key_words):
+            violations.append(item)
+    return violations
 
 
 def score_result(result, task):
     output = result["output"]
     output_norm = normalize_key(output)
 
-    # 1. RoutePlan emitted before substantive content
-    route_plan_emitted = bool(re.search(r"routeplan\s*:", output, re.IGNORECASE))
+    debate_route_emitted = bool(re.search(ARTIFACT_PATTERNS["DebateRoute"], output, re.IGNORECASE))
 
-    # 2. Critical method recall
     expected = task.get("expected_stack", [])
     critical_found = []
-    for m in expected:
-        m_norm = normalize_key(m)
-        if m_norm in output_norm:
-            critical_found.append(m)
+    for method in expected:
+        if normalize_key(method) in output_norm:
+            critical_found.append(method)
     critical_recall = len(critical_found) / len(expected) if expected else 1.0
 
-    # 3. Required explanation recall
     must_explain = task.get("must_explain", [])
     must_explain_found = []
     for item in must_explain:
-        item_norm = normalize_key(item)
-        if item_norm in output_norm:
+        if normalize_key(item) in output_norm:
             must_explain_found.append(item)
     must_explain_recall = len(must_explain_found) / len(must_explain) if must_explain else 1.0
 
-    # 4. Expected topology
     expected_topology = task.get("expected_topology")
     topology_matched = True
     if expected_topology:
         topology_matched = normalize_key(expected_topology) in output_norm
 
-    # 5. Avoid violations (methods/patterns that should not appear)
-    avoid = task.get("avoid", [])
-    avoid_violations = []
-    for a in avoid:
-        key_words = [
-            normalize_key(w)
-            for w in re.findall(r"[A-Za-z0-9_-]+", a.lower())
-            if len(normalize_key(w)) > 4
-        ]
-        if key_words and all(w in output_norm for w in key_words):
-            avoid_violations.append(a)
-    avoid_violated = len(avoid_violations) > 0
+    avoid_violations = _avoid_violations(output_norm, task.get("avoid", []))
+    avoid_violated = bool(avoid_violations)
 
-    # 6. Artifact presence
     required_artifacts = []
     for method in expected:
         artifact = METHOD_TO_ARTIFACT.get(method)
@@ -343,19 +211,15 @@ def score_result(result, task):
             artifacts_present.append(artifact)
     artifact_score = len(artifacts_present) / len(required_artifacts) if required_artifacts else 1.0
 
-    # 7. Debate misuse: debate appeared when not in expected stack
-    debate_expected = "work-gate debate" in expected
-    debate_appeared = bool(re.search(r"work-gate\s+debate|debate\s*record|debaterecord", output, re.IGNORECASE))
+    debate_expected = "debate-router" in expected
+    debate_appeared = bool(DEBATE_APPEARED_RE.search(output))
     debate_misuse = debate_appeared and not debate_expected
-
-    # 8. Word count
-    word_count = len(output.split())
 
     return {
         "task_id": task["id"],
         "condition": result["condition"],
         "model": result.get("model"),
-        "route_plan_emitted": route_plan_emitted,
+        "debate_route_emitted": debate_route_emitted,
         "critical_recall": round(critical_recall, 2),
         "critical_found": critical_found,
         "critical_missing": [m for m in expected if m not in critical_found],
@@ -369,7 +233,7 @@ def score_result(result, task):
         "artifact_score": round(artifact_score, 2),
         "artifacts_present": artifacts_present,
         "artifacts_missing": [a for a in required_artifacts if a not in artifacts_present],
-        "word_count": word_count,
+        "word_count": len(output.split()),
         "debate_misuse": debate_misuse,
         "tokens_total": result.get("tokens_in", 0) + result.get("tokens_out", 0),
     }
@@ -381,7 +245,7 @@ def aggregate(scores):
     n = len(scores)
     return {
         "n": n,
-        "route_plan_rate": round(sum(s["route_plan_emitted"] for s in scores) / n, 3),
+        "debate_route_rate": round(sum(s["debate_route_emitted"] for s in scores) / n, 3),
         "avg_critical_recall": round(sum(s["critical_recall"] for s in scores) / n, 3),
         "avg_must_explain_recall": round(sum(s["must_explain_recall"] for s in scores) / n, 3),
         "topology_match_rate": round(sum(s["topology_matched"] for s in scores) / n, 3),
@@ -394,20 +258,14 @@ def aggregate(scores):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Score Method Skills eval results")
+    parser = argparse.ArgumentParser(description="Score debate-router eval results")
     parser.add_argument("--task", help="Score only a specific task ID")
     parser.add_argument("--tasks", default=str(DEFAULT_TASKS_FILE), help="Path to tasks JSONL file")
-    parser.add_argument("--llm-judge", action="store_true", help="Run LLM quality judge (requires ANTHROPIC_API_KEY)")
     parser.add_argument("--out", default="results/scores.jsonl")
     args = parser.parse_args()
 
     tasks = load_tasks(args.tasks)
     result_files = sorted(f for f in RESULTS_DIR.glob("*.json") if f.name != "README.md")
-
-    llm_client = None
-    if args.llm_judge:
-        import anthropic as _anthropic
-        llm_client = _anthropic.Anthropic()
 
     if not result_files:
         print(f"No result files found in {RESULTS_DIR}.")
@@ -420,8 +278,8 @@ def main():
     for result_file in result_files:
         try:
             result = json.loads(result_file.read_text())
-        except Exception as e:
-            print(f"  warning: could not read {result_file.name}: {e}")
+        except Exception as exc:
+            print(f"  warning: could not read {result_file.name}: {exc}")
             continue
 
         task_id = result.get("task_id")
@@ -433,76 +291,72 @@ def main():
             continue
 
         score = score_result(result, task)
-
         if task.get("artifact_quality"):
             score["layer2_heuristic"] = score_layer2_heuristic(result["output"], task)
-            if llm_client:
-                score["layer2_llm_judge"] = score_llm_judge(result["output"], task, llm_client)
 
         all_scores.append(score)
-        cond = score["condition"]
-        by_condition.setdefault(cond, []).append(score)
+        by_condition.setdefault(score["condition"], []).append(score)
 
     out_path = EVALS_DIR / args.out
     out_path.parent.mkdir(exist_ok=True)
     out_path.write_text("\n".join(json.dumps(s) for s in all_scores))
-    print(f"Scored {len(all_scores)} results → {out_path}\n")
+    print(f"Scored {len(all_scores)} results -> {out_path}\n")
 
     if not by_condition:
         return
 
-    has_layer2 = any(s.get("layer2_heuristic") for s in all_scores)
-    has_llm = any(s.get("layer2_llm_judge") for s in all_scores)
-
-    if has_layer2:
-        print("\n--- Layer 1: Routing ---")
-
-    col = [35, 4, 10, 8, 8, 8, 10, 11, 11, 8]
-    headers = ["Condition", "N", "RoutePlan%", "Stack", "Explain", "Topology", "Artifact", "AvoidViol%", "DebateMis%", "AvgTok"]
+    col = [35, 4, 12, 8, 8, 8, 10, 11, 11, 8]
+    headers = [
+        "Condition",
+        "N",
+        "DebateRoute%",
+        "Stack",
+        "Explain",
+        "Topology",
+        "Artifact",
+        "AvoidViol%",
+        "DebateMis%",
+        "AvgTok",
+    ]
     header_line = "  ".join(h.ljust(w) if i == 0 else h.rjust(w) for i, (h, w) in enumerate(zip(headers, col)))
     print(header_line)
     print("-" * len(header_line))
 
-    for cond in sorted(by_condition.keys()):
-        agg = aggregate(by_condition[cond])
+    for condition in sorted(by_condition.keys()):
+        agg = aggregate(by_condition[condition])
         row = [
-            cond.ljust(col[0]),
+            condition.ljust(col[0]),
             str(agg["n"]).rjust(col[1]),
-            f"{agg['route_plan_rate']*100:.1f}%".rjust(col[2]),
+            f"{agg['debate_route_rate'] * 100:.1f}%".rjust(col[2]),
             f"{agg['avg_critical_recall']:.2f}".rjust(col[3]),
             f"{agg['avg_must_explain_recall']:.2f}".rjust(col[4]),
             f"{agg['topology_match_rate']:.2f}".rjust(col[5]),
             f"{agg['avg_artifact_score']:.2f}".rjust(col[6]),
-            f"{agg['avoid_violation_rate']*100:.1f}%".rjust(col[7]),
-            f"{agg['debate_misuse_rate']*100:.1f}%".rjust(col[8]),
+            f"{agg['avoid_violation_rate'] * 100:.1f}%".rjust(col[7]),
+            f"{agg['debate_misuse_rate'] * 100:.1f}%".rjust(col[8]),
             str(agg["avg_tokens"]).rjust(col[9]),
         ]
         print("  ".join(row))
 
+    has_layer2 = any(s.get("layer2_heuristic") for s in all_scores)
     if has_layer2:
-        print("\n--- Layer 2: Artifact Quality (heuristic, 0.0–1.0) ---")
+        print("\n--- Layer 2: Artifact Quality (heuristic, 0.0-1.0) ---")
         col2 = [35, 4, 12]
         headers2 = ["Condition", "N", "AvgQuality"]
         header2_line = "  ".join(h.ljust(w) if i == 0 else h.rjust(w) for i, (h, w) in enumerate(zip(headers2, col2)))
         print(header2_line)
         print("-" * len(header2_line))
-        for cond in sorted(by_condition.keys()):
-            scores = by_condition[cond]
-            quality_scores = [s["layer2_heuristic"]["avg_quality_score"] for s in scores if s.get("layer2_heuristic")]
+        for condition in sorted(by_condition.keys()):
+            scores = by_condition[condition]
+            quality_scores = [
+                s["layer2_heuristic"]["avg_quality_score"]
+                for s in scores
+                if s.get("layer2_heuristic")
+            ]
             if not quality_scores:
                 continue
-            avg_q = round(sum(quality_scores) / len(quality_scores), 2)
-            print("  ".join([cond.ljust(col2[0]), str(len(quality_scores)).rjust(col2[1]), f"{avg_q:.2f}".rjust(col2[2])]))
-
-    if has_llm:
-        print("\n--- Layer 2: Artifact Quality (LLM judge, 0.0–1.0) ---")
-        for cond in sorted(by_condition.keys()):
-            scores = by_condition[cond]
-            llm_scores = [s["layer2_llm_judge"].get("avg_llm_quality", 0) for s in scores if s.get("layer2_llm_judge") and "avg_llm_quality" in s.get("layer2_llm_judge", {})]
-            if not llm_scores:
-                continue
-            avg_llm = round(sum(llm_scores) / len(llm_scores), 2)
-            print(f"  {cond:<35} avg_llm_quality={avg_llm:.2f}")
+            avg_quality = round(sum(quality_scores) / len(quality_scores), 2)
+            print("  ".join([condition.ljust(col2[0]), str(len(quality_scores)).rjust(col2[1]), f"{avg_quality:.2f}".rjust(col2[2])]))
 
 
 if __name__ == "__main__":

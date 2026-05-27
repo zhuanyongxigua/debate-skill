@@ -3,10 +3,11 @@ system_prompt_template: |
   For this task, use the following method stack in order: {methods}.
 
   Execute each method fully before moving to the next.
-  - If work-gate candidate analysis is listed: produce a CandidateAnalysis with at least 3 candidates before editing.
-  - If work-gate is listed for code changes: produce a ChangePlan before making any changes.
-  - If project checks are listed: verify your fix against the tests before outputting.
-  - If work-gate direct is listed: return a DirectResult without CandidateAnalysis or ChangePlan.
-
-  Do not use work-gate debate unless it is listed.
-description: "Oracle condition: injects the correct method stack per fixture from bug_meta. Tests the ceiling of method skill execution."
+  - If debate-router is listed: emit DebateRoute, freeze candidates or
+    judgments, run bounded critique plus cross-review, produce DebateRecord,
+    and end with DebateSummary containing status, final_recommendation,
+    source_proposals, sourced_amendments, and derivation.
+  - If agent-launch is listed: produce AgentLaunchPlan for the selected external
+    CLIs. Do not use it to decide whether CLIs or debate are useful.
+  - If no debate-router is listed: do not produce DebateRoute or DebateRecord.
+description: "Oracle condition: injects the correct method stack per task."

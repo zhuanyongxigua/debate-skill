@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Eval runner for Method Skills routing eval.
+Eval runner for debate-router and agent-launch routing evals.
 Runs each task against each condition and saves raw results.
 
 Usage:
     python runner.py                            # all tasks, all conditions
-    python runner.py --task repo-debug-401                    # single task
+    python runner.py --task explicit-candidate-debate         # single task
     python runner.py --condition baseline                      # single condition
-    python runner.py --tasks tasks/artifact-tasks.jsonl       # layer 2 tasks
+    python runner.py --tasks tasks/artifact-tasks.jsonl       # artifact tasks
     python runner.py --dry-run                                 # print prompts, no API calls
     python runner.py --model claude-opus-4-7
 """
@@ -15,11 +15,14 @@ Usage:
 import argparse
 import json
 import os
+import re
 import time
 from pathlib import Path
 
-import anthropic
-import yaml
+try:
+    import yaml
+except ModuleNotFoundError:
+    yaml = None
 
 EVALS_DIR = Path(__file__).parent
 DEFAULT_TASKS_FILE = EVALS_DIR / "routing-tasks.jsonl"
@@ -42,10 +45,56 @@ def load_tasks(tasks_file, task_id=None):
     return tasks
 
 
+def parse_scalar(value):
+    value = value.strip()
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return value[1:-1]
+    return value
+
+
+def load_simple_yaml(text):
+    result = {}
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        index += 1
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        match = re.match(r"^([A-Za-z_][A-Za-z0-9_-]*):(?:\s*(.*))?$", line)
+        if not match:
+            raise ValueError(f"Unsupported config line: {line!r}")
+        key, raw_value = match.groups()
+        raw_value = raw_value or ""
+        if raw_value.strip() == "|":
+            block = []
+            while index < len(lines):
+                block_line = lines[index]
+                if block_line and not block_line.startswith(" "):
+                    break
+                index += 1
+                block.append(block_line[2:] if block_line.startswith("  ") else block_line.lstrip())
+            result[key] = "\n".join(block).rstrip() + "\n"
+        else:
+            result[key] = parse_scalar(raw_value)
+    return result
+
+
+def load_config_file(path):
+    text = path.read_text()
+    if yaml is not None:
+        return yaml.safe_load(text) or {}
+    return load_simple_yaml(text)
+
+
 def load_configs(condition=None):
     configs = {}
     for path in sorted(CONFIGS_DIR.glob("*.yaml")):
-        cfg = yaml.safe_load(path.read_text()) or {}
+        cfg = load_config_file(path)
         cfg["name"] = path.stem
         if condition is None or path.stem == condition:
             configs[path.stem] = cfg
@@ -53,7 +102,11 @@ def load_configs(condition=None):
 
 
 def run_task(task, config, model, client, dry_run=False):
-    system = config.get("system_prompt") or ""
+    if config.get("is_oracle"):
+        methods = ", ".join(task.get("expected_stack", [])) or "none"
+        system = (config.get("system_prompt_template") or "").format(methods=methods)
+    else:
+        system = config.get("system_prompt") or ""
     prompt = task["task"]
 
     if dry_run:
@@ -83,7 +136,7 @@ def run_task(task, config, model, client, dry_run=False):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Method Skills routing eval runner")
+    parser = argparse.ArgumentParser(description="Debate-router routing eval runner")
     parser.add_argument("--task", help="Run a single task by ID")
     parser.add_argument("--tasks", default=str(DEFAULT_TASKS_FILE), help="Path to tasks JSONL file")
     parser.add_argument("--condition", help="Run a single condition by name")
@@ -107,7 +160,12 @@ def main():
     total = len(tasks) * len(configs)
     print(f"Tasks: {len(tasks)} | Conditions: {len(configs)} | Total runs: {total}")
 
-    client = None if args.dry_run else anthropic.Anthropic()
+    if args.dry_run:
+        client = None
+    else:
+        import anthropic
+
+        client = anthropic.Anthropic()
     done = 0
 
     for task in tasks:

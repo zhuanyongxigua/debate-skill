@@ -1,51 +1,48 @@
-# RoutePlan Rubric
+# DebateRoute Rubric
 
-Score each RoutePlan from 0 to 5 on each criterion.
+Score each `DebateRoute` and follow-on `DebateRecord` from 0 to 5 on each
+criterion.
 
 ## Criteria
 
 | Criterion | What to check |
 | --- | --- |
-| Gate order | `RoutePlan:` appears before substantive work when the gate is active. |
-| Intent fit | The selected stack addresses the user's actual task. |
-| Risk control | The route controls the main failure mode. |
-| Check use | Project checks, sources, or probes are used when available. |
-| Artifact clarity | Expected artifacts are named and useful. |
-| Minimality | The route avoids unnecessary cards and agents. |
-| Selection reasons | Every selected skill has a concrete reason. |
-| Skip reasons | Relevant skipped skills have clear reasons. |
-| Escalation | The plan states when to add debate, judges, or heterogeneous agents. |
-| CLI launch | `agent-launch` is used when the selected route or explicit user request needs one or more external CLI agents, and it is not used to decide whether CLI agents are worth using. |
-| Direct gate | Direct work is explicitly selected as `work-gate direct` and meets its gate. |
-| Execution consistency | Later output follows the selected stack and produces the required artifact. |
-| Finalization | Long method output is compressed without hiding uncertainty. |
+| Explicit trigger | `debate-router` is used only when debate was explicitly requested. |
+| Route order | `DebateRoute:` appears before substantive debate output. |
+| Entry case fit | The chosen case matches requirement, single proposal, candidates, or judgments. |
+| Freeze discipline | User-provided proposals, candidates, or judgments are preserved before critique. |
+| Debate execution | The output includes critic findings, cross-review, and arbitration. |
+| End summary | The output ends with a brief classification and process summary. |
+| Final synthesis | The final recommendation names status, source proposals, accepted amendments, and derivation. |
+| Evidence use | Checks, tests, sources, or probes are used as evidence when relevant. |
+| Topology preservation | Explicit CLI or same-runtime choices are preserved. |
+| Agent launch boundary | External CLI startup uses `agent-launch`; `agent-launch` is not used to decide whether to debate. |
+| Minimality | No broad entry gate or unrelated non-debate method is introduced. |
+| Blocker handling | Unavailable CLIs or permissions are recorded instead of silently ignored. |
 
 ## Failure Flags
 
-- Uses debate before candidates exist.
-- Answers factual/current questions without source or citation verification.
-- Edits code before localization when root cause is uncertain.
-- Uses multi-agent work as a substitute for project checks or sources.
-- Uses single external CLI or heterogeneous CLI agents without an `agent-launch`
-  plan.
-- Treats `agent-launch` as a candidate method, mock candidate, standalone
-  reasoning path, or topology chooser instead of a launch helper for selected
-  external CLI agents.
-- Launches interactive child-agent CLI sessions instead of non-interactive mode.
-- Launches Codex CLI for a network-dependent child task without an explicit
-  sandbox/profile and network-capability plan.
-- Marks a child CLI failed only because of a transient parent-harness parser or
-  router warning, without timeout, final failure, interactive block, or sustained
-  no-progress evidence.
-- Lists skills without explaining why they were selected.
-- Produces no durable artifact.
-- Runs permission-bound tools without asking.
-- Uses source checks or tool loops without a budget or stopping condition.
-- Omits `RoutePlan:` when `work-gate` is explicitly invoked.
-- Answers directly in strict mode before a RoutePlan.
-- Answers directly or runs a direct local action without explicitly selecting `work-gate direct`.
-- Lists a method in `stack` but does not execute that method's artifact contract.
-- Uses work-gate final answer to hide unresolved evidence, failed checks, or open conflict.
+- Uses `debate-router` for a task that did not explicitly request debate.
+- Says debate is unnecessary after `debate-router` was explicitly invoked.
+- Skips the required debate after explicit invocation.
+- Omits the final `DebateSummary`.
+- Emits a broad entry gate or `RoutePlan`.
+- Produces no frozen candidates or judgments.
+- Lets critics rewrite candidates during critique.
+- Omits cross-review before arbitration.
+- Salvages a fragment from a weak or rejected proposal without debate basis and
+  arbiter acceptance.
+- Calls a rejected proposal a source proposal when only a small amendment was
+  accepted from it.
+- Orders `source_proposals` by pre-debate rank instead of final contribution.
+- Emits a degraded or blocked debate with a different output shape instead of
+  the standard `DebateSummary` status envelope.
+- Lets a proposer be the sole critic validating its own proposal without
+  recording the limitation.
+- Decides by vote count, confidence, or consensus pressure.
+- Launches or plans external CLIs without `agent-launch`.
+- Treats `agent-launch` as a topology chooser or reasoning method.
+- Silently replaces a selected CLI that is blocked or unavailable.
 
 ## Passing Bar
 
@@ -53,7 +50,7 @@ A route is acceptable when:
 
 - no failure flags apply,
 - average score is at least 4,
-- check use is at least 4 when project checks or sources exist,
-- selection reasons are present for every selected skill,
-- direct work is explicitly routed as `work-gate direct`,
-- execution after RoutePlan follows the selected stack.
+- the entry case matches the input shape,
+- required artifacts are present,
+- explicit CLI selections are preserved,
+- the arbiter decision is grounded in evidence, constraints, or next probes.

@@ -1,44 +1,26 @@
 system_prompt: |
   [Method Skills Index] root: ./skills
-  IMPORTANT: For non-trivial tasks, produce a RoutePlan before solving.
-  work-gate direct: rare fast path for simple, low-risk answers or obvious local actions; DirectResult.kind is answer or local_action — artifact: DirectResult
-  agent-launch: CLI launch helper for selected external agent CLIs; owns non-interactive command specs, env/profile isolation, sandbox, network, timeout, and redacted commands; does not decide whether to use CLIs — artifact: AgentLaunchPlan
-  work-gate candidate analysis: diagnosis paths, decision options, or evaluation of existing candidates — artifact: CandidateAnalysis
-  work-gate change plan: risky repo or code changes before editing
-  project/source checks: use the checks required by the repo, docs, or task
-  work-gate debate: requirement, single-proposal, candidate, or judgment debate after candidates/judgments are frozen and cheaper checks cannot decide — artifact: DebateRecord
-  work-gate final answer: built-in output gate; compress long intermediate work into a final answer — artifact: FinalAnswer
-  work-gate: mandatory entry gate, selects the stack — artifact: RoutePlan
+  debate-router: explicit-only debate router. Use only when the user or parent workflow explicitly asks to route/run a debate. Emit DebateRoute first, classify entry_case as requirement_debate, single_proposal_debate, candidate_debate, or judgment_debate, freeze candidates/judgments, run bounded critique + cross-review + arbitration, return DebateRecord, and end with DebateSummary containing status, final_recommendation, source_proposals, sourced_amendments, and derivation.
+  agent-launch: CLI launch helper for selected external agent CLIs; owns non-interactive command specs, env/profile isolation, sandbox, network, timeout, and redacted commands; does not decide whether to use CLIs or whether debate is useful. Artifact: AgentLaunchPlan.
+  self-check: explicit debate request means debate runs or a blocker is recorded; do not down-route to a non-debate workflow, RoutePlan, or broad entry gate.
 
-  Method Details:
+  Skill Details:
 
-  agent-launch: Launch selected external CLI agents such as Claude Code, Codex
-  CLI, or Copilot CLI. It is not a candidate method, standalone reasoning path,
-  or topology chooser. Preserve explicit user CLI requests unless the selected
-  CLI is blocked, unavailable, or unsafe. Use non-interactive CLI commands only
-  and record env/profile, sandbox, network, timeout, and redacted commands.
+  debate-router: First classify the input shape. Use requirement_debate for raw
+  requirements, single_proposal_debate for one proposal, candidate_debate for
+  multiple existing candidates, and judgment_debate for conflicting reviews or
+  findings. Preserve user-provided candidates or judgments. For
+  requirement_debate, generate and normalize only the candidate positions or
+  proposals needed for this debate; if external CLI agents were selected, use
+  them as independent proposers where practical. Normalization deduplicates,
+  assigns stable IDs, records proposer source, and degrades if fewer than two
+  distinct proposals survive. Require cross-review before arbitration. End with
+  DebateSummary: status, final_recommendation, up to two source_proposals that
+  materially contributed, sourced_amendments accepted by the arbiter with
+  debate_basis, and a short derivation.
 
-  work-gate candidate analysis: Use mode=diagnosis for bugs/root causes,
-  mode=decision for open-ended options, and mode=evaluation when candidates
-  already exist. Generate missing candidates only when needed, compare them
-  against task-specific criteria, then select, synthesize, or escalate.
-
-  work-gate change plan: Before editing, produce a plan with: goal, files to
-  change, changes per file, validation commands, non-goals, risks, rollback.
-
-  source checks: For each claim, check: supported by source? source current?
-  source authoritative? Remove unsupported claims from final answer.
-
-  project checks: Use the deterministic checks the project or task already
-  requires: tests, compile, calculation, schema, or authoritative source. Report
-  what was checked and what remains unchecked.
-
-  work-gate debate: Choose requirement_debate, single_proposal_debate,
-  candidate_debate, or judgment_debate. Freeze candidates or judgments before
-  critique. Cap to one critique round, one cross-review round, and arbiter
-  synthesis.
-
-  work-gate final answer: Compress intermediate artifacts into a final answer. Include:
-  recommendation, key evidence, uncertainty, next action. Omit process details,
-  intermediate drafts, and unresolved conflicts.
-description: "Always-on method index plus brief method descriptions. Recommended production configuration."
+  agent-launch: Use only after external CLI agents were selected. Preserve
+  explicit Claude Code, Codex CLI, Copilot CLI, or other CLI requests unless
+  unavailable, unsafe, or blocked. Use non-interactive command specs and record
+  env/profile, sandbox, network, timeout, and redacted display commands.
+description: "Always-on skill index plus brief execution details."

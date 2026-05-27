@@ -4,7 +4,7 @@ Raw result files from eval runs. Not committed to the repo.
 
 Each file is named `{task_id}__{condition}.json`.
 
-## Generate results
+## Generate Results
 
 ```bash
 cd evals
@@ -13,7 +13,7 @@ export ANTHROPIC_API_KEY=...
 python runner.py
 ```
 
-## Score results
+## Score Results
 
 ```bash
 python scorer.py
@@ -21,11 +21,11 @@ python scorer.py
 
 Outputs a summary table and writes `results/scores.jsonl`.
 
-## Result format
+## Result Format
 
 ```json
 {
-  "task_id": "repo-debug-401",
+  "task_id": "explicit-candidate-debate",
   "condition": "method-index-plus-skills",
   "model": "claude-opus-4-7",
   "output": "...",
@@ -35,27 +35,39 @@ Outputs a summary table and writes `results/scores.jsonl`.
 }
 ```
 
-## Score format
+## Score Format
 
 ```json
 {
-  "task_id": "repo-debug-401",
+  "task_id": "explicit-candidate-debate",
   "condition": "method-index-plus-skills",
   "model": "claude-opus-4-7",
-  "route_plan_emitted": true,
+  "debate_route_emitted": true,
   "critical_recall": 1.0,
-  "critical_found": ["work-gate candidate analysis", "work-gate"],
+  "critical_found": ["debate-router"],
   "critical_missing": [],
   "must_explain_recall": 1.0,
-  "must_explain_found": ["work-gate candidate analysis"],
+  "must_explain_found": ["candidate_debate", "frozen_candidates"],
   "must_explain_missing": [],
-  "expected_topology": "single_agent",
+  "expected_topology": "same_runtime_multi_agent",
   "topology_matched": true,
   "avoid_violated": false,
   "avoid_violations": [],
-  "artifact_score": 0.67,
-  "artifacts_present": ["CandidateAnalysis", "ChangePlan"],
+  "artifact_score": 1.0,
+  "artifacts_present": ["DebateRoute", "DebateRecord", "DebateSummary"],
   "artifacts_missing": [],
+  "layer2_heuristic": {
+    "per_artifact": {
+      "DebateSummary": {
+        "has_final_recommendation": true,
+        "has_status": true,
+        "has_source_proposals": true,
+        "has_sourced_amendments": true,
+        "has_debate_basis": true,
+        "has_derivation": true
+      }
+    }
+  },
   "word_count": 412,
   "debate_misuse": false,
   "tokens_total": 2000
