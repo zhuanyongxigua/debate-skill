@@ -28,9 +28,20 @@ ARTIFACT_PATTERNS = {
         r"agentlaunchplan|agent[\s\-_]*launch[\s\-_]*plan|"
         r"codex exec|claude\s+(-p|--print)|copilot.+--prompt"
     ),
-    "DebateRoute": r"debateroute\s*:",
-    "DebateRecord": r"debaterecord|debate[\s\-_]*record",
-    "DebateSummary": r"debatesummary|debate[\s\-_]*summary|input[\s\-_]*classification",
+    "DebateRoute": r"(?m)^\s*debateroute\s*:",
+    "DebateRecord": r"(?m)^\s*(?:debaterecord|debate[\s\-_]*record)\s*:",
+    "DebateSummary": r"(?m)^\s*(?:debatesummary|debate[\s\-_]*summary)\s*:",
+}
+
+ARCHIVE_REF_RE = re.compile(
+    r"(?P<path>(?:~|/)[^\s`\"']*?/\.debate-router/[^\s`\"']+/audit\.ya?ml)",
+    re.IGNORECASE,
+)
+
+AUDIT_BLOCK_PATTERNS = {
+    "DebateRoute": re.compile(r"^DebateRoute\s*:\s*$", re.MULTILINE),
+    "DebateRecord": re.compile(r"^DebateRecord\s*:\s*$", re.MULTILINE),
+    "DebateSummary": re.compile(r"^DebateSummary\s*:\s*$", re.MULTILINE),
 }
 
 DEBATE_APPEARED_RE = re.compile(
@@ -61,7 +72,103 @@ def _count_pattern(output, pattern):
     return len(re.findall(pattern, output, re.IGNORECASE))
 
 
+def _find_archive_refs(output):
+    refs = []
+    seen = set()
+    for match in ARCHIVE_REF_RE.finditer(output):
+        ref = match.group("path").rstrip(".,;:)]}")
+        if ref not in seen:
+            seen.add(ref)
+            refs.append(ref)
+    return refs
+
+
+def _read_archive_blocks(path_text):
+    if re.search(r"[<>{}]", path_text):
+        return {
+            "path": path_text,
+            "status": "invalid_placeholder",
+            "blocks": [],
+            "reason": "archive path contains placeholder braces",
+        }
+
+    path = Path(path_text).expanduser()
+    if not path.exists():
+        return {
+            "path": path_text,
+            "status": "missing",
+            "blocks": [],
+            "reason": "archive file does not exist",
+        }
+    if not path.is_file():
+        return {
+            "path": path_text,
+            "status": "invalid",
+            "blocks": [],
+            "reason": "archive path is not a file",
+        }
+
+    try:
+        text = path.read_text()
+    except OSError as exc:
+        return {
+            "path": path_text,
+            "status": "unreadable",
+            "blocks": [],
+            "reason": str(exc),
+        }
+
+    blocks = sorted(
+        artifact
+        for artifact, pattern in AUDIT_BLOCK_PATTERNS.items()
+        if pattern.search(text)
+    )
+    expected_blocks = set(AUDIT_BLOCK_PATTERNS)
+    block_set = set(blocks)
+    if block_set == expected_blocks:
+        status = "valid"
+        reason = ""
+    elif blocks:
+        status = "partial"
+        missing = sorted(expected_blocks - block_set)
+        reason = "archive missing audit blocks: " + ", ".join(missing)
+    else:
+        status = "empty_or_unrecognized"
+        reason = "archive lacks recognized audit blocks"
+    return {
+        "path": path_text,
+        "status": status,
+        "blocks": blocks,
+        "reason": reason,
+    }
+
+
+def _archive_audit_info(output):
+    refs = _find_archive_refs(output)
+    archive_results = [_read_archive_blocks(ref) for ref in refs]
+    blocks = {
+        block
+        for result in archive_results
+        for block in result["blocks"]
+    }
+    return {
+        "refs_found": refs,
+        "refs_valid": [
+            result["path"]
+            for result in archive_results
+            if result["status"] == "valid"
+        ],
+        "refs_invalid": [
+            result
+            for result in archive_results
+            if result["status"] != "valid"
+        ],
+        "artifacts_present": blocks,
+    }
+
+
 def score_debate_record_quality(output, expected=None):
+    expected = expected or {}
     has_entry_case = bool(
         re.search(
             r"requirement_debate|single_proposal_debate|candidate_debate|judgment_debate",
@@ -77,26 +184,39 @@ def score_debate_record_quality(output, expected=None):
     has_cross_review = bool(re.search(r"cross[\s\-_]*review|reviewed_critic_role", output, re.IGNORECASE))
     has_arbiter = bool(re.search(r"arbiter|arbitration|decision|selected_candidate", output, re.IGNORECASE))
     has_evidence = bool(re.search(r"evidence|basis|constraint|test|source|probe|risk", output, re.IGNORECASE))
+    has_cli_participation = bool(
+        re.search(
+            r"cli[\s\-_]*participation|proposal_generation.+debate_execution|"
+            r"debate_execution.+proposal_generation",
+            output,
+            re.IGNORECASE | re.DOTALL,
+        )
+    )
+    requires_cli_participation = "cli_participation" in expected.get("required_fields", [])
     candidate_count = max(
         _count_pattern(output, r"\bcandidate\s+[a-d1-4]\b"),
         _count_pattern(output, r"\bid:\s*[\"']?[A-D1-4]"),
     )
-    quality_score = round(
+    base_score = (
         has_entry_case * 0.15
         + has_frozen * 0.15
         + max(has_generation, has_normalization, has_degraded_or_reopen) * 0.1
         + has_critics * 0.15
         + has_cross_review * 0.2
         + has_arbiter * 0.15
-        + has_evidence * 0.1,
-        2,
+        + has_evidence * 0.1
     )
+    if requires_cli_participation:
+        quality_score = round(base_score * 0.9 + has_cli_participation * 0.1, 2)
+    else:
+        quality_score = round(base_score, 2)
     return {
         "has_entry_case": has_entry_case,
         "has_frozen_candidates_or_judgments": has_frozen,
         "has_proposal_generation": has_generation,
         "has_proposal_normalization": has_normalization,
         "has_degraded_or_reopen": has_degraded_or_reopen,
+        "has_cli_participation": has_cli_participation,
         "has_critics": has_critics,
         "has_cross_review": has_cross_review,
         "has_arbiter": has_arbiter,
@@ -170,8 +290,13 @@ def _avoid_violations(output_norm, avoid):
 def score_result(result, task):
     output = result["output"]
     output_norm = normalize_key(output)
+    archive_audit_info = _archive_audit_info(output)
+    archive_artifacts = archive_audit_info["artifacts_present"]
 
-    debate_route_emitted = bool(re.search(ARTIFACT_PATTERNS["DebateRoute"], output, re.IGNORECASE))
+    debate_route_emitted = bool(
+        re.search(ARTIFACT_PATTERNS["DebateRoute"], output, re.IGNORECASE)
+        or "DebateRoute" in archive_artifacts
+    )
 
     expected = task.get("expected_stack", [])
     critical_found = []
@@ -207,7 +332,7 @@ def score_result(result, task):
     artifacts_present = []
     for artifact in required_artifacts:
         pattern = ARTIFACT_PATTERNS.get(artifact, re.escape(artifact.lower()))
-        if re.search(pattern, output, re.IGNORECASE):
+        if artifact in archive_artifacts or re.search(pattern, output, re.IGNORECASE):
             artifacts_present.append(artifact)
     artifact_score = len(artifacts_present) / len(required_artifacts) if required_artifacts else 1.0
 
@@ -233,6 +358,10 @@ def score_result(result, task):
         "artifact_score": round(artifact_score, 2),
         "artifacts_present": artifacts_present,
         "artifacts_missing": [a for a in required_artifacts if a not in artifacts_present],
+        "archive_refs_found": archive_audit_info["refs_found"],
+        "archive_refs_valid": archive_audit_info["refs_valid"],
+        "archive_refs_invalid": archive_audit_info["refs_invalid"],
+        "archive_artifacts_present": sorted(archive_artifacts),
         "word_count": len(output.split()),
         "debate_misuse": debate_misuse,
         "tokens_total": result.get("tokens_in", 0) + result.get("tokens_out", 0),
