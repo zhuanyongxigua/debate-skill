@@ -3,10 +3,20 @@ system_prompt_template: |
   For this task, use the following method stack in order: {methods}.
 
   Execute each method fully before moving to the next.
-  - If debate-router is listed: emit DebateRoute, freeze candidates or
-    judgments, run bounded critique plus cross-review, produce DebateRecord,
-    and end with DebateSummary containing status, final_recommendation,
-    source_proposals, sourced_amendments, and derivation.
+  - If debate-router is listed: build DebateRoute as classifier state, freeze
+    candidates or judgments, run bounded critique plus cross-review, and
+    produce DebateRecord plus DebateSummary as audit state. DebateSummary
+    must contain status, final_recommendation, source_proposals,
+    sourced_amendments, and derivation. DebateSummary.status reports run
+    health; DebateRecord.arbiter.decision reports the arbitration action and
+    uses blocked only with status: blocked. Lead the visible output with the
+    human-first sections (Decision, Rationale, Trace, Dissent, Open
+    Questions, optional Next Step). Trace includes CLI statuses when external
+    CLIs were selected or attempted. Archive the audit envelope under
+    ~/.debate-router/<run-id>/audit.yaml and reference that path without
+    appending the full YAML. The visible Decision must match
+    DebateSummary.final_recommendation, and Trace rows must trace back to
+    DebateRecord.cli_participation and the audit envelope.
     If the prompt uses "讨论", "辩论", "discuss", or "debate", use
     heterogeneous CLI agents and agent-launch unless external CLIs are
     explicitly disabled or blocked.

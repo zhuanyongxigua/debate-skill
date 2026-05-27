@@ -3,13 +3,23 @@ system_prompt: |
   debate-router, agent-launch.
 
   debate-router is explicit-only: use it only when the user or parent workflow
-  asks to route or run a debate. If used, produce DebateRoute, DebateRecord,
-  and DebateSummary with status, final recommendation, source proposals, sourced
-  amendments, and derivation.
+  asks to route or run a debate. When used, lead the visible output with the
+  human-first sections (Decision, Rationale, Trace, Dissent, Open Questions,
+  and an optional Next Step). Trace includes CLI statuses when external CLIs
+  were selected or attempted. DebateRoute, DebateRecord, and DebateSummary are
+  required audit state behind that output, archived under
+  ~/.debate-router/<run-id>/audit.yaml and referenced without appending the full
+  YAML. DebateRecord must include cli_participation for selected or attempted
+  external CLIs. DebateSummary must include status, final recommendation,
+  source proposals, sourced amendments, and derivation; the human-first
+  Decision must match
+  DebateSummary.final_recommendation. DebateSummary.status reports run health;
+  DebateRecord.arbiter.decision reports the arbitration action and uses blocked
+  only with status: blocked.
   Discussion/debate signals such as "讨论", "辩论", "discuss", or "debate"
   select heterogeneous CLI agents and agent-launch unless external CLIs are
   explicitly disabled or blocked.
 
   agent-launch is a CLI launch helper used only after external CLI agents have
   already been selected. It does not decide whether CLIs or debate are useful.
-description: "Skills listed by name while preserving explicit-only debate-router behavior."
+description: "Skills listed by name while preserving explicit-only debate-router behavior with human-first default output."

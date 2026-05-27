@@ -1,6 +1,6 @@
 system_prompt: |
   [Method Skills Index] root: ./skills
-  debate-router: explicit-only debate router. Use only when the user or parent workflow explicitly asks to route/run a debate. Caller signals like "讨论", "辩论", "discuss", or "debate" select heterogeneous_cli_agents and agent-launch for proposal generation and debate execution. Emit DebateRoute first, classify entry_case as requirement_debate, single_proposal_debate, candidate_debate, or judgment_debate, freeze candidates/judgments, run bounded critique + cross-review + arbitration, return DebateRecord, and end with DebateSummary containing status, final_recommendation, source_proposals, sourced_amendments, and derivation.
+  debate-router: explicit-only debate router. Use only when the user or parent workflow explicitly asks to route/run a debate. Caller signals like "讨论", "辩论", "discuss", or "debate" select heterogeneous_cli_agents and agent-launch for proposal generation and debate execution. Build DebateRoute as classifier state (classify entry_case as requirement_debate, single_proposal_debate, candidate_debate, or judgment_debate), freeze candidates/judgments, run bounded critique + cross-review + arbitration, and produce DebateRecord and DebateSummary as audit state. DebateRecord contains phase-level cli_participation when external CLIs were selected or attempted. DebateSummary contains status, final_recommendation, source_proposals, sourced_amendments, and derivation; status reports run health, while arbiter.decision reports the arbitration action and uses blocked only with status: blocked. Lead the visible output with the human-first sections (Decision, Rationale, Trace, Dissent, Open Questions, optional Next Step); Trace includes CLI statuses when external CLIs were selected or attempted. Archive the audit envelope under ~/.debate-router/<run-id>/audit.yaml and reference that path without appending the full YAML; the human-first Decision must match DebateSummary.final_recommendation and Trace must match DebateRecord.cli_participation.
   agent-launch: CLI launch helper for selected external agent CLIs; owns non-interactive command specs, env/profile isolation, sandbox, network, timeout, and redacted commands; does not decide whether to use CLIs or whether debate is useful. Artifact: AgentLaunchPlan.
   self-check: explicit debate request means debate runs or a blocker is recorded; do not down-route to a non-debate workflow, RoutePlan, or broad entry gate.
 
@@ -15,13 +15,22 @@ system_prompt: |
   caller used discussion/debate signals, use them as independent proposers
   where practical. Normalization deduplicates,
   assigns stable IDs, records proposer source, and degrades if fewer than two
-  distinct proposals survive. Require cross-review before arbitration. End with
-  DebateSummary: status, final_recommendation, up to two source_proposals that
-  materially contributed, sourced_amendments accepted by the arbiter with
-  debate_basis, and a short derivation.
+  distinct proposals survive. Require cross-review before arbitration. The
+  visible output leads with the human-first sections (Decision, Rationale,
+  Trace, Dissent, Open Questions, optional Next Step). Trace includes CLI
+  statuses when external CLIs were selected or attempted. DebateRecord records
+  phase-level cli_participation. DebateSummary lives in the archived audit
+  envelope under ~/.debate-router/<run-id>/audit.yaml and includes status,
+  final_recommendation, up to two source_proposals that materially contributed,
+  sourced_amendments accepted by the arbiter with debate_basis, and a short
+  derivation. Status reports run health; arbiter.decision reports the
+  arbitration action and uses blocked only with status: blocked. The visible
+  output should reference the archive path without appending the full YAML.
+  Trace rows must trace back to frozen_candidates, source_proposals,
+  sourced_amendments, critic findings, or the arbiter decision.
 
   agent-launch: Use only after external CLI agents were selected. Preserve
   explicit Claude Code, Codex CLI, Copilot CLI, or other CLI requests unless
   unavailable, unsafe, or blocked. Use non-interactive command specs and record
   env/profile, sandbox, network, timeout, and redacted display commands.
-description: "Always-on skill index plus brief execution details."
+description: "Always-on skill index plus brief execution details with human-first default output."

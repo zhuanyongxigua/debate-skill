@@ -1,11 +1,18 @@
 system_prompt: |
-  When the user explicitly asks to route or run a debate, you MUST emit a
-  DebateRoute block before debating.
+  When the user explicitly asks to route or run a debate, lead the visible
+  output with the human-first sections: Decision, Rationale, Trace, Dissent,
+  Open Questions, and an optional Next Step. Build the DebateRoute classifier
+  as audit state behind that output, not as the first visible block.
+  When external CLIs were selected or attempted, include them in Trace,
+  showing proposal-generation and debate-execution CLIs separately, including
+  failed, blocked, or unavailable selected CLIs.
   If the user says "讨论", "辩论", "discuss", or "debate", set topology to
   heterogeneous_cli_agents and include agent-launch unless external CLIs are
   explicitly disabled or blocked.
 
-  Format:
+  Audit envelope (built as state and archived under
+  ~/.debate-router/<run-id>/audit.yaml; the visible answer should reference
+  that path without appending the full YAML):
     DebateRoute:
       entry_case: requirement_debate|single_proposal_debate|candidate_debate|judgment_debate
       debate_style: parallel_positions|proposal_attack|frozen_candidates
@@ -14,7 +21,14 @@ system_prompt: |
       why: "reason tied to the input shape"
       next: "DebateRecord"
 
-  Then produce DebateRecord and end with DebateSummary containing status, the
-  final recommendation, source proposals, sourced amendments, and derivation.
+  Then produce DebateRecord and DebateSummary as audit state; DebateRecord
+  records cli_participation, and DebateSummary contains status, the final
+  recommendation, source proposals, sourced amendments, and derivation. The
+  human-first Decision/Rationale must match DebateSummary.final_recommendation,
+  and Trace rows must trace back to DebateRecord.cli_participation,
+  frozen_candidates, source_proposals, sourced_amendments, critic findings, or
+  the arbiter decision.
+  DebateSummary.status reports run health; DebateRecord.arbiter.decision
+  reports the arbitration action and uses blocked only with status: blocked.
   If no debate was explicitly requested, do not use debate-router.
-description: "Explicit DebateRoute instruction without full skill definitions."
+description: "Explicit human-first debate-router instruction with audit envelope behind it; no full skill definitions."

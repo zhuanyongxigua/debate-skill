@@ -1,6 +1,6 @@
 # DebateRoute Rubric
 
-Score each `DebateRoute` and follow-on `DebateRecord` from 0 to 5 on each
+Score each run (human-first output plus audit envelope) from 0 to 5 on each
 criterion.
 
 ## Criteria
@@ -8,12 +8,16 @@ criterion.
 | Criterion | What to check |
 | --- | --- |
 | Explicit trigger | `debate-router` is used only when debate was explicitly requested. |
-| Route order | `DebateRoute:` appears before substantive debate output. |
+| Human-first layout | The visible output leads with `Decision`, `Rationale`, `Trace`, `Dissent`, `Open Questions`, and an optional `Next Step`, not the YAML envelope. |
+| CLI trace visibility | When external CLIs were selected or attempted, `Trace` names which CLIs participated in proposal generation and debate execution, including failed, blocked, or unavailable CLIs. |
+| Audit archive | `DebateRoute`, `DebateRecord`, and `DebateSummary` are archived under `~/.debate-router/<run-id>/audit.yaml`, and the visible answer includes only the archive path. |
+| Audit consistency | `Decision` matches `DebateSummary.final_recommendation`, and `Trace` rows match `DebateRecord.cli_participation`, `frozen_candidates`, `source_proposals`, `sourced_amendments`, critic findings, or the arbiter decision. |
 | Entry case fit | The chosen case matches requirement, single proposal, candidates, or judgments. |
 | Freeze discipline | User-provided proposals, candidates, or judgments are preserved before critique. |
 | Debate execution | The output includes critic findings, cross-review, and arbitration. |
-| End summary | The output ends with a brief classification and process summary. |
+| Summary placement | `DebateSummary` in the archived envelope contains the input classification and compact process summary; the human-first sections name the decision and rationale. |
 | Final synthesis | The final recommendation names status, source proposals, accepted amendments, and derivation. |
+| Status/decision split | `DebateSummary.status` reports run health, while `DebateRecord.arbiter.decision` reports the arbitration action; `arbiter.decision: "blocked"` is used only with `status: blocked`. |
 | Evidence use | Checks, tests, sources, or probes are used as evidence when relevant. |
 | Topology preservation | Explicit CLI or same-runtime choices are preserved. |
 | Discussion signal topology | "讨论", "辩论", "discuss", or "debate" signals select heterogeneous CLI agents unless external CLIs are explicitly disabled or blocked. |
@@ -26,7 +30,21 @@ criterion.
 - Uses `debate-router` for a task that did not explicitly request debate.
 - Says debate is unnecessary after `debate-router` was explicitly invoked.
 - Skips the required debate after explicit invocation.
-- Omits the final `DebateSummary`.
+- Leads the visible output with a full `DebateRoute:`/`DebateRecord:` YAML
+  block instead of the human-first `Decision` / `Rationale` / `Trace`
+  sections.
+- Replaces the human-first sections with YAML or appends a full `## Audit`
+  section in the normal final answer.
+- Omits selected, planned, launched, or attempted external CLIs from `Trace`.
+- Omits a failed, blocked, or unavailable selected CLI from `Trace`.
+- Collapses proposal-generation and debate-execution CLI participation into one
+  ambiguous `Trace` phase when both phases used external CLIs.
+- Produces human-first sections that contradict the audit envelope (for
+  example, a `Decision` that does not match `final_recommendation` or `Trace`
+  rows that do not appear in the audit state).
+- Omits the audit archive entirely (no `~/.debate-router/` archive path and no
+  retrievable audit record).
+- Omits the final `DebateSummary` from the audit envelope.
 - Emits a broad entry gate or `RoutePlan`.
 - Produces no frozen candidates or judgments.
 - Lets critics rewrite candidates during critique.
@@ -38,6 +56,10 @@ criterion.
 - Orders `source_proposals` by pre-debate rank instead of final contribution.
 - Emits a degraded or blocked debate with a different output shape instead of
   the standard `DebateSummary` status envelope.
+- Uses `arbiter.decision: "blocked"` for a degraded partial debate instead of
+  reserving it for `status: blocked`.
+- Marks a run `completed` when proposal generation, CLI participation, archive,
+  or evidence limitations should make it `degraded` or `blocked`.
 - Lets a proposer be the sole critic validating its own proposal without
   recording the limitation.
 - Decides by vote count, confidence, or consensus pressure.
