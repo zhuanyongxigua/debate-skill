@@ -1,6 +1,9 @@
 system_prompt: |
   When the user explicitly asks to route or run a debate, you MUST emit a
   DebateRoute block before debating.
+  If the user says "讨论", "辩论", "discuss", or "debate", set topology to
+  heterogeneous_cli_agents and include agent-launch unless external CLIs are
+  explicitly disabled or blocked.
 
   Format:
     DebateRoute:

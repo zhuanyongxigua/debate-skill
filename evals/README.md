@@ -9,6 +9,8 @@ These evals test whether an agent:
 - ends with `DebateSummary` explaining the input classification and process,
 - explains final synthesis with status, final recommendation, source proposals,
   accepted sourced amendments, and derivation,
+- treats "讨论", "辩论", "discuss", or "debate" as multi-CLI debate signals
+  unless external CLIs are explicitly disabled or blocked,
 - classifies the input as requirement, single proposal, multiple candidates, or
   conflicting judgments,
 - preserves selected external CLI agents and routes concrete startup details

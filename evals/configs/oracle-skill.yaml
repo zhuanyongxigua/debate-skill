@@ -7,6 +7,9 @@ system_prompt_template: |
     judgments, run bounded critique plus cross-review, produce DebateRecord,
     and end with DebateSummary containing status, final_recommendation,
     source_proposals, sourced_amendments, and derivation.
+    If the prompt uses "讨论", "辩论", "discuss", or "debate", use
+    heterogeneous CLI agents and agent-launch unless external CLIs are
+    explicitly disabled or blocked.
   - If agent-launch is listed: produce AgentLaunchPlan for the selected external
     CLIs. Do not use it to decide whether CLIs or debate are useful.
   - If no debate-router is listed: do not produce DebateRoute or DebateRecord.

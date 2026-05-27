@@ -6,6 +6,9 @@ system_prompt: |
   asks to route or run a debate. If used, produce DebateRoute, DebateRecord,
   and DebateSummary with status, final recommendation, source proposals, sourced
   amendments, and derivation.
+  Discussion/debate signals such as "讨论", "辩论", "discuss", or "debate"
+  select heterogeneous CLI agents and agent-launch unless external CLIs are
+  explicitly disabled or blocked.
 
   agent-launch is a CLI launch helper used only after external CLI agents have
   already been selected. It does not decide whether CLIs or debate are useful.

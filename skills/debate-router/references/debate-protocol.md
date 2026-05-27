@@ -120,6 +120,15 @@ Rules:
 - `DebateRoute` is a classifier, not a debate/no-debate gate.
 - Once `debate-router` is active, run a debate or record why the debate is
   blocked. Do not skip the debate instead.
+- Explicit discussion or debate signals such as "discuss", "debate",
+  "argue about", "讨论", or "辩论" select the multi-CLI path. Set
+  `DebateRoute.topology: heterogeneous_cli_agents`, include two or more
+  external CLIs in `selected_cli_agents`, and use `agent-launch` for the
+  launch plan unless the caller explicitly disabled external CLIs or the CLIs
+  are blocked or unavailable.
+- For a `requirement_debate` entered through a discussion/debate signal, use
+  the selected external CLI agents for `proposal_generation` before
+  normalization, then use external CLI critics for `debate_execution`.
 - End with `DebateSummary`, briefly stating how the input was classified and
   what debate process was actually run.
 - Use the same `DebateSummary` envelope for normal, degraded, and blocked
@@ -199,6 +208,10 @@ Rules:
 - Preserve the external CLI set chosen by the user or parent workflow. If the
   selected CLI set is unavailable or unsafe, mark the affected agent `blocked`
   or `unavailable` instead of silently switching to another CLI.
+- Treat discussion/debate signals as a selected external CLI set, not as a
+  suggestion to be optimized away. If fewer than two external CLIs can run,
+  record the limitation in `execution_topology` and `status_reason`; do not
+  silently downgrade to current-session or same-runtime debate.
 - A proposer must not be the sole critic validating its own proposal. If the
   topology cannot provide role separation, record the limitation and treat
   self-review as weak evidence only.

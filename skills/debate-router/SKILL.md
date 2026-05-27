@@ -21,6 +21,14 @@ with another non-debate workflow because the task seems simple, checkable, or
 expensive. If the debate cannot run, record the concrete blocker in the
 `DebateRecord`.
 
+If the caller uses explicit discussion or debate signals such as "discuss",
+"debate", "argue about", "讨论", or "辩论", treat that as an instruction to use
+multiple external CLI agents. This is not a model judgment about whether CLIs
+are worthwhile; the caller has selected the multi-CLI path. Use the multi-CLI
+path for both proposal generation and debate execution unless the caller
+explicitly disables external CLIs or the selected CLIs are blocked or
+unavailable.
+
 ## Required Output
 
 The first visible block must be `DebateRoute:`:
@@ -208,6 +216,11 @@ Proposal state terms:
 
 Use the user or parent workflow's selected topology:
 
+- Discussion/debate signals such as "discuss", "debate", "argue about", "讨论",
+  or "辩论" count as selected `heterogeneous_cli_agents`. Plan two or more
+  external CLI agents through `agent-launch`. Prefer the locally configured
+  debate CLIs, and record any unavailable selected CLI as blocked instead of
+  silently falling back to current-session debate.
 - If no external CLI agents are selected, run the bounded debate in the current
   session or same runtime.
 - If one or more external CLI agents are selected, use `agent-launch` for the
@@ -229,9 +242,12 @@ Use the user or parent workflow's selected topology:
 3. For `requirement_debate`, generate 2-4 candidate positions or proposals
    using the selected current-session, same-runtime, or external CLI agents,
    then freeze them.
+   If the trigger was a discussion/debate signal, use the selected external CLI
+   agents as proposers before normalization.
 4. For the other entry cases, freeze the user-provided proposal, candidates, or
    judgments before critique.
-5. Run one independent critique round.
+5. Run one independent critique round. If the trigger was a discussion/debate
+   signal, run this round through the selected external CLI agents.
 6. Run one cross-review round.
 7. Arbitrate and return `DebateRecord`.
 8. End with `DebateSummary`, including final recommendation, source proposals,
@@ -241,6 +257,8 @@ Use the user or parent workflow's selected topology:
 
 - Treating `debate-router` as a general entry gate.
 - Asking "is debate needed?" after the skill was explicitly invoked.
+- Treating "讨论", "辩论", "discuss", or "debate" as permission to stay in the
+  current session when external CLIs are available.
 - Returning only a recommendation without `DebateRoute`, `DebateRecord`, and
   `DebateSummary`.
 - Salvaging a fragment because the summarizer likes it, without debate support

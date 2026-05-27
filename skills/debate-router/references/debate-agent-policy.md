@@ -23,6 +23,10 @@ Ask only:
 `debate-router` should preserve the agent set selected by the user or parent
 workflow.
 
+- If the caller says "discuss", "debate", "argue about", "讨论", "辩论", or a
+  close equivalent, treat that as selected `heterogeneous_cli_agents`. Use
+  multiple external CLI agents via `agent-launch` for both proposal generation
+  and debate execution. Do not ask whether CLIs are worth using.
 - If no external CLI agents were selected, use current-session or same-runtime
   critic roles.
 - If one external CLI was selected, use `single_external_cli_agent`.
@@ -127,6 +131,9 @@ For requirement debates, treat proposal generation and final synthesis as
 separate from critique:
 
 - Generate and normalize 2-4 distinct proposals before debate.
+- When the trigger was a discussion/debate signal, proposal generation should
+  use the selected external CLI agents as independent proposers before
+  normalization.
 - Debate execution may not mutate the frozen proposals.
 - If normalization leaves fewer than two distinct usable proposals, return a
   degraded debate record rather than pretending a single proposal is a normal

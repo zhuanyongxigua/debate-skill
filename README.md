@@ -56,6 +56,10 @@ The required artifacts are `DebateRoute`, `DebateRecord`, and `DebateSummary`.
 Important constraints:
 
 - Explicit invocation means debate is required; do not optimize it away.
+- Caller signals like "讨论", "辩论", "discuss", or "debate" mean use the
+  multi-CLI path. Proposal generation and debate execution should both use
+  external CLI agents through `agent-launch` unless external CLIs were
+  explicitly disabled or are blocked.
 - For raw requirements, generate 2-4 candidate positions or proposals first.
   If external CLI agents were selected, use them as independent proposers where
   practical.
