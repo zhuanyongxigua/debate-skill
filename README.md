@@ -83,11 +83,14 @@ Important constraints:
 - Caller signals like "讨论", "辩论", "discuss", or "debate" mean use the
   multi-CLI path. Proposal generation and debate execution should both use
   external CLI agents through `agent-launch` unless external CLIs were
-  explicitly disabled or are blocked.
+  explicitly disabled or are blocked. External CLI proposal generation should
+  use `phase: "proposal_generation"` and the 1800 second default timeout.
 - When external CLIs were selected, record their phase-by-phase participation:
   which CLIs joined proposal generation, which joined debate execution, and
   which selected CLIs failed, blocked, or were unavailable. Show this in the
-  final visible `Trace` table.
+  final visible `Trace` table. Do not mark a quiet proposer as
+  `failed/no_output` before the configured timeout unless there is a concrete
+  blocker such as auth, stdin, or an interactive prompt.
 - For raw requirements, generate 2-4 candidate positions or proposals first.
   If external CLI agents were selected, use them as independent proposers where
   practical.
@@ -130,6 +133,10 @@ It owns common launch details:
 - timeout and wait policy
 - prompt transport and redacted display commands
 - blocked/unavailable reporting
+
+Ordinary CLI calls default to 900 seconds. External CLI proposal generation
+defaults to 1800 seconds because proposers often need to read context before
+returning an independent proposal.
 
 It does not own debate turns, transcripts, arbitration, supervisor loops, PID
 tracking, polling, resume/stop, or fallback decisions.

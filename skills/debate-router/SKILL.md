@@ -126,7 +126,8 @@ DebateRoute:
 `DebateRecord` must include `cli_participation` when any external CLI was
 selected or attempted. Use separate `proposal_generation` and
 `debate_execution` lists; each item names the CLI, phase role, status
-(`ran|failed|blocked|unavailable`), and a short note.
+(`ran|failed|blocked|unavailable`), configured timeout, observed wait when
+available, and a short note.
 
 ```yaml
 DebateSummary:
@@ -256,7 +257,11 @@ four cases impossible.
   `degraded_or_reopen`.
 - `proposal_generation` produces raw proposals from selected external CLI
   proposers when provided; otherwise use same-runtime or current-session
-  proposers.
+  proposers. External CLI proposal generation is usually slower than a critic
+  pass; use `agent-launch` with `phase: "proposal_generation"` and a default
+  `timeout_seconds: 1800` unless the caller explicitly chose another budget.
+  Do not mark a proposer `failed/no_output` merely because a short poll has no
+  readable output.
 - `proposal_normalization` validates proposals, removes near-duplicates,
   trims or supplements to 2-4 distinct proposals, assigns stable IDs, and
   records proposer source and fallback reasons. It may normalize; it must not
@@ -335,6 +340,9 @@ Use the user or parent workflow's selected topology:
 - Record each selected or attempted CLI in `DebateRecord.cli_participation`.
   Separate `proposal_generation` from `debate_execution`; include failed,
   blocked, or unavailable CLIs instead of dropping them from the visible output.
+  A `proposal_generation` row should use a proposer role, and a
+  `debate_execution` row should use critic, cross-review, or other debate
+  roles. Do not label a proposal-generation attempt as `critic`.
 - Preserve explicit named-CLI requests such as Claude Code, Codex CLI, or
   Copilot CLI unless the selected CLI is unavailable, unsafe, or blocked.
 - A proposer must not be the sole critic validating its own proposal. If the

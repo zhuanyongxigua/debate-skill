@@ -6,7 +6,9 @@ system_prompt: |
   4. Lead the visible output with Decision and Rationale, then Dissent, Open
      Questions, optional Next Step, Archive, and Trace as the final visible
      section; include CLI statuses in Trace when external CLIs were selected
-     or attempted. The audit envelope
+     or attempted. Use 1800s for external CLI proposal generation by default,
+     and do not mark quiet proposers failed/no_output before the configured
+     timeout unless concretely blocked. The audit envelope
      (DebateRoute + DebateRecord + DebateSummary) must be reachable as a
      ~/.debate-router/<run-id>/audit.yaml archive, not appended as full YAML
      in the final answer.

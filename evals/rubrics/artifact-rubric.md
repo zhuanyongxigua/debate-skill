@@ -56,7 +56,7 @@ envelope; absence of an archive path or retrievable record counts as missing.
 | Selected agents | Missing | Names selected CLI agents and roles |
 | Command spec | Missing | Uses non-interactive command shape |
 | Sandbox/network | Missing for Codex | Records sandbox and network intent |
-| Timeout | Missing | Records timeout or wait policy |
+| Timeout | Missing | Records timeout or wait policy, including 1800s default for external CLI proposal generation |
 | Boundary | Wrong owner | Does not decide whether debate or CLIs are useful |
 
 ## Human-first Output
@@ -111,4 +111,6 @@ envelope; absence of an archive path or retrievable record counts as missing.
 - A proposer is the sole critic validating its own proposal without recording
   the limitation.
 - External CLI selected but no `AgentLaunchPlan`.
+- External CLI proposal generation is marked `failed/no_output` before the
+  configured timeout without a concrete blocker.
 - `agent-launch` used as a reasoning method rather than a launch helper.

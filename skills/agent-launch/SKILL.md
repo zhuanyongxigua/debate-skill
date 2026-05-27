@@ -73,8 +73,19 @@ responsibilities.
 
 ## Timeout And Stop Policy
 
-Use `timeout_seconds: 900` by default for ordinary model CLI calls. Parent
+Use `timeout_seconds: 900` by default for ordinary model CLI calls. Use
+`timeout_seconds: 1800` for `proposal_generation`, because proposer agents
+often need to inspect context before producing an independent proposal. Parent
 orchestrators may override this for best-effort passes or long delegated runs.
+
+Phase-aware defaults:
+
+| Phase | Default timeout |
+| --- | ---: |
+| `proposal_generation` | 1800 seconds |
+| `debate_execution` / critique / cross-review | 900 seconds |
+| ordinary single CLI call | 900 seconds |
+| explicitly long delegated run | caller-selected; record the value |
 
 Do not decide a child CLI is stuck because one poll has no output or because 1-2
 minutes have passed. Stop early only when the process is clearly blocked on:
@@ -85,7 +96,9 @@ minutes have passed. Stop early only when the process is clearly blocked on:
 - sustained no-output or no-progress behavior up to the configured timeout
 
 If a child is stopped before the configured timeout for a practical reason,
-record the early stop reason and which outputs were available.
+record the actual wait time, the configured timeout, the early stop reason, and
+which outputs were available. Do not report `failed/no_output` for a process
+that merely had quiet periods before the configured timeout.
 
 ## Provider Defaults
 
@@ -196,8 +209,11 @@ AgentLaunchPlan:
         sandbox: "workspace-write|read-only|danger-full-access|profile_default|unknown"
         network: "not_needed|needed_enabled|needed_blocked|unknown"
         approval: "never|on-request|profile_default|unknown"
-        timeout_seconds: 900
+        phase: "proposal_generation|debate_execution|critique|cross_review|arbitration|other"
+        timeout_seconds: 900 # use 1800 for proposal_generation unless overridden
         stop_policy: "final|timeout|blocked_interactive|long_no_progress"
+        early_stop_wait_seconds: null
+        early_stop_reason: ""
       status: "planned|available|launched|unavailable|blocked"
       blocked_reason: ""
   permission_needed: false
@@ -214,7 +230,7 @@ human-readable artifacts, with prompts and secrets redacted.
 Use `scripts/agent_launch.py` as the shared implementation surface for CLI
 startup details. It provides provider launch specs, Claude environment
 isolation, Codex sandbox/network checks, redacted display commands, default
-timeouts, and thin `run_spec` / `popen_spec` startup helpers.
+and phase-aware timeouts, and thin `run_spec` / `popen_spec` startup helpers.
 
 Parent orchestrators such as `cli-debate` and `cli-delegator` should call this
 helper for child CLI startup instead of duplicating provider command builders.

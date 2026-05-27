@@ -19,7 +19,9 @@ system_prompt_template: |
     DebateRecord.cli_participation and the audit envelope.
     If the prompt uses "讨论", "辩论", "discuss", or "debate", use
     heterogeneous CLI agents and agent-launch unless external CLIs are
-    explicitly disabled or blocked.
+    explicitly disabled or blocked. External CLI proposal generation should
+    use phase-aware timeout 1800s by default and should not be marked
+    failed/no_output before the configured timeout unless concretely blocked.
   - If agent-launch is listed: produce AgentLaunchPlan for the selected external
     CLIs. Do not use it to decide whether CLIs or debate are useful.
   - If no debate-router is listed: do not produce DebateRoute or DebateRecord.

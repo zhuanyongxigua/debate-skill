@@ -15,6 +15,14 @@ from typing import Any, Sequence
 
 
 DEFAULT_TIMEOUT_SECONDS = 900
+DEFAULT_PROPOSAL_GENERATION_TIMEOUT_SECONDS = 1800
+PHASE_TIMEOUT_SECONDS = {
+    "proposal_generation": DEFAULT_PROPOSAL_GENERATION_TIMEOUT_SECONDS,
+    "debate_execution": DEFAULT_TIMEOUT_SECONDS,
+    "critique": DEFAULT_TIMEOUT_SECONDS,
+    "cross_review": DEFAULT_TIMEOUT_SECONDS,
+    "arbitration": DEFAULT_TIMEOUT_SECONDS,
+}
 DEFAULT_CODEX_PROFILE = "azure"
 DEFAULT_CODEX_EFFORT = "xhigh"
 DEFAULT_CODEX_APPROVAL = "never"
@@ -49,6 +57,7 @@ class LaunchSpec:
     sandbox: str = "profile_default"
     network: str = "not_needed"
     approval: str = "profile_default"
+    phase: str | None = None
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     summary_source: str = "stdout"
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -66,6 +75,7 @@ class LaunchSpec:
             "sandbox": self.sandbox,
             "network": self.network,
             "approval": self.approval,
+            "phase": self.phase,
             "timeout_seconds": self.timeout_seconds,
             "summary_source": self.summary_source,
             "metadata": dict(self.metadata),
@@ -112,6 +122,14 @@ def display_argv(argv: Sequence[str], *, prompt: str | None = None, stdin_prompt
     if stdin_prompt:
         parts = list(parts) + ["<stdin-prompt>"]
     return quote_command(parts)
+
+
+def timeout_seconds_for_phase(phase: str | None = None, timeout_seconds: int | None = None) -> int:
+    if timeout_seconds is not None:
+        return int(timeout_seconds)
+    if phase is None:
+        return DEFAULT_TIMEOUT_SECONDS
+    return PHASE_TIMEOUT_SECONDS.get(phase, DEFAULT_TIMEOUT_SECONDS)
 
 
 def claude_env(
@@ -239,8 +257,10 @@ def build_claude_spec(
     output_format: str | None = None,
     model: str | None = None,
     effort: str | None = None,
-    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+    phase: str | None = None,
+    timeout_seconds: int | None = None,
 ) -> LaunchSpec:
+    resolved_timeout_seconds = timeout_seconds_for_phase(phase=phase, timeout_seconds=timeout_seconds)
     cmd = [claude_bin]
     if resume:
         cmd.extend(["--resume", session_name])
@@ -275,7 +295,8 @@ def build_claude_spec(
         sandbox="profile_default",
         network="not_needed",
         approval="profile_default",
-        timeout_seconds=timeout_seconds,
+        phase=phase,
+        timeout_seconds=resolved_timeout_seconds,
         metadata={
             "session_name": session_name,
             "resume": resume,
@@ -301,8 +322,10 @@ def build_codex_spec(
     summary_path: str | Path | None = None,
     network: str = "needed_enabled",
     config_overrides: Sequence[str] | None = None,
-    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+    phase: str | None = None,
+    timeout_seconds: int | None = None,
 ) -> LaunchSpec:
+    resolved_timeout_seconds = timeout_seconds_for_phase(phase=phase, timeout_seconds=timeout_seconds)
     cmd = [codex_bin, "--profile", profile, "--ask-for-approval", approval]
     if effort != "inherit":
         cmd.extend(["-c", f'model_reasoning_effort="{effort}"'])
@@ -341,7 +364,8 @@ def build_codex_spec(
         sandbox=sandbox,
         network=network,
         approval=approval,
-        timeout_seconds=timeout_seconds,
+        phase=phase,
+        timeout_seconds=resolved_timeout_seconds,
         summary_source="summary_file" if summary_path is not None else "stdout",
         metadata={
             "cwd": cwd,
@@ -363,8 +387,10 @@ def build_copilot_spec(
     model: str | None = None,
     effort: str | None = None,
     allow_all_tools: bool = False,
-    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+    phase: str | None = None,
+    timeout_seconds: int | None = None,
 ) -> LaunchSpec:
+    resolved_timeout_seconds = timeout_seconds_for_phase(phase=phase, timeout_seconds=timeout_seconds)
     cmd = [copilot_bin, "--no-color", "--silent", "--mode=plan", "--no-ask-user"]
     if allow_all_tools:
         cmd.append("--allow-all-tools")
@@ -389,7 +415,8 @@ def build_copilot_spec(
         sandbox="profile_default",
         network="not_needed",
         approval="profile_default",
-        timeout_seconds=timeout_seconds,
+        phase=phase,
+        timeout_seconds=resolved_timeout_seconds,
         metadata={"session_name": session_name, "resume": resume, "model": model, "effort": effort},
     )
 

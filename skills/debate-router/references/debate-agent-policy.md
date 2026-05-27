@@ -93,16 +93,20 @@ Use `agent-launch` whenever `debate-router` has selected or inherited
   implementation.
 - Record phase-level participation for every selected or attempted CLI. Use
   separate `proposal_generation` and `debate_execution` entries, and keep
-  failed, blocked, or unavailable CLIs visible instead of omitting them.
+  failed, blocked, or unavailable CLIs visible instead of omitting them. Keep
+  phase and role consistent: proposal-generation rows are proposers, while
+  debate-execution rows are critics, cross-reviewers, or other debate roles.
 - Wait patiently for non-interactive CLI agents. Use a long timeout for normal
-  model latency; 900 seconds is the default for ordinary model CLI calls.
+  model latency; 900 seconds is the default for ordinary model CLI calls, and
+  1800 seconds is the default for external CLI proposal generation.
 - Do not kill a child agent only because the parent harness prints a transient
   parser/router warning such as `failed to parse function arguments`, `unknown
   variant`, or a tool-call parse warning. Continue waiting if the child retries,
   enters command execution, or produces useful output.
 - Kill the child agent early only when it is clearly blocked on login, OAuth,
-  browser auth, credentials, stdin, an interactive prompt, or repeated
-  no-output/no-progress behavior.
+  browser auth, credentials, stdin, an interactive prompt, or sustained
+  no-output/no-progress behavior up to the configured timeout. Quiet periods
+  before the configured timeout are not enough to mark `failed/no_output`.
 - If a CLI times out, retry once with a shorter, narrower prompt before marking
   the agent unavailable.
 - If a CLI blocks on login, OAuth, browser auth, credentials, or stdin, stop
@@ -139,7 +143,9 @@ separate from critique:
 - Generate and normalize 2-4 distinct proposals before debate.
 - When the trigger was a discussion/debate signal, proposal generation should
   use the selected external CLI agents as independent proposers before
-  normalization.
+  normalization. Use `agent-launch` with `phase: "proposal_generation"` so the
+  default wait budget is 1800 seconds unless the caller explicitly chose
+  another timeout.
 - Debate execution may not mutate the frozen proposals.
 - If normalization leaves fewer than two distinct usable proposals, return a
   degraded debate record rather than pretending a single proposal is a normal

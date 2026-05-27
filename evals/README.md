@@ -24,6 +24,8 @@ These evals test whether an agent:
 - marks phase-level CLI participation, separating proposal-generation CLIs from
   debate-execution CLIs and keeping failed, blocked, or unavailable selected
   CLIs visible,
+- uses the longer phase-aware timeout for external CLI proposal generation and
+  does not treat short quiet periods as `failed/no_output`,
 - classifies the input as requirement, single proposal, multiple candidates, or
   conflicting judgments,
 - preserves selected external CLI agents and routes concrete startup details

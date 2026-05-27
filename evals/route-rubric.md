@@ -22,6 +22,7 @@ criterion.
 | Topology preservation | Explicit CLI or same-runtime choices are preserved. |
 | Discussion signal topology | "讨论", "辩论", "discuss", or "debate" signals select heterogeneous CLI agents unless external CLIs are explicitly disabled or blocked. |
 | Agent launch boundary | External CLI startup uses `agent-launch`; `agent-launch` is not used to decide whether to debate. |
+| Phase-aware timeout | External CLI proposal generation uses the longer proposal timeout and is not marked `failed/no_output` before the configured timeout without a concrete blocker. |
 | Minimality | No broad entry gate or unrelated non-debate method is introduced. |
 | Blocker handling | Unavailable CLIs or permissions are recorded instead of silently ignored. |
 
@@ -70,6 +71,9 @@ criterion.
 - Treats a discussion/debate signal as current-session or same-runtime debate
   while external CLIs are available.
 - Silently replaces a selected CLI that is blocked or unavailable.
+- Marks an external CLI proposer `failed/no_output` after a short quiet period
+  instead of waiting for the configured proposal-generation timeout or naming a
+  concrete blocker.
 
 ## Passing Bar
 

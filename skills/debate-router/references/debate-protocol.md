@@ -39,7 +39,8 @@ DebateRecord:
       - name: "codex"
         command: "codex exec"
         mode: "non_interactive"
-        timeout_seconds: 900
+        phase: "proposal_generation|debate_execution|other"
+        timeout_seconds: 900 # use 1800 for proposal_generation unless overridden
         sandbox: "read-only|workspace-write|danger-full-access|profile_default|unknown"
         network: "not_needed|needed_enabled|needed_blocked|unknown"
         status: "planned|ran|failed|blocked|unavailable"
@@ -57,11 +58,17 @@ DebateRecord:
       - name: "codex-cli"
         role: "proposer"
         status: "ran|failed|blocked|unavailable"
+        timeout_seconds: 1800
+        waited_seconds: null
+        stop_reason: ""
         note: "produced P1"
     debate_execution:
       - name: "claude-code"
         role: "critic|cross-reviewer|arbiter|judge"
         status: "ran|failed|blocked|unavailable"
+        timeout_seconds: 900
+        waited_seconds: null
+        stop_reason: ""
         note: "timed out before critique"
   proposal_normalization:
     normalized_proposal_ids: []
@@ -267,10 +274,15 @@ Rules:
 - For a `requirement_debate` entered through a discussion/debate signal, use
   the selected external CLI agents for `proposal_generation` before
   normalization, then use external CLI critics for `debate_execution`.
+  `proposal_generation` launches should use the `agent-launch` phase-aware
+  default timeout of 1800 seconds unless the caller explicitly chose another
+  budget.
 - Record phase-level CLI participation for every selected or attempted
   external CLI. If both proposal generation and debate execution used external
   CLIs, show both phases separately in the human-first `Trace` table and in
-  `DebateRecord.cli_participation`.
+  `DebateRecord.cli_participation`. Keep phase and role consistent:
+  `proposal_generation` rows are proposers; `debate_execution` rows are
+  critics, cross-reviewers, or other debate roles.
 - The archived envelope must include `DebateSummary`, briefly stating how the
   input was classified and what debate process was actually run.
 - Use the same `DebateSummary` envelope for normal, degraded, and blocked
@@ -370,14 +382,16 @@ Rules:
 - Use read-only, plan, or no-edit modes when available. Do not let child agents
   edit files unless implementation was explicitly requested.
 - Wait patiently for non-interactive CLI agents. Use a long timeout for normal
-  model latency; 900 seconds is the default for ordinary model CLI calls.
+  model latency; 900 seconds is the default for ordinary model CLI calls, and
+  1800 seconds is the default for external CLI `proposal_generation`.
 - Do not kill a child agent only because the parent harness prints a transient
   parser/router warning such as `failed to parse function arguments`, `unknown
   variant`, or a tool-call parse warning. Continue waiting if the child retries,
   enters command execution, or produces useful output.
 - Kill the child agent early only when it is clearly blocked on login, OAuth,
-  browser auth, credentials, stdin, an interactive prompt, or repeated
-  no-output/no-progress behavior.
+  browser auth, credentials, stdin, an interactive prompt, or sustained
+  no-output/no-progress behavior up to the configured timeout. Quiet periods
+  before the configured timeout are not enough to mark `failed/no_output`.
 - If a CLI times out, retry once with a shorter, narrower prompt before marking
   the agent `unavailable`.
 - If a CLI blocks on login, OAuth, browser auth, credentials, or stdin, stop
