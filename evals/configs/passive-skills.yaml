@@ -4,9 +4,9 @@ system_prompt: |
 
   debate-router is explicit-only: use it only when the user or parent workflow
   asks to route or run a debate. When used, lead the visible output with the
-  human-first sections (Decision, Rationale, Trace, Dissent, Open Questions,
-  and an optional Next Step). Trace includes CLI statuses when external CLIs
-  were selected or attempted. DebateRoute, DebateRecord, and DebateSummary are
+  human-first sections (Decision, Rationale, Dissent, Open Questions, optional
+  Next Step, Archive, then Trace last). Trace includes CLI statuses when
+  external CLIs were selected or attempted. DebateRoute, DebateRecord, and DebateSummary are
   required audit state behind that output, archived under
   ~/.debate-router/<run-id>/audit.yaml and referenced without appending the full
   YAML. DebateRecord must include cli_participation for selected or attempted

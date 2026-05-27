@@ -3,9 +3,10 @@ system_prompt: |
   1. Build DebateRoute as classifier state.
   2. Freeze candidates or judgments.
   3. Run one critic round, one cross-review round, and arbitration.
-  4. Lead the visible output with Decision, Rationale, Trace, Dissent, Open
-     Questions, and an optional Next Step; include CLI statuses in Trace when
-     external CLIs were selected or attempted. The audit envelope
+  4. Lead the visible output with Decision and Rationale, then Dissent, Open
+     Questions, optional Next Step, Archive, and Trace as the final visible
+     section; include CLI statuses in Trace when external CLIs were selected
+     or attempted. The audit envelope
      (DebateRoute + DebateRecord + DebateSummary) must be reachable as a
      ~/.debate-router/<run-id>/audit.yaml archive, not appended as full YAML
      in the final answer.

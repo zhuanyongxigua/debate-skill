@@ -1,8 +1,9 @@
 system_prompt: |
   When the user explicitly asks to route or run a debate, lead the visible
-  output with the human-first sections: Decision, Rationale, Trace, Dissent,
-  Open Questions, and an optional Next Step. Build the DebateRoute classifier
-  as audit state behind that output, not as the first visible block.
+  output with the human-first sections: Decision, Rationale, Dissent, Open
+  Questions, optional Next Step, Archive, and Trace as the final visible
+  section. Build the DebateRoute classifier as audit state behind that output,
+  not as the first visible block.
   When external CLIs were selected or attempted, include them in Trace,
   showing proposal-generation and debate-execution CLIs separately, including
   failed, blocked, or unavailable selected CLIs.
@@ -27,7 +28,7 @@ system_prompt: |
   human-first Decision/Rationale must match DebateSummary.final_recommendation,
   and Trace rows must trace back to DebateRecord.cli_participation,
   frozen_candidates, source_proposals, sourced_amendments, critic findings, or
-  the arbiter decision.
+  the arbiter decision. Trace must remain the final visible section.
   DebateSummary.status reports run health; DebateRecord.arbiter.decision
   reports the arbitration action and uses blocked only with status: blocked.
   If no debate was explicitly requested, do not use debate-router.

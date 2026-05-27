@@ -65,7 +65,7 @@ envelope; absence of an archive path or retrievable record counts as missing.
 | --- | --- | --- |
 | Decision section | Missing or buried under YAML | Leads the visible output; matches `DebateSummary.final_recommendation` |
 | Rationale section | Missing | Names base proposal and accepted amendments by ID, plus the deciding evidence or constraint |
-| Trace table | Missing | Compact rows that trace back to `DebateRecord.cli_participation`, `frozen_candidates`, `source_proposals`, `sourced_amendments`, critic findings, or the arbiter decision; no invented rows |
+| Trace table | Missing or placed before the answer sections | Final visible section; compact rows that trace back to `DebateRecord.cli_participation`, `frozen_candidates`, `source_proposals`, `sourced_amendments`, critic findings, or the arbiter decision; no invented rows |
 | Dissent section | Missing | Names rejected proposals and challenged-but-accepted fragments with reasons matching `arbiter.rejected_candidates` and `debate_basis.arbiter_reason` |
 | Open Questions section | Missing | Lists remaining probes or evidence gaps, reusing `arbiter.evidence_basis`/`next_action` when applicable |
 | Next Step (when applicable) | Missing when `arbiter.decision` is `probe`/`escalate` | One concrete action consistent with `arbiter.next_action` |
@@ -82,6 +82,8 @@ envelope; absence of an archive path or retrievable record counts as missing.
   `~/.debate-router/` archive path.
 - Normal final answer appends a full `## Audit` section or inlines the full
   YAML instead of archiving it.
+- `Trace` appears before `Dissent`, `Open Questions`, applicable `Next Step`,
+  or `Archive` instead of being the final visible section.
 - External CLI selected or attempted but no visible `Trace` row for it.
 - Failed, blocked, or unavailable selected CLI omitted from `Trace`.
 - Proposal-generation and debate-execution CLI participation collapsed into one

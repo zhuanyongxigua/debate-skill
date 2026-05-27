@@ -46,15 +46,6 @@ Default visible layout:
 <2-5 short sentences naming the base proposal and any accepted amendments by
 ID, plus the key evidence or constraint that decided it>
 
-## Trace
-| ID | Phase | Source | Status | Role | Note |
-|----|-------|--------|--------|------|------|
-| P1 | proposal_generation | codex-cli | ran | base proposal | main structure |
-| P3 | proposal_generation | claude-code | unavailable | proposer | login required |
-| A1 | debate_execution | copilot-cli | ran | amendment (constraint) | accepted because ... |
-| — | debate_execution | claude-code | failed | critic | timed out before critique |
-| — | arbitration | arbiter | ran | decision | select(P1) + adopt(A1 from P3) |
-
 ## Dissent
 - P2: rejected, short reason
 - challenged fragment from P4: who challenged, why the arbiter still accepted
@@ -68,6 +59,15 @@ ID, plus the key evidence or constraint that decided it>
 
 ## Archive
 - Full debate record: `~/.debate-router/<run-id>/audit.yaml`
+
+## Trace
+| ID | Phase | Source | Status | Role | Note |
+|----|-------|--------|--------|------|------|
+| P1 | proposal_generation | codex-cli | ran | base proposal | main structure |
+| P3 | proposal_generation | claude-code | unavailable | proposer | login required |
+| A1 | debate_execution | copilot-cli | ran | amendment (constraint) | accepted because ... |
+| — | debate_execution | claude-code | failed | critic | timed out before critique |
+| — | arbitration | arbiter | ran | decision | select(P1) + adopt(A1 from P3) |
 ```
 
 The `Trace` table is the compact human-readable form of the audit state and
@@ -83,7 +83,9 @@ When external CLI agents were selected, planned, launched, or attempted,
 `proposal_generation` and `debate_execution` as separate phases so the caller
 can see whether the multi-path proposal phase and the debate phase used the
 same or different CLIs. Use `status: ran|failed|blocked|unavailable` for CLI
-rows and include a short note for failures or missing agents.
+rows and include a short note for failures or missing agents. Keep `Trace` as
+the final visible section so the output leads with the actionable answer and
+puts provenance after the archive pointer.
 
 `Dissent` must name rejected proposals and any challenged fragment the arbiter
 nevertheless accepted, with the reason. `Open Questions` lists probes or
@@ -362,14 +364,15 @@ Use the user or parent workflow's selected topology:
 7. Arbitrate and build `DebateRecord`.
 8. Build `DebateSummary` with final recommendation, source proposals, accepted
    amendments, and derivation.
-9. Emit the human-first sections: `Decision`, `Rationale`, `Trace`, `Dissent`,
-   `Open Questions`, and optionally `Next Step`. Derive `Trace` rows from
-   `DebateRecord.cli_participation`, launch results, frozen candidates, source
-   proposals, sourced amendments, critic findings, and arbiter decision; do
-   not invent rows.
-10. Archive the audit envelope to `~/.debate-router/<run-id>/audit.yaml` and
-    include only the archive path in the visible `Archive` section. Do not
-    append `## Audit` or inline the YAML in the normal final answer.
+9. Archive the audit envelope to `~/.debate-router/<run-id>/audit.yaml`.
+10. Emit the human-first sections in this order: `Decision`, `Rationale`,
+    `Dissent`, `Open Questions`, optional `Next Step`, `Archive`, then
+    `Trace` as the final visible section. Include only the archive path in the
+    visible `Archive` section. Do not append `## Audit` or inline the YAML in
+    the normal final answer. Derive `Trace` rows from
+    `DebateRecord.cli_participation`, launch results, frozen candidates,
+    source proposals, sourced amendments, critic findings, and arbiter
+    decision; do not invent rows.
 
 ## Anti-Patterns
 
@@ -378,8 +381,9 @@ Use the user or parent workflow's selected topology:
 - Treating "讨论", "辩论", "discuss", or "debate" as permission to stay in the
   current session when external CLIs are available.
 - Leading the visible output with a full `DebateRoute:` or `DebateRecord:` YAML
-  block when a human-first `Decision` / `Rationale` / `Trace` would serve the
-  caller better. The YAML belongs in `~/.debate-router/<run-id>/audit.yaml`.
+  block when a human-first `Decision` / `Rationale` and final `Trace` would
+  serve the caller better. The YAML belongs in
+  `~/.debate-router/<run-id>/audit.yaml`.
 - Replacing the human-first sections with YAML, appending `## Audit`, or
   burying the actual decision under audit state.
 - Producing the human-first sections without backing audit envelopes, or

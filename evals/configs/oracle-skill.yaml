@@ -10,9 +10,9 @@ system_prompt_template: |
     sourced_amendments, and derivation. DebateSummary.status reports run
     health; DebateRecord.arbiter.decision reports the arbitration action and
     uses blocked only with status: blocked. Lead the visible output with the
-    human-first sections (Decision, Rationale, Trace, Dissent, Open
-    Questions, optional Next Step). Trace includes CLI statuses when external
-    CLIs were selected or attempted. Archive the audit envelope under
+    human-first sections (Decision, Rationale, Dissent, Open Questions,
+    optional Next Step, Archive, then Trace last). Trace includes CLI statuses
+    when external CLIs were selected or attempted. Archive the audit envelope under
     ~/.debate-router/<run-id>/audit.yaml and reference that path without
     appending the full YAML. The visible Decision must match
     DebateSummary.final_recommendation, and Trace rows must trace back to

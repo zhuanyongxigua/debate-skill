@@ -8,7 +8,7 @@ criterion.
 | Criterion | What to check |
 | --- | --- |
 | Explicit trigger | `debate-router` is used only when debate was explicitly requested. |
-| Human-first layout | The visible output leads with `Decision`, `Rationale`, `Trace`, `Dissent`, `Open Questions`, and an optional `Next Step`, not the YAML envelope. |
+| Human-first layout | The visible output leads with `Decision` and `Rationale`, then `Dissent`, `Open Questions`, optional `Next Step`, `Archive`, and ends with `Trace`; it does not lead with the YAML envelope. |
 | CLI trace visibility | When external CLIs were selected or attempted, `Trace` names which CLIs participated in proposal generation and debate execution, including failed, blocked, or unavailable CLIs. |
 | Audit archive | `DebateRoute`, `DebateRecord`, and `DebateSummary` are archived under `~/.debate-router/<run-id>/audit.yaml`, and the visible answer includes only the archive path. |
 | Audit consistency | `Decision` matches `DebateSummary.final_recommendation`, and `Trace` rows match `DebateRecord.cli_participation`, `frozen_candidates`, `source_proposals`, `sourced_amendments`, critic findings, or the arbiter decision. |
@@ -31,10 +31,12 @@ criterion.
 - Says debate is unnecessary after `debate-router` was explicitly invoked.
 - Skips the required debate after explicit invocation.
 - Leads the visible output with a full `DebateRoute:`/`DebateRecord:` YAML
-  block instead of the human-first `Decision` / `Rationale` / `Trace`
-  sections.
+  block instead of the human-first `Decision` / `Rationale` sections and
+  final `Trace`.
 - Replaces the human-first sections with YAML or appends a full `## Audit`
   section in the normal final answer.
+- Places `Trace` before `Dissent`, `Open Questions`, applicable `Next Step`,
+  or `Archive` instead of keeping it as the final visible section.
 - Omits selected, planned, launched, or attempted external CLIs from `Trace`.
 - Omits a failed, blocked, or unavailable selected CLI from `Trace`.
 - Collapses proposal-generation and debate-execution CLI participation into one

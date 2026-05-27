@@ -162,12 +162,12 @@ separate from critique:
 
 ## Output Shape Policy
 
-The default visible output is human-first: `Decision`, `Rationale`, `Trace`,
-`Dissent`, `Open Questions`, and optionally `Next Step`. When external CLIs
-were selected or attempted, include their participation inside `Trace`. The full audit
-envelope (`DebateRoute`, `DebateRecord`, `DebateSummary`) is required audit
-state but belongs in `~/.debate-router/<run-id>/audit.yaml`, not in the normal
-final answer.
+The default visible output is human-first: `Decision`, `Rationale`, `Dissent`,
+`Open Questions`, optionally `Next Step`, `Archive`, then `Trace` as the final
+visible section. When external CLIs were selected or attempted, include their
+participation inside `Trace`. The full audit envelope (`DebateRoute`,
+`DebateRecord`, `DebateSummary`) is required audit state but belongs in
+`~/.debate-router/<run-id>/audit.yaml`, not in the normal final answer.
 
 - Lead with the `Decision` and `Rationale`. The caller should be able to act
   without scrolling past YAML.
@@ -178,7 +178,7 @@ final answer.
 - Derive `Trace` rows from the frozen candidates, source proposals, sourced
   amendments, critic findings, arbiter decision, `DebateRecord.cli_participation`,
   and launch results. The table must trace back to the audit envelope; do not
-  invent rows.
+  invent rows. Keep `Trace` as the final visible section.
 - For each run, archive the audit envelope to
   `~/.debate-router/<run-id>/audit.yaml` and name that path in the visible
   `Archive` section. Do not append `## Audit` or inline the YAML in the normal

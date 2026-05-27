@@ -1,14 +1,14 @@
 # Debate Router Protocol
 
 `debate-router` produces a human-first visible output backed by a structured
-audit envelope. The human-first output leads with `Decision`, `Rationale`,
-`Trace`, `Dissent`, `Open Questions`, and an optional `Next Step`. `Trace`
-also carries CLI participation when external CLIs were selected or attempted,
-with proposal-generation and debate-execution phases separated. The audit
-envelope is `DebateRoute` + `DebateRecord` + `DebateSummary`. It is required
-audit state, but it is not part of the normal final answer; it is archived
-under `~/.debate-router/<run-id>/audit.yaml` and referenced from the visible
-output.
+audit envelope. The human-first output leads with `Decision` and `Rationale`,
+then shows dissent, open questions, any next step, and the archive pointer.
+`Trace` is the final visible section; it also carries CLI participation when
+external CLIs were selected or attempted, with proposal-generation and
+debate-execution phases separated. The audit envelope is `DebateRoute` +
+`DebateRecord` + `DebateSummary`. It is required audit state, but it is not
+part of the normal final answer; it is archived under
+`~/.debate-router/<run-id>/audit.yaml` and referenced from the visible output.
 
 The structured envelope is still defined as follows. `DebateRoute` is built
 first as classifier state, `DebateRecord` captures the bounded debate, and
@@ -149,15 +149,6 @@ Default visible layout:
 <2-5 sentences naming the base proposal and any accepted amendments by ID and
 the deciding evidence or constraint>
 
-## Trace
-| ID | Phase | Source | Status | Role | Note |
-|----|-------|--------|--------|------|------|
-| P1 | proposal_generation | codex-cli | ran | base proposal | main structure |
-| P3 | proposal_generation | claude-code | unavailable | proposer | login required |
-| A1 | debate_execution | copilot-cli | ran | amendment (constraint) | accepted because ... |
-| — | debate_execution | claude-code | failed | critic | timed out before critique |
-| — | arbitration | arbiter | ran | decision | select(P1) + adopt(A1 from P3) |
-
 ## Dissent
 - P2: rejected, short reason
 - challenged fragment from P4: who challenged, why arbiter still accepted/rejected
@@ -170,6 +161,15 @@ the deciding evidence or constraint>
 
 ## Archive
 - Full debate record: `~/.debate-router/<run-id>/audit.yaml`
+
+## Trace
+| ID | Phase | Source | Status | Role | Note |
+|----|-------|--------|--------|------|------|
+| P1 | proposal_generation | codex-cli | ran | base proposal | main structure |
+| P3 | proposal_generation | claude-code | unavailable | proposer | login required |
+| A1 | debate_execution | copilot-cli | ran | amendment (constraint) | accepted because ... |
+| — | debate_execution | claude-code | failed | critic | timed out before critique |
+| — | arbitration | arbiter | ran | decision | select(P1) + adopt(A1 from P3) |
 ```
 
 Rules for the human-first output:
@@ -187,7 +187,7 @@ Rules for the human-first output:
   CLI rows come from `DebateRecord.cli_participation` and launch results. Keep
   `proposal_generation` rows separate from `debate_execution` rows; include
   CLIs that failed, blocked, or were unavailable rather than omitting them. Do
-  not invent rows.
+  not invent rows. Keep `Trace` as the final visible section.
 - `Dissent` must list rejected proposals (and challenged fragments still
   accepted) with the same reasons recorded in `arbiter.rejected_candidates`
   and `sourced_amendments[*].debate_basis.arbiter_reason`.
@@ -254,7 +254,7 @@ Rules:
 - Once `debate-router` is active, run a debate or record why the debate is
   blocked. Do not skip the debate instead.
 - The default visible output is human-first. Do not lead with or append the
-  YAML envelope.
+  YAML envelope. Keep `Trace` as the final visible section.
 - The archived audit envelope must remain consistent with the human-first
   output. If they diverge during synthesis, fix the human-first sections to
   match the audit state before completing the run.
@@ -271,8 +271,8 @@ Rules:
   external CLI. If both proposal generation and debate execution used external
   CLIs, show both phases separately in the human-first `Trace` table and in
   `DebateRecord.cli_participation`.
-- End with `DebateSummary`, briefly stating how the input was classified and
-  what debate process was actually run.
+- The archived envelope must include `DebateSummary`, briefly stating how the
+  input was classified and what debate process was actually run.
 - Use the same `DebateSummary` envelope for normal, degraded, and blocked
   outcomes. Empty `source_proposals` and `sourced_amendments` are valid when no
   proposal or amendment survived. Set `status_reason` instead of changing the

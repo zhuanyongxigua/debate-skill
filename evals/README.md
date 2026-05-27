@@ -6,9 +6,10 @@ These evals test whether an agent:
 
 - uses `debate-router` only when debate was explicitly requested,
 - leads the visible output with the human-first sections (`Decision`,
-  `Rationale`, `Trace`, `Dissent`, `Open Questions`, and an optional
-  `Next Step`) rather than YAML, and includes external CLI statuses in
-  `Trace` when external CLIs were selected or attempted,
+  `Rationale`, `Dissent`, `Open Questions`, optional `Next Step`, `Archive`,
+  then `Trace` as the final visible section) rather than YAML, and includes
+  external CLI statuses in `Trace` when external CLIs were selected or
+  attempted,
 - still produces `DebateRoute`, `DebateRecord`, and `DebateSummary` as audit
   state archived under `~/.debate-router/<run-id>/audit.yaml`, while the
   visible answer includes only the archive path,
