@@ -20,14 +20,25 @@ It currently packages two reusable skills:
 `debate-router` is not a general "should I debate?" gate. If a user or parent
 workflow invokes it, debate must run or the blocker must be recorded.
 
+The default visible output is human-first: `Decision`, `Rationale`, `Trace`,
+`Dissent`, `Open Questions`, and an optional `Next Step`. When external CLI
+agents were selected or attempted, `Trace` also marks proposal-generation and
+debate-execution CLIs as successful, failed, blocked, or unavailable. The
+structured audit envelope (`DebateRoute` + `DebateRecord` + `DebateSummary`)
+is required state behind that output, archived under
+`~/.debate-router/<run-id>/audit.yaml`, and referenced from the final answer
+without pasting the full YAML.
+
 ```text
 explicit debate request
-  -> DebateRoute
+  -> classifier state (DebateRoute)
   -> frozen candidates or judgments
   -> critic round
   -> cross-review round
-  -> DebateRecord
-  -> DebateSummary
+  -> arbitration (DebateRecord, DebateSummary)
+  -> human-first output:
+       Decision, Rationale, Trace, Dissent, Open Questions, (Next Step)
+  -> archive audit envelope at ~/.debate-router/<run-id>/audit.yaml
 ```
 
 `agent-launch` is a launch helper, not an orchestrator:
@@ -51,15 +62,32 @@ the input shape:
 | `candidate_debate` | The user gave multiple proposals, plans, patches, answers, or approaches. |
 | `judgment_debate` | The user gave conflicting reviews, findings, or judgments about one artifact. |
 
-The required artifacts are `DebateRoute`, `DebateRecord`, and `DebateSummary`.
+The default visible output is human-first: `Decision`, `Rationale`, `Trace`,
+`Dissent`, `Open Questions`, and an optional `Next Step`. When external CLI
+agents were selected or attempted, `Trace` must show which CLIs ran, failed,
+blocked, or were unavailable in proposal generation versus debate execution.
+The required audit artifacts are still `DebateRoute`, `DebateRecord`, and
+`DebateSummary`; they are produced as audit state and archived under
+`~/.debate-router/<run-id>/audit.yaml`. The visible answer should include only
+the archive path, not the full YAML.
 
 Important constraints:
 
 - Explicit invocation means debate is required; do not optimize it away.
+- Lead the visible output with `Decision` and `Rationale`, not the YAML
+  envelope. The human-first sections must stay consistent with the audit
+  envelope; if they diverge, the audit envelope wins and the visible output
+  is rewritten to match.
+- The audit envelope is required state, not a transient by-product. Preserve
+  it under `~/.debate-router/` so it can be inspected after the run.
 - Caller signals like "讨论", "辩论", "discuss", or "debate" mean use the
   multi-CLI path. Proposal generation and debate execution should both use
   external CLI agents through `agent-launch` unless external CLIs were
   explicitly disabled or are blocked.
+- When external CLIs were selected, record their phase-by-phase participation:
+  which CLIs joined proposal generation, which joined debate execution, and
+  which selected CLIs failed, blocked, or were unavailable. Show this in the
+  visible `Trace` table.
 - For raw requirements, generate 2-4 candidate positions or proposals first.
   If external CLI agents were selected, use them as independent proposers where
   practical.
@@ -75,14 +103,18 @@ Important constraints:
   arbiter before it appears in the final recommendation.
 - Degraded and blocked debates keep the same `DebateSummary` envelope with
   `status` and `status_reason`; they do not silently switch to a different
-  output shape.
+  output shape. `DebateSummary.status` reports run health, while
+  `DebateRecord.arbiter.decision` reports the arbitration action; use
+  `arbiter.decision: "blocked"` only when `status: blocked` and arbitration
+  could not responsibly complete.
 - Use project checks, tests, sources, or probes as evidence, not as a reason to
   cancel the debate after `debate-router` is active.
 - Use `agent-launch` when the user or parent workflow has selected external CLI
   agents.
-- End by briefly saying whether the input was treated as a requirement, one
-  proposal, multiple proposals, or conflicting judgments, plus a compact process
-  summary.
+- Record whether the input was treated as a requirement, one proposal, multiple
+  proposals, or conflicting judgments, plus a compact process summary, in
+  `DebateSummary` inside the archived audit envelope. Do not use that summary
+  as a replacement for the human-first `Decision` and `Rationale`.
 
 ## Agent Launch
 
@@ -122,8 +154,11 @@ evals/
 The starter evals in [`evals/`](evals/) focus on whether agents preserve the new
 boundaries:
 
-- `debate-router` is explicit-only and always produces `DebateRoute` plus
-  `DebateRecord` plus `DebateSummary`.
+- `debate-router` is explicit-only. The default visible output is human-first
+  (`Decision`, `Rationale`, `Trace`, `Dissent`, `Open Questions`, optional
+  `Next Step`; `Trace` includes CLI statuses when external CLIs were selected
+  or attempted), with `DebateRoute`, `DebateRecord`, and `DebateSummary`
+  archived as audit state under `~/.debate-router/<run-id>/audit.yaml`.
 - The debate entry case matches the input shape.
 - Requirement debates preserve proposal generation, normalization, frozen
   debate, and traceable final synthesis as separate phases.

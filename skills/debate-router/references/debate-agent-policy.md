@@ -17,6 +17,9 @@ Ask only:
 4. Which evidence, checks, or probes should inform the debate?
 5. Which proposal fragments did the debate actually validate for synthesis?
 6. Which blocker should be recorded if a selected agent cannot run?
+7. Which archive path under `~/.debate-router/` will store the audit envelope
+   so the human-first output stays clean while the full record remains
+   retrievable?
 
 ## Topology Preservation
 
@@ -88,6 +91,9 @@ Use `agent-launch` whenever `debate-router` has selected or inherited
 - Use read-only, plan, or no-edit modes when available.
 - Do not let child agents edit files unless the user explicitly requested
   implementation.
+- Record phase-level participation for every selected or attempted CLI. Use
+  separate `proposal_generation` and `debate_execution` entries, and keep
+  failed, blocked, or unavailable CLIs visible instead of omitting them.
 - Wait patiently for non-interactive CLI agents. Use a long timeout for normal
   model latency; 900 seconds is the default for ordinary model CLI calls.
 - Do not kill a child agent only because the parent harness prints a transient
@@ -153,6 +159,44 @@ separate from critique:
   become a constraint or caution amendment.
 - Do not create amendment-of-amendment chains; every sourced amendment points
   back to an original frozen proposal.
+
+## Output Shape Policy
+
+The default visible output is human-first: `Decision`, `Rationale`, `Trace`,
+`Dissent`, `Open Questions`, and optionally `Next Step`. When external CLIs
+were selected or attempted, include their participation inside `Trace`. The full audit
+envelope (`DebateRoute`, `DebateRecord`, `DebateSummary`) is required audit
+state but belongs in `~/.debate-router/<run-id>/audit.yaml`, not in the normal
+final answer.
+
+- Lead with the `Decision` and `Rationale`. The caller should be able to act
+  without scrolling past YAML.
+- When external CLIs were selected or attempted, include them in `Trace`.
+  Separate proposal-generation CLIs from debate-execution CLIs, and mark
+  `ran`, `failed`, `blocked`, or `unavailable` for each selected or attempted
+  CLI.
+- Derive `Trace` rows from the frozen candidates, source proposals, sourced
+  amendments, critic findings, arbiter decision, `DebateRecord.cli_participation`,
+  and launch results. The table must trace back to the audit envelope; do not
+  invent rows.
+- For each run, archive the audit envelope to
+  `~/.debate-router/<run-id>/audit.yaml` and name that path in the visible
+  `Archive` section. Do not append `## Audit` or inline the YAML in the normal
+  final answer.
+- If the user later asks for debate details, read the archived YAML and answer
+  from it. Show raw YAML only when the user explicitly asks for the raw record.
+- Keep the human-first text consistent with the audit envelope. If
+  `final_recommendation` says one thing and `Decision` says another, the
+  audit envelope wins and the visible output must be rewritten.
+- `degraded` and `blocked` runs still emit the human-first sections; the
+  `Decision` states the degraded or blocked outcome and `Dissent` or
+  `Open Questions` names the blocker.
+- Keep status and arbitration separate: `DebateSummary.status` reports run
+  health, while `DebateRecord.arbiter.decision` reports the arbitration action.
+  Use `status: degraded` for partial debates with usable but limited evidence;
+  keep `arbiter.decision` as the best available action. Use
+  `arbiter.decision: "blocked"` only with `status: blocked` when no responsible
+  arbitration could complete.
 
 ## Evidence Policy
 

@@ -31,7 +31,85 @@ unavailable.
 
 ## Required Output
 
-The first visible block must be `DebateRoute:`:
+The default output is human-first. Lead with what the human needs in order to
+act, then archive the structured audit envelope behind it. The full YAML
+(`DebateRoute`, `DebateRecord`, `DebateSummary`) is still produced as audit
+state, but it is not part of the normal final answer.
+
+Default visible layout:
+
+```markdown
+## Decision
+<one paragraph or short bullet list stating the final recommendation>
+
+## Rationale
+<2-5 short sentences naming the base proposal and any accepted amendments by
+ID, plus the key evidence or constraint that decided it>
+
+## Trace
+| ID | Phase | Source | Status | Role | Note |
+|----|-------|--------|--------|------|------|
+| P1 | proposal_generation | codex-cli | ran | base proposal | main structure |
+| P3 | proposal_generation | claude-code | unavailable | proposer | login required |
+| A1 | debate_execution | copilot-cli | ran | amendment (constraint) | accepted because ... |
+| — | debate_execution | claude-code | failed | critic | timed out before critique |
+| — | arbitration | arbiter | ran | decision | select(P1) + adopt(A1 from P3) |
+
+## Dissent
+- P2: rejected, short reason
+- challenged fragment from P4: who challenged, why the arbiter still accepted
+  or rejected it
+
+## Open Questions
+- next probe, missing evidence, or unresolved constraint
+
+## Next Step  (optional, only when the arbiter set a concrete next_action)
+- one short action
+
+## Archive
+- Full debate record: `~/.debate-router/<run-id>/audit.yaml`
+```
+
+The `Trace` table is the compact human-readable form of the audit state and
+CLI participation. It is generated from `DebateRecord.cli_participation`,
+`frozen_candidates`, `source_proposals`, `sourced_amendments`, critic findings,
+and the arbiter decision. Every row that names a proposal, amendment, or
+fragment must trace back to a corresponding ID in the audit envelope; every
+row that names a CLI must trace back to `DebateRecord.cli_participation` or
+launch results. The table is not free narration.
+
+When external CLI agents were selected, planned, launched, or attempted,
+`Trace` must include those CLIs even if they failed or were unavailable. Keep
+`proposal_generation` and `debate_execution` as separate phases so the caller
+can see whether the multi-path proposal phase and the debate phase used the
+same or different CLIs. Use `status: ran|failed|blocked|unavailable` for CLI
+rows and include a short note for failures or missing agents.
+
+`Dissent` must name rejected proposals and any challenged fragment the arbiter
+nevertheless accepted, with the reason. `Open Questions` lists probes or
+unresolved evidence gaps. `Next Step` is optional and only included when the
+arbiter set a concrete next action.
+
+The structured audit envelope (`DebateRoute`, `DebateRecord`, `DebateSummary`)
+is still required, but as archived audit state rather than final-answer
+content. Write it to `~/.debate-router/<run-id>/audit.yaml`, where `<run-id>`
+is stable enough to find later (for example, `YYYYMMDD-HHMMSS-<short-slug>`).
+The final answer must include only a compact `Archive` reference with that
+path and must not append the full YAML as `## Audit`.
+Create the archive directory if it does not exist. If the archive cannot be
+written, state that failure in `Decision`/`Open Questions` and record the
+archive failure in the debate status instead of silently dropping the envelope.
+
+When the user later asks for debate details, read the archived YAML and answer
+from it. Do not dump the full YAML into the conversation unless the user
+explicitly asks for the raw record.
+
+Do not stop after the human-first sections if a required input, CLI,
+permission, or artifact is unavailable. Still emit the audit envelope with
+`DebateSummary.status: "blocked"` (or `"degraded"`) and `status_reason`, and
+state the same in the `Decision` and `Dissent` sections.
+
+The audit envelopes keep their existing shapes:
 
 ```yaml
 DebateRoute:
@@ -43,14 +121,10 @@ DebateRoute:
   next: "DebateRecord"
 ```
 
-Then run the debate, return `DebateRecord`, and finish with a short
-`DebateSummary`.
-
-Do not stop after `DebateRoute` unless a required input, CLI, permission, or
-artifact is unavailable. In that case, still return a `DebateRecord` with
-`arbiter.decision: "blocked"` or `arbiter.decision: "escalate"` and the reason.
-
-End every run with:
+`DebateRecord` must include `cli_participation` when any external CLI was
+selected or attempted. Use separate `proposal_generation` and
+`debate_execution` lists; each item names the CLI, phase role, status
+(`ran|failed|blocked|unavailable`), and a short note.
 
 ```yaml
 DebateSummary:
@@ -95,6 +169,37 @@ final recommendation; they are not pre-debate rankings or runners-up.
 `sourced_amendments` may salvage useful fragments from non-selected, weak, or
 rejected proposals only when the debate and arbiter explicitly accepted that
 fragment.
+
+Status and arbiter decision have separate jobs:
+
+- `DebateSummary.status` describes run health.
+  - `completed`: normal proposal generation, critique, cross-review, archive,
+    and arbitration completed.
+  - `degraded`: the debate ran with a recorded limitation, such as fewer than
+    two distinct normalized proposals, one selected CLI unavailable while other
+    independent evidence remained, an unrestarted coverage gap, or weaker role
+    separation than requested.
+  - `blocked`: a required input, permission, selected CLI, archive file, or
+    required artifact was unavailable, so the requested debate could not be
+    completed.
+- `DebateRecord.arbiter.decision` describes the arbitration action.
+  - For `status: completed`, use the actual action:
+    `select|combine|revise|reject|probe|escalate`.
+  - For `status: degraded`, still use the actual best available action:
+    `select|combine|revise|reject|probe|escalate`; do not use `blocked`
+    merely because the result is degraded.
+  - Use `arbiter.decision: "blocked"` only when `status: blocked` and no
+    responsible arbitration could be completed. Put the concrete blocker in
+    `status_reason`, `arbiter.next_action`, and the visible `Decision` or
+    `Open Questions`.
+
+The human-first `Decision` and `Rationale` must stay consistent with
+`DebateSummary.final_recommendation`; the `Trace` rows must stay consistent
+with `DebateRecord.execution_topology`, `DebateRecord.proposal_generation`,
+`DebateRecord.cli_participation`, `frozen_candidates`, `source_proposals`,
+`sourced_amendments`, critic findings, and the arbiter decision. If the two
+disagree, the audit envelope wins and the human-first sections must be revised
+to match before the run is considered complete.
 
 ## Entry Cases
 
@@ -225,6 +330,9 @@ Use the user or parent workflow's selected topology:
   session or same runtime.
 - If one or more external CLI agents are selected, use `agent-launch` for the
   concrete non-interactive startup plan.
+- Record each selected or attempted CLI in `DebateRecord.cli_participation`.
+  Separate `proposal_generation` from `debate_execution`; include failed,
+  blocked, or unavailable CLIs instead of dropping them from the visible output.
 - Preserve explicit named-CLI requests such as Claude Code, Codex CLI, or
   Copilot CLI unless the selected CLI is unavailable, unsafe, or blocked.
 - A proposer must not be the sole critic validating its own proposal. If the
@@ -238,7 +346,9 @@ Use the user or parent workflow's selected topology:
 
 1. Identify whether the input is a requirement, one proposal, multiple
    candidates, or conflicting judgments.
-2. Emit `DebateRoute:`.
+2. Build the `DebateRoute` classification (entry case, debate style, topology,
+   selected CLIs) as internal state. It is no longer required as the first
+   visible block.
 3. For `requirement_debate`, generate 2-4 candidate positions or proposals
    using the selected current-session, same-runtime, or external CLI agents,
    then freeze them.
@@ -249,9 +359,17 @@ Use the user or parent workflow's selected topology:
 5. Run one independent critique round. If the trigger was a discussion/debate
    signal, run this round through the selected external CLI agents.
 6. Run one cross-review round.
-7. Arbitrate and return `DebateRecord`.
-8. End with `DebateSummary`, including final recommendation, source proposals,
-   accepted amendments, and derivation.
+7. Arbitrate and build `DebateRecord`.
+8. Build `DebateSummary` with final recommendation, source proposals, accepted
+   amendments, and derivation.
+9. Emit the human-first sections: `Decision`, `Rationale`, `Trace`, `Dissent`,
+   `Open Questions`, and optionally `Next Step`. Derive `Trace` rows from
+   `DebateRecord.cli_participation`, launch results, frozen candidates, source
+   proposals, sourced amendments, critic findings, and arbiter decision; do
+   not invent rows.
+10. Archive the audit envelope to `~/.debate-router/<run-id>/audit.yaml` and
+    include only the archive path in the visible `Archive` section. Do not
+    append `## Audit` or inline the YAML in the normal final answer.
 
 ## Anti-Patterns
 
@@ -259,8 +377,23 @@ Use the user or parent workflow's selected topology:
 - Asking "is debate needed?" after the skill was explicitly invoked.
 - Treating "讨论", "辩论", "discuss", or "debate" as permission to stay in the
   current session when external CLIs are available.
-- Returning only a recommendation without `DebateRoute`, `DebateRecord`, and
-  `DebateSummary`.
+- Leading the visible output with a full `DebateRoute:` or `DebateRecord:` YAML
+  block when a human-first `Decision` / `Rationale` / `Trace` would serve the
+  caller better. The YAML belongs in `~/.debate-router/<run-id>/audit.yaml`.
+- Replacing the human-first sections with YAML, appending `## Audit`, or
+  burying the actual decision under audit state.
+- Producing the human-first sections without backing audit envelopes, or
+  producing audit envelopes whose `final_recommendation` disagrees with the
+  visible `Decision`.
+- Omitting a selected or attempted external CLI from `Trace`,
+  especially a failed, blocked, or unavailable CLI.
+- Collapsing proposal-generation and debate-execution CLI participation into
+  one ambiguous `Trace` phase when both phases used external CLIs.
+- Inventing `Trace` rows that do not appear in `frozen_candidates`,
+  `source_proposals`, `sourced_amendments`, critic findings, or the arbiter
+  decision.
+- Returning only a recommendation without archiving the audit envelope
+  (`DebateRoute`, `DebateRecord`, `DebateSummary`) under `~/.debate-router/`.
 - Salvaging a fragment because the summarizer likes it, without debate support
   and arbiter acceptance.
 - Calling a rejected proposal one of the top proposals when only a small
