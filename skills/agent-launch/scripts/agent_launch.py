@@ -4,11 +4,14 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Sequence
@@ -457,3 +460,178 @@ def popen_spec(
         bufsize=bufsize,
         start_new_session=start_new_session,
     )
+
+
+@dataclass(frozen=True)
+class ParallelSpec:
+    """Bundles a LaunchSpec with per-call execution context for parallel fan-out.
+
+    caller_metadata is opaque to agent-launch: it is returned verbatim on the
+    matching ParallelResult so callers (e.g. debate-router) can attach phase,
+    role, candidate id, or any other debate-level semantics without leaking
+    those concepts into agent-launch's schema.
+    """
+
+    spec: LaunchSpec
+    cwd: str = "."
+    timeout_override: int | None = None
+    caller_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ParallelResult:
+    status: str  # "completed" | "timed_out" | "error"
+    returncode: int | None
+    error_category: str | None  # None | "timeout" | "missing_cli" | "nonzero_exit" | "exception"
+    stdout: str
+    stderr: str
+    elapsed_seconds: float
+    timeout_seconds: int
+    timed_out: bool
+    display_command: str
+    caller_metadata: dict[str, Any]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "returncode": self.returncode,
+            "error_category": self.error_category,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+            "elapsed_seconds": self.elapsed_seconds,
+            "timeout_seconds": self.timeout_seconds,
+            "timed_out": self.timed_out,
+            "display_command": self.display_command,
+            "caller_metadata": dict(self.caller_metadata),
+        }
+
+
+def _terminate_process_group(proc: subprocess.Popen[str], sig: int) -> None:
+    try:
+        os.killpg(os.getpgid(proc.pid), sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill()
+        except (ProcessLookupError, OSError):
+            pass
+
+
+def _run_one_parallel(parallel: ParallelSpec) -> ParallelResult:
+    spec = parallel.spec
+    timeout_seconds = (
+        parallel.timeout_override
+        if parallel.timeout_override is not None
+        else spec.timeout_seconds
+    )
+    start = time.monotonic()
+
+    try:
+        require_cli(spec.command[0])
+    except SystemExit as exc:
+        return ParallelResult(
+            status="error",
+            returncode=None,
+            error_category="missing_cli",
+            stdout="",
+            stderr=str(exc),
+            elapsed_seconds=time.monotonic() - start,
+            timeout_seconds=timeout_seconds,
+            timed_out=False,
+            display_command=spec.display_command,
+            caller_metadata=dict(parallel.caller_metadata),
+        )
+
+    try:
+        proc = subprocess.Popen(
+            spec.command,
+            cwd=parallel.cwd,
+            stdin=subprocess.PIPE if spec.stdin is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=spec.env,
+            text=True,
+            start_new_session=True,
+        )
+    except (OSError, ValueError) as exc:
+        return ParallelResult(
+            status="error",
+            returncode=None,
+            error_category="exception",
+            stdout="",
+            stderr=f"{type(exc).__name__}: {exc}",
+            elapsed_seconds=time.monotonic() - start,
+            timeout_seconds=timeout_seconds,
+            timed_out=False,
+            display_command=spec.display_command,
+            caller_metadata=dict(parallel.caller_metadata),
+        )
+
+    timed_out = False
+    try:
+        stdout, stderr = proc.communicate(input=spec.stdin, timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        _terminate_process_group(proc, signal.SIGTERM)
+        try:
+            stdout, stderr = proc.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            _terminate_process_group(proc, signal.SIGKILL)
+            stdout, stderr = proc.communicate()
+
+    elapsed = time.monotonic() - start
+    if timed_out:
+        status = "timed_out"
+        error_category: str | None = "timeout"
+    elif proc.returncode != 0:
+        status = "error"
+        error_category = "nonzero_exit"
+    else:
+        status = "completed"
+        error_category = None
+
+    return ParallelResult(
+        status=status,
+        returncode=proc.returncode,
+        error_category=error_category,
+        stdout=stdout or "",
+        stderr=stderr or "",
+        elapsed_seconds=elapsed,
+        timeout_seconds=timeout_seconds,
+        timed_out=timed_out,
+        display_command=spec.display_command,
+        caller_metadata=dict(parallel.caller_metadata),
+    )
+
+
+def run_specs_parallel(
+    specs: Sequence[ParallelSpec],
+    *,
+    max_parallel: int | None = None,
+) -> list[ParallelResult]:
+    """Fan out multiple CLI launches and join on per-spec timeouts.
+
+    Results are returned in the same order as the input specs (not completion
+    order). Each entry's caller_metadata is the dict that was attached to the
+    matching ParallelSpec, returned unchanged so debate-style callers can
+    correlate results to their own phase/role/candidate ids.
+
+    agent-launch only owns mechanical fan-out: each child is started with a
+    fresh process group and on timeout the group receives SIGTERM, then
+    SIGKILL after a 10s grace period. There is no retry, no policy decision
+    about whether to continue, no judging, no transcript shape.
+    """
+    if not specs:
+        return []
+    workers = max_parallel if max_parallel and max_parallel > 0 else len(specs)
+    workers = max(1, min(workers, len(specs)))
+    results: list[ParallelResult | None] = [None] * len(specs)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        future_to_index = {
+            executor.submit(_run_one_parallel, parallel): idx
+            for idx, parallel in enumerate(specs)
+        }
+        for future in concurrent.futures.as_completed(future_to_index):
+            idx = future_to_index[future]
+            results[idx] = future.result()
+    assert all(r is not None for r in results)
+    return [r for r in results if r is not None]

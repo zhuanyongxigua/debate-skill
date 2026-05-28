@@ -45,9 +45,8 @@ launched safely, record it as `blocked` or `unavailable` instead.
 - no transcript or artifact directory format beyond launch metadata
 - no repeated polling strategy
 
-Use a parent orchestrator such as `debate-router`, `cli-debate`,
-`cli-delegator`, review, benchmarking, or a project-specific harness for those
-responsibilities.
+Use a parent orchestrator such as `debate-router`, review, benchmarking, or a
+project-specific harness for those responsibilities.
 
 ## Launch Rules
 
@@ -177,7 +176,7 @@ Return an `AgentLaunchPlan`:
 ```yaml
 AgentLaunchPlan:
   launch_intent: "user_requested|parent_selected|fallback_selected"
-  owner: "debate-router|cli-debate|cli-delegator|review|benchmark|other"
+  owner: "debate-router|review|benchmark|other"
   selected_agents:
     - name: "codex-cli"
       provider: "codex-cli"
@@ -232,10 +231,53 @@ startup details. It provides provider launch specs, Claude environment
 isolation, Codex sandbox/network checks, redacted display commands, default
 and phase-aware timeouts, and thin `run_spec` / `popen_spec` startup helpers.
 
-Parent orchestrators such as `cli-debate` and `cli-delegator` should call this
-helper for child CLI startup instead of duplicating provider command builders.
-They still own debate flow, transcript shape, supervisor state, PID tracking,
-resume/stop, polling, and final judging.
+Parent orchestrators such as `debate-router` should call this helper for child
+CLI startup instead of duplicating provider command builders. They still own
+debate flow, transcript shape, supervisor state, PID tracking, resume/stop,
+polling, and final judging.
+
+### Parallel fan-out
+
+For phases where multiple selected CLIs run independently (e.g. several
+proposer agents for `proposal_generation`, or several critics for the first
+independent critique round), use `run_specs_parallel`:
+
+```python
+from agent_launch import ParallelSpec, run_specs_parallel
+
+specs = [
+    ParallelSpec(spec=codex_spec, caller_metadata={"role": "proposer", "id": "P1"}),
+    ParallelSpec(spec=claude_spec, caller_metadata={"role": "proposer", "id": "P2"}),
+    ParallelSpec(spec=copilot_spec, caller_metadata={"role": "proposer", "id": "P3"}),
+]
+results = run_specs_parallel(specs, max_parallel=3)
+```
+
+Contract:
+
+- Results are returned in the same order as the input specs (not completion
+  order), so callers can correlate by index.
+- `caller_metadata` is opaque to `agent-launch`: it is returned unchanged on
+  the matching `ParallelResult`. Use it to attach debate-level identifiers
+  (phase, role, candidate id) without leaking those into this skill's schema.
+- Each child runs in its own process group. On per-spec timeout the group
+  receives `SIGTERM`, then `SIGKILL` after a 10-second grace period.
+- `max_parallel` is a mechanical concurrency cap only. There is no retry,
+  rate-limit, queue policy, or partial-failure judgment — those belong to the
+  caller (typically `debate-router`).
+- Per-spec `timeout_override` overrides `LaunchSpec.timeout_seconds`. The
+  caller is responsible for picking phase-appropriate values; defaults remain
+  the phase-aware values from `timeout_seconds_for_phase`.
+
+`ParallelResult` carries: `status` (`completed` | `timed_out` | `error`),
+`returncode`, `error_category` (`null` | `timeout` | `missing_cli` |
+`nonzero_exit` | `exception`), `stdout`, `stderr`, `elapsed_seconds`,
+`timeout_seconds`, `timed_out`, `display_command`, and `caller_metadata`.
+
+Use this helper only for phases that are genuinely independent. Sequential
+stages such as proposal normalization, cross-review (which reads complete
+critic findings), arbitration, and final rendering must remain serial in the
+caller — they are not safe to fan out.
 
 ## Avoid / Escalate
 
@@ -243,7 +285,8 @@ resume/stop, polling, and final judging.
 - Do not use `agent-launch` as a debate, review, candidate, or judging method.
 - Do not silently skip a user-selected CLI because a current-session answer
   would be cheaper.
-- Use a supervisor such as `cli-delegator` for long-running observation,
-  sparse polling, PID tracking, resume, stop, or kill behavior.
-- Use a debate orchestrator such as `cli-debate` for multi-role argument,
-  transcript management, fallback ensembles, and final judging.
+- Use an external supervisor for long-running observation, sparse polling, PID
+  tracking, resume, stop, or kill behavior.
+- Use a debate orchestrator such as `debate-router` for multi-role argument,
+  transcript management, fallback ensembles, and final judging. `debate-router`
+  may compose this skill's `run_specs_parallel` for independent fan-out phases.
