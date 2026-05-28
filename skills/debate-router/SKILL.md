@@ -396,6 +396,56 @@ Use the user or parent workflow's selected topology:
 - Do not let child agents edit files unless implementation was explicitly
   requested.
 
+## Phase Concurrency
+
+When a phase has multiple selected CLIs whose outputs do not depend on each
+other, fan them out in parallel via `agent-launch.run_specs_parallel`.
+Parallel is the default for any independent phase; running independent CLIs
+serially is a deviation and must be justified in `DebateRecord`.
+
+The rule that decides parallel vs serial is one line: each child's output
+must not read or depend on any other child's output within the same phase.
+
+Phases that MUST fan out in parallel when more than one CLI runs them:
+
+- `proposal_generation` — N proposers generate independent proposals from the
+  same requirement.
+- First independent `critique` round — each critic inspects the frozen
+  candidates without seeing other critics' findings.
+- Cross-CLI verification, voting, or ensemble probes where each CLI answers
+  the same question independently.
+
+Phases that MUST remain serial (even when multiple CLIs are involved):
+
+- `proposal_normalization` — reads all proposals, produces one normalized
+  list.
+- `cross_review` — each critic reads the completed independent critique
+  findings before producing their cross-review.
+- `arbitration` — needs the full debate corpus to decide.
+- Final rendering and archive write-out.
+- Any phase that mutates shared state (transcripts, audit files, the same
+  source artifact).
+
+When fanning out, attach the per-call debate identifier through
+`ParallelSpec.caller_metadata` (for example `{"phase": "proposal_generation",
+"role": "proposer", "id": "P2"}`) so the returned `ParallelResult` can be
+correlated back to the frozen-candidate ID without leaking debate semantics
+into `agent-launch`. Results come back in input order, not completion order.
+
+Per-spec failures, timeouts, retries, and "is this enough surviving evidence
+to continue" decisions belong to this skill, not to `agent-launch`. The
+parallel helper only guarantees mechanical fan-out (process group, SIGTERM
+then SIGKILL after a 10s grace period) and per-spec status (`completed`,
+`timed_out`, `error`). Translate those into `DebateRecord.cli_participation`
+rows.
+
+Even within phases that should fan out, parallelism is a default, not an
+absolute. Skip it when only one CLI is selected for that phase, when the
+caller has explicitly chosen sequential isolation
+(`topology: sequential_isolated`), or when a shared rate-limited backend
+would make concurrent calls counterproductive. Record the reason in
+`DebateRecord` whenever the default fan-out is not used.
+
 ## Workflow
 
 1. Classify the final output contract as `caller_format` or
@@ -412,11 +462,17 @@ Use the user or parent workflow's selected topology:
    then freeze them.
    If the trigger was a discussion/debate signal, use the selected external CLI
    agents as proposers before normalization.
+   When two or more external CLI proposers are selected, fan them out in
+   parallel via `agent-launch.run_specs_parallel`. See `Phase Concurrency`.
 5. For the other entry cases, freeze the user-provided proposal, candidates, or
    judgments before critique.
 6. Run one independent critique round. If the trigger was a discussion/debate
-   signal, run this round through the selected external CLI agents.
-7. Run one cross-review round.
+   signal, run this round through the selected external CLI agents. When two
+   or more external critics are selected, fan them out in parallel via
+   `agent-launch.run_specs_parallel`. See `Phase Concurrency`.
+7. Run one cross-review round. This round must remain serial across critics —
+   each cross-reviewer reads the completed independent critique findings
+   before producing their cross-review.
 8. Arbitrate and build `DebateRecord`.
 9. Build `DebateSummary` with final recommendation, source proposals, accepted
    amendments, and derivation.
@@ -475,6 +531,12 @@ Use the user or parent workflow's selected topology:
 - Letting critics edit the candidates they are critiquing.
 - Using model votes, confidence, or consensus as the arbiter's evidence.
 - Calling `agent-launch` to decide whether CLI agents should be used.
+- Running independent CLI proposers or independent critics serially when
+  `agent-launch.run_specs_parallel` could fan them out — parallel is the
+  default for any phase that does not read prior child output.
+- Fanning out `cross_review`, `arbitration`, `proposal_normalization`, final
+  rendering, or any shared-state mutation through `run_specs_parallel` —
+  those depend on prior outputs or single-writer state and must stay serial.
 
 ## References
 
