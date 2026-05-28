@@ -5,18 +5,21 @@ Starter evals for the `debate-router` and `agent-launch` boundary.
 These evals test whether an agent:
 
 - uses `debate-router` only when debate was explicitly requested,
-- leads the visible output with the human-first sections (`Decision`,
+- preserves a caller-required or implied final output format when one exists;
+  otherwise
+  leads the visible output with the human-first sections (`Decision`,
   `Rationale`, `Dissent`, `Open Questions`, optional `Next Step`, `Archive`,
   then `Trace` as the final visible section) rather than YAML, and includes
   external CLI statuses in `Trace` when external CLIs were selected or
   attempted,
 - still produces `DebateRoute`, `DebateRecord`, and `DebateSummary` as audit
   state archived under `~/.debate-router/<run-id>/audit.yaml`, while the
-  visible answer includes only the archive path,
-- keeps the human-first sections consistent with the audit envelope
-  (`Decision` matches `final_recommendation`; `Trace` rows trace back to
-  `DebateRecord.cli_participation`, `frozen_candidates`, `source_proposals`,
-  `sourced_amendments`, critic findings, or the arbiter decision),
+  visible answer includes only a compatible archive path when the visible
+  format allows it,
+- keeps the visible output consistent with the audit envelope; in the default
+  layout, `Decision` matches `final_recommendation` and `Trace` rows trace back
+  to `DebateRecord.cli_participation`, `frozen_candidates`, `source_proposals`,
+  `sourced_amendments`, critic findings, or the arbiter decision,
 - explains final synthesis with status, final recommendation, source proposals,
   accepted sourced amendments, and derivation,
 - treats "讨论", "辩论", "discuss", or "debate" as multi-CLI debate signals

@@ -1,6 +1,6 @@
 ---
 name: debate-router
-description: Route an explicitly requested debate into requirement, single-proposal, candidate, or judgment debate, then run the bounded debate and produce DebateRecord. Use only when the user or a parent workflow explicitly invokes debate-router or asks to route/run a debate; do not use it to decide whether debate is necessary.
+description: Route an explicitly requested debate into requirement, single-proposal, candidate, or judgment debate, then run the bounded debate, archive DebateRecord, and preserve any caller-required or implied final output format. Use only when the user or a parent workflow explicitly invokes debate-router or asks to route/run a debate; do not use it to decide whether debate is necessary.
 ---
 
 # Debate Router
@@ -31,12 +31,51 @@ unavailable.
 
 ## Required Output
 
-The default output is human-first. Lead with what the human needs in order to
-act, then archive the structured audit envelope behind it. The full YAML
-(`DebateRoute`, `DebateRecord`, `DebateSummary`) is still produced as audit
-state, but it is not part of the normal final answer.
+Caller output format outranks the debate-router visible layout. This is a
+mandatory final-output gate, not a style preference.
 
-Default visible layout:
+Before choosing the visible layout, classify the final output contract:
+
+- `caller_format`: use when the original task, parent workflow, repository,
+  source artifact, or user message specifies or implies a final format.
+- `default_debate_layout`: use only when no caller/source format exists and the
+  user is asking for an open chat answer.
+
+Treat these as `caller_format` even if the exact template is not repeated in
+the current message:
+
+- the task says to review, re-review,复盘,归档,更新,整理,重审, or rewrite an
+  existing document or note
+- the task names a structured artifact type such as `Diary`, `relationship`,
+  llmwiki, daily note, journal, report, memo, PR template, checklist, YAML,
+  JSON, frontmatter, table, or archive
+- the source document already has headings, frontmatter, fields, bullets, or
+  other visible structure
+- a parent tool, project convention, or previous instruction owns the output
+  shape
+
+If the format is uncertain, preserve the source or parent format. Do not fall
+back to the default `Decision` / `Rationale` / `Trace` layout merely because
+the exact template was not included in the latest user message.
+
+If the original task, parent workflow, repository, or user message specifies a
+fixed final format, template, schema, frontmatter, checklist, journal entry
+shape, archive format, or "output exactly like this" contract, preserve that
+format exactly. Run the debate as internal work, archive the structured audit
+envelope, then render the final answer in the caller's required format. Do not
+replace the caller's format with `Decision` / `Rationale` / `Dissent` /
+`Open Questions` / `Archive` / `Trace`. Add an archive reference only if the
+caller format has a compatible metadata, notes, provenance, or footer field;
+otherwise keep the archive path out of the visible output and rely on the
+written audit file.
+
+When the final output contract is `default_debate_layout`, the default output is
+human-first. Lead with what the human needs in order to act, then archive the
+structured audit envelope behind it. The full YAML (`DebateRoute`,
+`DebateRecord`, `DebateSummary`) is still produced as audit state, but it is not
+part of the normal final answer.
+
+Default visible layout when no caller format exists:
 
 ```markdown
 ## Decision
@@ -96,8 +135,10 @@ The structured audit envelope (`DebateRoute`, `DebateRecord`, `DebateSummary`)
 is still required, but as archived audit state rather than final-answer
 content. Write it to `~/.debate-router/<run-id>/audit.yaml`, where `<run-id>`
 is stable enough to find later (for example, `YYYYMMDD-HHMMSS-<short-slug>`).
-The final answer must include only a compact `Archive` reference with that
-path and must not append the full YAML as `## Audit`.
+When the default layout is used, the final answer includes only a compact
+`Archive` reference with that path. When a caller-required format is used, add
+the archive reference only if that format provides a compatible field. Never
+append the full YAML as `## Audit`.
 Create the archive directory if it does not exist. If the archive cannot be
 written, state that failure in `Decision`/`Open Questions` and record the
 archive failure in the debate status instead of silently dropping the envelope.
@@ -106,10 +147,11 @@ When the user later asks for debate details, read the archived YAML and answer
 from it. Do not dump the full YAML into the conversation unless the user
 explicitly asks for the raw record.
 
-Do not stop after the human-first sections if a required input, CLI,
-permission, or artifact is unavailable. Still emit the audit envelope with
+Do not stop after visible output if a required input, CLI, permission, or
+artifact is unavailable. Still emit the audit envelope with
 `DebateSummary.status: "blocked"` (or `"degraded"`) and `status_reason`, and
-state the same in the `Decision` and `Dissent` sections.
+state the same in the default `Decision` and `Dissent` sections or in the
+equivalent fields of the caller-required format.
 
 The audit envelopes keep their existing shapes:
 
@@ -196,13 +238,15 @@ Status and arbiter decision have separate jobs:
     `status_reason`, `arbiter.next_action`, and the visible `Decision` or
     `Open Questions`.
 
-The human-first `Decision` and `Rationale` must stay consistent with
-`DebateSummary.final_recommendation`; the `Trace` rows must stay consistent
-with `DebateRecord.execution_topology`, `DebateRecord.proposal_generation`,
-`DebateRecord.cli_participation`, `frozen_candidates`, `source_proposals`,
-`sourced_amendments`, critic findings, and the arbiter decision. If the two
-disagree, the audit envelope wins and the human-first sections must be revised
-to match before the run is considered complete.
+The visible final answer must stay consistent with
+`DebateSummary.final_recommendation`. In the default layout, `Decision` and
+`Rationale` carry that consistency requirement. `Trace` rows, when shown, must
+stay consistent with `DebateRecord.execution_topology`,
+`DebateRecord.proposal_generation`, `DebateRecord.cli_participation`,
+`frozen_candidates`, `source_proposals`, `sourced_amendments`, critic findings,
+and the arbiter decision. If visible output and audit state disagree, the audit
+envelope wins and the visible output must be revised to match before the run is
+considered complete.
 
 ## Entry Cases
 
@@ -354,33 +398,42 @@ Use the user or parent workflow's selected topology:
 
 ## Workflow
 
-1. Identify whether the input is a requirement, one proposal, multiple
+1. Classify the final output contract as `caller_format` or
+   `default_debate_layout`. If the task is a document/wiki/diary/review/archive
+   transformation or names a structured artifact type, choose `caller_format`
+   even when the exact template is not repeated.
+2. Identify whether the input is a requirement, one proposal, multiple
    candidates, or conflicting judgments.
-2. Build the `DebateRoute` classification (entry case, debate style, topology,
+3. Build the `DebateRoute` classification (entry case, debate style, topology,
    selected CLIs) as internal state. It is no longer required as the first
    visible block.
-3. For `requirement_debate`, generate 2-4 candidate positions or proposals
+4. For `requirement_debate`, generate 2-4 candidate positions or proposals
    using the selected current-session, same-runtime, or external CLI agents,
    then freeze them.
    If the trigger was a discussion/debate signal, use the selected external CLI
    agents as proposers before normalization.
-4. For the other entry cases, freeze the user-provided proposal, candidates, or
+5. For the other entry cases, freeze the user-provided proposal, candidates, or
    judgments before critique.
-5. Run one independent critique round. If the trigger was a discussion/debate
+6. Run one independent critique round. If the trigger was a discussion/debate
    signal, run this round through the selected external CLI agents.
-6. Run one cross-review round.
-7. Arbitrate and build `DebateRecord`.
-8. Build `DebateSummary` with final recommendation, source proposals, accepted
+7. Run one cross-review round.
+8. Arbitrate and build `DebateRecord`.
+9. Build `DebateSummary` with final recommendation, source proposals, accepted
    amendments, and derivation.
-9. Archive the audit envelope to `~/.debate-router/<run-id>/audit.yaml`.
-10. Emit the human-first sections in this order: `Decision`, `Rationale`,
-    `Dissent`, `Open Questions`, optional `Next Step`, `Archive`, then
-    `Trace` as the final visible section. Include only the archive path in the
-    visible `Archive` section. Do not append `## Audit` or inline the YAML in
-    the normal final answer. Derive `Trace` rows from
-    `DebateRecord.cli_participation`, launch results, frozen candidates,
-    source proposals, sourced amendments, critic findings, and arbiter
-    decision; do not invent rows.
+10. Archive the audit envelope to `~/.debate-router/<run-id>/audit.yaml`.
+11. Emit the final visible output:
+    - If the final output contract is `caller_format`, render that format.
+      Do not add the default debate-router sections unless the caller's format
+      explicitly has a compatible place for them.
+    - If the final output contract is `default_debate_layout`, emit the
+      human-first sections in this order: `Decision`,
+      `Rationale`, `Dissent`, `Open Questions`, optional `Next Step`,
+      `Archive`, then `Trace` as the final visible section. Include only the
+      archive path in the visible `Archive` section. Do not append `## Audit`
+      or inline the YAML in the normal final answer. Derive `Trace` rows from
+      `DebateRecord.cli_participation`, launch results, frozen candidates,
+      source proposals, sourced amendments, critic findings, and arbiter
+      decision; do not invent rows.
 
 ## Anti-Patterns
 
@@ -394,6 +447,13 @@ Use the user or parent workflow's selected topology:
   `~/.debate-router/<run-id>/audit.yaml`.
 - Replacing the human-first sections with YAML, appending `## Audit`, or
   burying the actual decision under audit state.
+- Replacing a caller-required output format, journal template, schema, or
+  archive format with the default debate-router visible layout.
+- Treating `Diary`, `relationship`, llmwiki, daily note, report, memo,
+  checklist, frontmatter, or archive tasks as open chat answers merely because
+  the exact template was not pasted in the latest user message.
+- Adding `Decision`, `Rationale`, `Trace`, or `Archive` sections to a fixed
+  caller format that did not provide a compatible place for those fields.
 - Producing the human-first sections without backing audit envelopes, or
   producing audit envelopes whose `final_recommendation` disagrees with the
   visible `Decision`.

@@ -20,14 +20,24 @@ It currently packages two reusable skills:
 `debate-router` is not a general "should I debate?" gate. If a user or parent
 workflow invokes it, debate must run or the blocker must be recorded.
 
-The default visible output is human-first: `Decision`, `Rationale`, `Dissent`,
-`Open Questions`, an optional `Next Step`, `Archive`, then `Trace` as the
-final visible section. When external CLI agents were selected or attempted,
-`Trace` marks proposal-generation and debate-execution CLIs as successful,
-failed, blocked, or unavailable. The structured audit envelope (the
-`DebateRoute`, `DebateRecord`, and `DebateSummary` blocks) is required state
-behind that output, archived under `~/.debate-router/<run-id>/audit.yaml`, and
-referenced from the final answer without pasting the full YAML.
+If the original task has a fixed or implied output format, that format wins.
+The debate runs as internal work, the structured audit envelope is archived,
+and the final visible answer keeps the caller's template instead of switching
+to the debate-router layout. This includes wiki/diary/review/archive tasks such
+as `Diary`, `relationship`, llmwiki, daily notes, reports, checklists,
+frontmatter, tables, YAML, or JSON, even when the exact template is not repeated
+in the latest prompt.
+
+When there is no caller-required format, the default visible output is
+human-first: `Decision`, `Rationale`, `Dissent`, `Open Questions`, an optional
+`Next Step`, `Archive`, then `Trace` as the final visible section. When
+external CLI agents were selected or attempted, `Trace` marks
+proposal-generation and debate-execution CLIs as successful, failed, blocked,
+or unavailable. The structured audit envelope (the `DebateRoute`,
+`DebateRecord`, and `DebateSummary` blocks) is required state behind that
+output, archived under `~/.debate-router/<run-id>/audit.yaml`, and referenced
+from the final answer without pasting the full YAML when the visible format
+allows it.
 
 ```text
 explicit debate request
@@ -37,8 +47,9 @@ explicit debate request
   -> cross-review round
   -> arbitration (DebateRecord, DebateSummary)
   -> archive audit envelope at ~/.debate-router/<run-id>/audit.yaml
-  -> human-first output:
-       Decision, Rationale, Dissent, Open Questions, (Next Step), Archive, Trace
+  -> final visible output:
+       caller format if specified; otherwise Decision, Rationale, Dissent,
+       Open Questions, (Next Step), Archive, Trace
 ```
 
 `agent-launch` is a launch helper, not an orchestrator:
@@ -62,22 +73,34 @@ the input shape:
 | `candidate_debate` | The user gave multiple proposals, plans, patches, answers, or approaches. |
 | `judgment_debate` | The user gave conflicting reviews, findings, or judgments about one artifact. |
 
-The default visible output is human-first: `Decision`, `Rationale`, `Dissent`,
-`Open Questions`, an optional `Next Step`, `Archive`, then `Trace` as the
-final visible section. When external CLI agents were selected or attempted,
-`Trace` must show which CLIs ran, failed, blocked, or were unavailable in
-proposal generation versus debate execution. The required audit artifacts are
-still `DebateRoute`, `DebateRecord`, and `DebateSummary`; they are produced as
-audit state and archived under `~/.debate-router/<run-id>/audit.yaml`. The
-visible answer should include only the archive path, not the full YAML.
+If the caller already has a fixed or implied output format, keep it. The
+debate-router format is only the default visible layout when no stronger caller
+or source format exists.
+The required audit artifacts are still `DebateRoute`, `DebateRecord`, and
+`DebateSummary`; they are produced as audit state and archived under
+`~/.debate-router/<run-id>/audit.yaml`.
+
+When no caller format exists, the default visible output is human-first:
+`Decision`, `Rationale`, `Dissent`, `Open Questions`, an optional `Next Step`,
+`Archive`, then `Trace` as the final visible section. When external CLI agents
+were selected or attempted, `Trace` must show which CLIs ran, failed, blocked,
+or were unavailable in proposal generation versus debate execution. The visible
+answer should include only the archive path, not the full YAML.
 
 Important constraints:
 
 - Explicit invocation means debate is required; do not optimize it away.
+- Caller-required final formats outrank the default debate-router visible
+  layout. Do not replace a journal, wiki, schema, checklist, or archive
+  template with `Decision` / `Rationale` / `Trace`.
+- If the task says to review, re-review,复盘,归档,更新,整理,重审, or rewrite an
+  existing `Diary`, `relationship`, llmwiki, report, checklist, table,
+  frontmatter, YAML, JSON, or archive, treat it as a caller-format task even if
+  the template is not pasted again.
 - Lead the visible output with `Decision` and `Rationale`, not the YAML
-  envelope. The human-first sections must stay consistent with the audit
-  envelope; if they diverge, the audit envelope wins and the visible output
-  is rewritten to match.
+  envelope when the default layout is being used. The human-first sections must
+  stay consistent with the audit envelope; if they diverge, the audit envelope
+  wins and the visible output is rewritten to match.
 - The audit envelope is required state, not a transient by-product. Preserve
   it under `~/.debate-router/` so it can be inspected after the run.
 - Caller signals like "讨论", "辩论", "discuss", or "debate" mean use the
@@ -162,11 +185,10 @@ The starter evals in [`evals/`](evals/) focus on whether agents preserve the new
 boundaries:
 
 - `debate-router` is explicit-only. The default visible output is human-first
-  (`Decision`, `Rationale`, `Dissent`, `Open Questions`, optional
-  `Next Step`, `Archive`, then `Trace` last; `Trace` includes CLI statuses
-  when external CLIs were selected or attempted), with `DebateRoute`,
-  `DebateRecord`, and `DebateSummary`
-  archived as audit state under `~/.debate-router/<run-id>/audit.yaml`.
+  only when the caller has not supplied a fixed output format. With a caller
+  format, the visible result preserves that format while `DebateRoute`,
+  `DebateRecord`, and `DebateSummary` are archived as audit state under
+  `~/.debate-router/<run-id>/audit.yaml`.
 - The debate entry case matches the input shape.
 - Requirement debates preserve proposal generation, normalization, frozen
   debate, and traceable final synthesis as separate phases.

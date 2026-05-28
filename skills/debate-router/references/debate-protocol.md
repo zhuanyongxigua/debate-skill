@@ -1,14 +1,16 @@
 # Debate Router Protocol
 
-`debate-router` produces a human-first visible output backed by a structured
-audit envelope. The human-first output leads with `Decision` and `Rationale`,
-then shows dissent, open questions, any next step, and the archive pointer.
-`Trace` is the final visible section; it also carries CLI participation when
-external CLIs were selected or attempted, with proposal-generation and
+`debate-router` produces a structured audit envelope and then renders the final
+visible output in the caller's required format when one exists. If no caller
+format exists, it uses the default human-first visible output: `Decision` and
+`Rationale`, then dissent, open questions, any next step, the archive pointer,
+and `Trace` as the final visible section. `Trace` carries CLI participation
+when external CLIs were selected or attempted, with proposal-generation and
 debate-execution phases separated. The audit envelope is `DebateRoute` +
 `DebateRecord` + `DebateSummary`. It is required audit state, but it is not
 part of the normal final answer; it is archived under
-`~/.debate-router/<run-id>/audit.yaml` and referenced from the visible output.
+`~/.debate-router/<run-id>/audit.yaml` and referenced from the visible output
+only when the caller's format allows it.
 
 The structured envelope is still defined as follows. `DebateRoute` is built
 first as classifier state, `DebateRecord` captures the bounded debate, and
@@ -144,9 +146,24 @@ DebateSummary:
     explanation: ""
 ```
 
-## Human-first visible output
+## Visible Output
 
-Default visible layout:
+Caller-required output formats take precedence. If the original task, parent
+workflow, repository, or user message specifies a fixed final format, template,
+schema, frontmatter, checklist, journal entry shape, archive format, or
+"output exactly like this" contract, render exactly that format after the
+debate. Do not add the default sections unless the caller format has a
+compatible place for them. The debate audit envelope is still archived.
+
+Do not require the caller to paste the template again. Treat review, re-review,
+复盘,归档,更新,整理,重审, or rewrite work over an existing document as a
+caller-format task. Also treat named structured artifacts such as `Diary`,
+`relationship`, llmwiki, daily note, journal, report, memo, checklist,
+frontmatter, YAML, JSON, table, or archive as caller-format tasks. If the
+format is uncertain, preserve the source artifact's structure instead of using
+the default debate-router sections.
+
+Default visible layout when no caller format exists:
 
 ```markdown
 ## Decision
@@ -179,9 +196,13 @@ the deciding evidence or constraint>
 | — | arbitration | arbiter | ran | decision | select(P1) + adopt(A1 from P3) |
 ```
 
-Rules for the human-first output:
+Rules for visible output:
 
-- `Decision` must equal `DebateSummary.final_recommendation.summary` in
+- If the caller supplied a fixed format, preserve it. Map the debate outcome
+  into the caller's fields instead of replacing the format with `Decision`,
+  `Rationale`, `Trace`, or `Archive`.
+- `Decision`, when present in the default layout, must equal
+  `DebateSummary.final_recommendation.summary` in
   substance; the rationale paragraph must be consistent with
   `DebateSummary.final_recommendation.rationale`. The visible text is allowed
   to be tighter prose, but it must not say anything the audit envelope does
@@ -203,9 +224,9 @@ Rules for the human-first output:
 - `Next Step` is optional and used only when the arbiter set a concrete
   `next_action`. If `arbiter.decision` is `probe` or `escalate`, this section
   should be present.
-- For `degraded` or `blocked` status, the human-first sections still appear,
-  the `Decision` reflects the degraded or blocked outcome, and `Dissent` or
-  `Open Questions` names the blocker.
+- For `degraded` or `blocked` status, the required visible format still
+  appears. In the default layout, the `Decision` reflects the degraded or
+  blocked outcome, and `Dissent` or `Open Questions` names the blocker.
 
 ## Status And Arbiter Decision
 
@@ -250,21 +271,25 @@ that archive failure in the normal debate status and visible output; do not
 pretend the audit envelope is retrievable.
 
 The normal final answer must not include a full `## Audit` appendix and must
-not inline the YAML. It should include only a compact `Archive` reference that
-names the archive path. If the user later asks about the debate details, read
-the archived YAML and answer from that record; show raw YAML only when the user
-explicitly asks for the raw record.
+not inline the YAML. When the default layout is used, include only a compact
+`Archive` reference that names the archive path. When a caller-required format
+is used, include that archive path only if the format provides a compatible
+field. If the user later asks about the debate details, read the archived YAML
+and answer from that record; show raw YAML only when the user explicitly asks
+for the raw record.
 
 Rules:
 
 - `DebateRoute` is a classifier, not a debate/no-debate gate.
 - Once `debate-router` is active, run a debate or record why the debate is
   blocked. Do not skip the debate instead.
-- The default visible output is human-first. Do not lead with or append the
-  YAML envelope. Keep `Trace` as the final visible section.
-- The archived audit envelope must remain consistent with the human-first
-  output. If they diverge during synthesis, fix the human-first sections to
-  match the audit state before completing the run.
+- Preserve caller-required or implied final formats. Use the human-first default only when
+  no stronger caller format exists. Do not lead with or append the YAML
+  envelope. Keep `Trace` as the final visible section only when the default
+  layout is being used.
+- The archived audit envelope must remain consistent with the visible output.
+  If they diverge during synthesis, fix the visible output to match the audit
+  state before completing the run.
 - Explicit discussion or debate signals such as "discuss", "debate",
   "argue about", "讨论", or "辩论" select the multi-CLI path. Set
   `DebateRoute.topology: heterogeneous_cli_agents`, include two or more

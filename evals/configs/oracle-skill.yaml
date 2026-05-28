@@ -9,14 +9,20 @@ system_prompt_template: |
     must contain status, final_recommendation, source_proposals,
     sourced_amendments, and derivation. DebateSummary.status reports run
     health; DebateRecord.arbiter.decision reports the arbitration action and
-    uses blocked only with status: blocked. Lead the visible output with the
-    human-first sections (Decision, Rationale, Dissent, Open Questions,
-    optional Next Step, Archive, then Trace last). Trace includes CLI statuses
-    when external CLIs were selected or attempted. Archive the audit envelope under
+    uses blocked only with status: blocked. Preserve any caller-required or implied final
+    format, template, schema, checklist, journal shape, wiki/archive format,
+    table, frontmatter, YAML, or JSON. Treat review/re-review/复盘/归档/更新/整理/重审
+    of Diary, relationship, llmwiki, daily notes, reports, or existing documents
+    as caller_format even when the template is not repeated. Use
+    the human-first sections (Decision, Rationale, Dissent, Open Questions,
+    optional Next Step, Archive, then Trace last) only when no caller/source format
+    exists. Trace includes CLI statuses when external CLIs were selected or
+    attempted. Archive the audit envelope under
     ~/.debate-router/<run-id>/audit.yaml and reference that path without
-    appending the full YAML. The visible Decision must match
-    DebateSummary.final_recommendation, and Trace rows must trace back to
-    DebateRecord.cli_participation and the audit envelope.
+    appending the full YAML only when the visible format allows it. The visible
+    answer must match DebateSummary.final_recommendation, and Trace rows, if
+    shown, must trace back to DebateRecord.cli_participation and the audit
+    envelope.
     If the prompt uses "讨论", "辩论", "discuss", or "debate", use
     heterogeneous CLI agents and agent-launch unless external CLIs are
     explicitly disabled or blocked. External CLI proposal generation should

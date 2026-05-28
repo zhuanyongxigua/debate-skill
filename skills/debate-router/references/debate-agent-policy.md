@@ -168,15 +168,39 @@ separate from critique:
 
 ## Output Shape Policy
 
-The default visible output is human-first: `Decision`, `Rationale`, `Dissent`,
-`Open Questions`, optionally `Next Step`, `Archive`, then `Trace` as the final
-visible section. When external CLIs were selected or attempted, include their
-participation inside `Trace`. The full audit envelope (`DebateRoute`,
-`DebateRecord`, `DebateSummary`) is required audit state but belongs in
+The caller's final output contract has priority over the debate-router layout.
+Classify that contract before writing the final answer:
+
+- `caller_format`: use when the original task, parent workflow, repository,
+  source artifact, or user message specifies or implies a final format.
+- `default_debate_layout`: use only when no caller/source format exists and the
+  user is asking for an open chat answer.
+
+Treat the task as `caller_format` when it says to review, re-review,复盘,归档,
+更新,整理,重审, or rewrite an existing note/document, or when it names a
+structured artifact such as `Diary`, `relationship`, llmwiki, daily note,
+journal, report, memo, PR template, checklist, frontmatter, YAML, JSON, table,
+or archive. If the exact template is not repeated in the current message,
+preserve the source document or parent workflow format rather than falling back
+to the default debate-router sections.
+
+If the original task, parent workflow, repository, or user message specifies a
+fixed final format, template, schema, frontmatter, checklist, journal entry
+shape, archive format, or "output exactly like this" contract, preserve that
+format exactly. Run the debate as internal work, archive the full audit
+envelope (`DebateRoute`, `DebateRecord`, `DebateSummary`), then render only the
+caller-required format. Add an archive reference only when the caller format has
+a compatible metadata, notes, provenance, or footer field.
+
+When there is no caller-required or implied final format, the default visible output is
+human-first: `Decision`, `Rationale`, `Dissent`, `Open Questions`, optionally
+`Next Step`, `Archive`, then `Trace` as the final visible section. When
+external CLIs were selected or attempted, include their participation inside
+`Trace`. The full audit envelope is required audit state but belongs in
 `~/.debate-router/<run-id>/audit.yaml`, not in the normal final answer.
 
-- Lead with the `Decision` and `Rationale`. The caller should be able to act
-  without scrolling past YAML.
+- When using the default layout, lead with the `Decision` and `Rationale`. The
+  caller should be able to act without scrolling past YAML.
 - When external CLIs were selected or attempted, include them in `Trace`.
   Separate proposal-generation CLIs from debate-execution CLIs, and mark
   `ran`, `failed`, `blocked`, or `unavailable` for each selected or attempted
@@ -184,19 +208,21 @@ participation inside `Trace`. The full audit envelope (`DebateRoute`,
 - Derive `Trace` rows from the frozen candidates, source proposals, sourced
   amendments, critic findings, arbiter decision, `DebateRecord.cli_participation`,
   and launch results. The table must trace back to the audit envelope; do not
-  invent rows. Keep `Trace` as the final visible section.
+  invent rows. Keep `Trace` as the final visible section when the default
+  layout is used.
 - For each run, archive the audit envelope to
-  `~/.debate-router/<run-id>/audit.yaml` and name that path in the visible
-  `Archive` section. Do not append `## Audit` or inline the YAML in the normal
-  final answer.
+  `~/.debate-router/<run-id>/audit.yaml`. Name that path in the visible
+  `Archive` section only when the default layout is used, or in a compatible
+  caller-format field when one exists. Do not append `## Audit` or inline the
+  YAML in the normal final answer.
 - If the user later asks for debate details, read the archived YAML and answer
   from it. Show raw YAML only when the user explicitly asks for the raw record.
-- Keep the human-first text consistent with the audit envelope. If
-  `final_recommendation` says one thing and `Decision` says another, the
-  audit envelope wins and the visible output must be rewritten.
-- `degraded` and `blocked` runs still emit the human-first sections; the
-  `Decision` states the degraded or blocked outcome and `Dissent` or
-  `Open Questions` names the blocker.
+- Keep the visible output consistent with the audit envelope. If
+  `final_recommendation` says one thing and the visible result says another,
+  the audit envelope wins and the visible output must be rewritten.
+- `degraded` and `blocked` runs still emit the required visible format. In the
+  default layout, the `Decision` states the degraded or blocked outcome and
+  `Dissent` or `Open Questions` names the blocker.
 - Keep status and arbitration separate: `DebateSummary.status` reports run
   health, while `DebateRecord.arbiter.decision` reports the arbitration action.
   Use `status: degraded` for partial debates with usable but limited evidence;

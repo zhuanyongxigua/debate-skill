@@ -1,7 +1,7 @@
 interface:
   display_name: "Debate Router"
   short_description: "Classify explicit debates and run bounded critique"
-  default_prompt: "Use $debate-router to classify this debate input, run the bounded debate, and produce a DebateRecord."
+  default_prompt: "Use $debate-router to classify this debate input, run the bounded debate, archive the DebateRecord, and preserve any caller-required or implied final output format."
 
 policy:
   allow_implicit_invocation: false

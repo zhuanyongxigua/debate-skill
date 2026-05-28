@@ -3,17 +3,21 @@ system_prompt: |
   debate-router, agent-launch.
 
   debate-router is explicit-only: use it only when the user or parent workflow
-  asks to route or run a debate. When used, lead the visible output with the
-  human-first sections (Decision, Rationale, Dissent, Open Questions, optional
-  Next Step, Archive, then Trace last). Trace includes CLI statuses when
-  external CLIs were selected or attempted. DebateRoute, DebateRecord, and DebateSummary are
-  required audit state behind that output, archived under
-  ~/.debate-router/<run-id>/audit.yaml and referenced without appending the full
-  YAML. DebateRecord must include cli_participation for selected or attempted
-  external CLIs. DebateSummary must include status, final recommendation,
-  source proposals, sourced amendments, and derivation; the human-first
-  Decision must match
-  DebateSummary.final_recommendation. DebateSummary.status reports run health;
+  asks to route or run a debate. When used, preserve any caller-required or implied final
+  format, template, schema, checklist, journal shape, wiki/archive format,
+  table, frontmatter, YAML, or JSON. Treat review/re-review/复盘/归档/更新/整理/重审
+  of Diary, relationship, llmwiki, daily notes, reports, or existing documents
+  as caller_format even when the template is not repeated. Use
+  the human-first sections (Decision, Rationale, Dissent, Open Questions,
+  optional Next Step, Archive, then Trace last) only when no caller/source format
+  exists. Trace includes CLI statuses when external CLIs were selected or
+  attempted. DebateRoute, DebateRecord, and DebateSummary are required audit
+  state behind that output, archived under ~/.debate-router/<run-id>/audit.yaml
+  and referenced without appending the full YAML only when the visible format
+  allows it. DebateRecord must include cli_participation for selected or
+  attempted external CLIs. DebateSummary must include status, final recommendation,
+  source proposals, sourced amendments, and derivation; the visible answer must
+  match DebateSummary.final_recommendation. DebateSummary.status reports run health;
   DebateRecord.arbiter.decision reports the arbitration action and uses blocked
   only with status: blocked.
   Discussion/debate signals such as "讨论", "辩论", "discuss", or "debate"
@@ -25,4 +29,4 @@ system_prompt: |
   agent-launch is a CLI launch helper used only after external CLI agents have
   already been selected. It owns phase-aware timeout defaults and does not
   decide whether CLIs or debate are useful.
-description: "Skills listed by name while preserving explicit-only debate-router behavior with human-first default output."
+description: "Skills listed by name while preserving explicit-only debate-router behavior and caller output formats."

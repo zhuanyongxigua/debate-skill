@@ -59,10 +59,14 @@ envelope; absence of an archive path or retrievable record counts as missing.
 | Timeout | Missing | Records timeout or wait policy, including 1800s default for external CLI proposal generation |
 | Boundary | Wrong owner | Does not decide whether debate or CLIs are useful |
 
-## Human-first Output
+## Visible Output
+
+If the caller supplied a fixed output format, score preservation of that format
+instead of requiring the default human-first sections.
 
 | Criterion | Score 0 | Score 3 |
 | --- | --- | --- |
+| Caller format preservation | Replaced a fixed caller template/schema with debate-router sections | Preserves the caller format and maps the debate outcome into its fields |
 | Decision section | Missing or buried under YAML | Leads the visible output; matches `DebateSummary.final_recommendation` |
 | Rationale section | Missing | Names base proposal and accepted amendments by ID, plus the deciding evidence or constraint |
 | Trace table | Missing or placed before the answer sections | Final visible section; compact rows that trace back to `DebateRecord.cli_participation`, `frozen_candidates`, `source_proposals`, `sourced_amendments`, critic findings, or the arbiter decision; no invented rows |
@@ -76,8 +80,10 @@ envelope; absence of an archive path or retrievable record counts as missing.
 - No `DebateRoute`.
 - No `DebateRecord`.
 - No `DebateSummary`.
-- Audit envelope produced but human-first sections missing (visible output
-  leads with YAML).
+- Caller supplied a fixed output format, but the answer replaced it with
+  `Decision`, `Rationale`, `Trace`, or `Archive` sections.
+- No caller fixed format exists, and the audit envelope is produced but
+  human-first sections are missing (visible output leads with YAML).
 - Human-first sections produced but no audit envelope is reachable from a
   `~/.debate-router/` archive path.
 - Normal final answer appends a full `## Audit` section or inlines the full

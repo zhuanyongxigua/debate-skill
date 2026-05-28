@@ -1,6 +1,6 @@
 # DebateRoute Rubric
 
-Score each run (human-first output plus audit envelope) from 0 to 5 on each
+Score each run (visible output plus audit envelope) from 0 to 5 on each
 criterion.
 
 ## Criteria
@@ -8,10 +8,12 @@ criterion.
 | Criterion | What to check |
 | --- | --- |
 | Explicit trigger | `debate-router` is used only when debate was explicitly requested. |
-| Human-first layout | The visible output leads with `Decision` and `Rationale`, then `Dissent`, `Open Questions`, optional `Next Step`, `Archive`, and ends with `Trace`; it does not lead with the YAML envelope. |
+| Format preservation | If the caller supplied a fixed output format, the visible answer preserves that format instead of using the debate-router default layout. |
+| Implied format detection | Review/archive/wiki/diary/report/checklist/table/YAML/JSON tasks are treated as caller-format tasks even when the exact template is not repeated. |
+| Human-first layout | When no caller format exists, the visible output leads with `Decision` and `Rationale`, then `Dissent`, `Open Questions`, optional `Next Step`, `Archive`, and ends with `Trace`; it does not lead with the YAML envelope. |
 | CLI trace visibility | When external CLIs were selected or attempted, `Trace` names which CLIs participated in proposal generation and debate execution, including failed, blocked, or unavailable CLIs. |
-| Audit archive | `DebateRoute`, `DebateRecord`, and `DebateSummary` are archived under `~/.debate-router/<run-id>/audit.yaml`, and the visible answer includes only the archive path. |
-| Audit consistency | `Decision` matches `DebateSummary.final_recommendation`, and `Trace` rows match `DebateRecord.cli_participation`, `frozen_candidates`, `source_proposals`, `sourced_amendments`, critic findings, or the arbiter decision. |
+| Audit archive | `DebateRoute`, `DebateRecord`, and `DebateSummary` are archived under `~/.debate-router/<run-id>/audit.yaml`; the visible answer includes the archive path only when the caller format allows it. |
+| Audit consistency | The visible result matches `DebateSummary.final_recommendation`; `Trace` rows, when shown, match `DebateRecord.cli_participation`, `frozen_candidates`, `source_proposals`, `sourced_amendments`, critic findings, or the arbiter decision. |
 | Entry case fit | The chosen case matches requirement, single proposal, candidates, or judgments. |
 | Freeze discipline | User-provided proposals, candidates, or judgments are preserved before critique. |
 | Debate execution | The output includes critic findings, cross-review, and arbitration. |
@@ -36,17 +38,25 @@ criterion.
   final `Trace`.
 - Replaces the human-first sections with YAML or appends a full `## Audit`
   section in the normal final answer.
+- Replaces a caller-required output format, journal template, schema, checklist,
+  or archive format with the default debate-router sections.
+- Treats `Diary`, `relationship`, llmwiki, daily note, report, checklist,
+  frontmatter, table, YAML, JSON, archive, review, re-review,复盘,归档,更新,整理,
+  or 重审 tasks as open chat answers because the template was not pasted again.
+- Adds `Decision`, `Rationale`, `Trace`, or `Archive` sections when the caller's
+  fixed format did not provide a compatible place for them.
 - Places `Trace` before `Dissent`, `Open Questions`, applicable `Next Step`,
   or `Archive` instead of keeping it as the final visible section.
 - Omits selected, planned, launched, or attempted external CLIs from `Trace`.
 - Omits a failed, blocked, or unavailable selected CLI from `Trace`.
 - Collapses proposal-generation and debate-execution CLI participation into one
   ambiguous `Trace` phase when both phases used external CLIs.
-- Produces human-first sections that contradict the audit envelope (for
-  example, a `Decision` that does not match `final_recommendation` or `Trace`
-  rows that do not appear in the audit state).
-- Omits the audit archive entirely (no `~/.debate-router/` archive path and no
-  retrievable audit record).
+- Produces visible output that contradicts the audit envelope (for example, a
+  `Decision` or caller-format conclusion that does not match
+  `final_recommendation`, or `Trace` rows that do not appear in the audit
+  state).
+- Omits the audit archive entirely (no retrievable audit record, and no
+  `~/.debate-router/` archive path when the visible format allows one).
 - Omits the final `DebateSummary` from the audit envelope.
 - Emits a broad entry gate or `RoutePlan`.
 - Produces no frozen candidates or judgments.
