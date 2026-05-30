@@ -5,15 +5,23 @@
 This repo intentionally stays narrow. It does not try to be a general method
 catalog, agent framework, or work-entry gate.
 
-It currently packages two reusable skills:
+It currently packages two reusable skills plus one standalone runner:
 
 - [`debate-router`](skills/debate-router/SKILL.md): classify an explicitly
-  requested debate as requirement, single-proposal, candidate, or judgment
-  debate, then run a bounded critique/cross-review/arbitration flow.
-- [`agent-launch`](skills/agent-launch/SKILL.md): build consistent
+  requested debate. By default it does not run the debate in-session — it writes
+  a request file to `~/.debate-router/requests/`, watches `responses/` for the
+  result, and presents it. It runs the debate in-session (via `cli-launch`) only
+  when the human explicitly asks.
+- [`cli-launch`](skills/cli-launch/SKILL.md): build consistent
   non-interactive launch specs for selected local agent CLIs, including
   profile/env isolation, sandbox, network, timeout, and redacted display
   commands.
+
+[`runners/agent-runner`](runners/agent-runner/README.md) is **not** a skill — it
+is a standalone processor (TypeScript/Node) that the human runs outside the
+sandbox to execute debate requests and write the results back. It is reached
+through the request/response file mailbox above, not by invoking it from a
+session.
 
 ## Core Idea
 
@@ -52,7 +60,7 @@ explicit debate request
        Open Questions, (Next Step), Archive, Trace
 ```
 
-`agent-launch` is a launch helper, not an orchestrator:
+`cli-launch` is a launch helper, not an orchestrator:
 
 ```text
 selected external CLI agents
@@ -105,7 +113,7 @@ Important constraints:
   it under `~/.debate-router/` so it can be inspected after the run.
 - Caller signals like "讨论", "辩论", "discuss", or "debate" mean use the
   multi-CLI path. Proposal generation and debate execution should both use
-  external CLI agents through `agent-launch` unless external CLIs were
+  external CLI agents through `cli-launch` unless external CLIs were
   explicitly disabled or are blocked. External CLI proposal generation should
   use `phase: "proposal_generation"` and the 1800 second default timeout.
 - When external CLIs were selected, record their phase-by-phase participation:
@@ -135,16 +143,16 @@ Important constraints:
   could not responsibly complete.
 - Use project checks, tests, sources, or probes as evidence, not as a reason to
   cancel the debate after `debate-router` is active.
-- Use `agent-launch` when the user or parent workflow has selected external CLI
+- Use `cli-launch` when the user or parent workflow has selected external CLI
   agents.
 - Record whether the input was treated as a requirement, one proposal, multiple
   proposals, or conflicting judgments, plus a compact process summary, in
   `DebateSummary` inside the archived audit envelope. Do not use that summary
   as a replacement for the human-first `Decision` and `Rationale`.
 
-## Agent Launch
+## CLI Launch
 
-Use `agent-launch` when a user or parent workflow has already selected one or
+Use `cli-launch` when a user or parent workflow has already selected one or
 more external agent CLIs such as Claude Code, Codex CLI, or GitHub Copilot CLI.
 
 It owns common launch details:
@@ -164,17 +172,48 @@ returning an independent proposal.
 It does not own debate turns, transcripts, arbitration, supervisor loops, PID
 tracking, polling, resume/stop, or fallback decisions.
 
+## Runners
+
+The skill layer in `skills/` is runtime-free and framework-free. Optional local
+runners live **outside** `skills/` as narrow execution adapters, for
+environments that explicitly grant them permission.
+
+[`runners/agent-runner`](runners/agent-runner/README.md) is a standalone
+processor (TypeScript/Node) that the human runs **outside** the sandbox. It
+launches the `claude` and `codex` CLIs — one at a time (`run`) or N in parallel
+(`run-batch`) — to execute debate requests, without the sandboxed parent ever
+spawning a CLI itself. It owns only the execution boundary — allowlists,
+`realpath` cwd, static argv, env allowlist, a `capability` sandbox posture
+(`read_only_review` by default, so debate children cannot edit the repo),
+concurrency caps, timeout, process-group kill, and execution audit — and owns
+**no** debate semantics.
+
+The decoupling exists because a sandboxed parent (e.g. a locked-down Codex app)
+can write files but cannot spawn CLIs without tripping review. So `debate-router`
+just **writes a request file** to `~/.debate-router/requests/`; the runner (the
+human's out-of-sandbox processor) does the work and writes the result to
+`~/.debate-router/responses/`. The runner is reached through that file mailbox,
+not by invoking it from a session. It is not yet published to npm — install from
+`runners/agent-runner` via `install.sh` (see its README for allowlist + setup).
+
+The two audit trails stay separate, linked only by `run_id`:
+`~/.debate-router/<run-id>/` (protocol, owned by `debate-router`) and
+`~/.agent-runner/<run-id>/` (execution, owned by the runner).
+
 ## Project Layout
 
 ```text
+AGENTS.md                # project rules for agents working in this repo
 skills/
-  debate-router/
-    SKILL.md
-    agents/
-    references/
-  agent-launch/
-    SKILL.md
-    scripts/
+  debate-router/         # classify a debate; emit a request file (or run via cli-launch)
+    SKILL.md  agents/  references/
+  cli-launch/            # build non-interactive CLI launch specs
+    SKILL.md  scripts/
+runners/
+  agent-runner/          # standalone processor (outside skills/, run by the human)
+    README.md            # spec + security model
+    src/  bin/  config/  rules/  test/   # TypeScript (Node >=18), compiled to dist/
+    package.json  tsconfig.json  install.sh
 evals/
   *.jsonl, *.md, *.py
 ```
@@ -194,8 +233,8 @@ boundaries:
   debate, and traceable final synthesis as separate phases.
 - Final recommendations show status, the frozen source proposals that
   materially contributed, plus accepted sourced amendments and derivation.
-- External CLI launches go through `agent-launch`.
-- `agent-launch` is not used to decide whether debate or CLI agents are useful.
+- External CLI launches go through `cli-launch`.
+- `cli-launch` is not used to decide whether debate or CLI agents are useful.
 
 ## What This Is Not
 
@@ -203,7 +242,9 @@ This is not an agent framework.
 
 It does not schedule tasks, manage memory, run supervisors, or replace coding
 tools. It provides compact skill instructions and helper scripts that other
-agents or parent workflows can compose.
+agents or parent workflows can compose. The skill layer carries no runtime; the
+only executable component is the optional, separately-permissioned
+[`runners/agent-runner`](runners/agent-runner/README.md) execution adapter.
 
 It is also not a broad method catalog. General task routing and non-debate
 workflows are deliberately outside `debate-router`.
