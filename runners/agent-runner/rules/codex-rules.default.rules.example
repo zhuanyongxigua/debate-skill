@@ -1,0 +1,20 @@
+# Example Codex Rules entry for agent-runner.
+# Place in ~/.codex/rules/default.rules (adjust the absolute path to your user).
+#
+# This allows ONLY the fixed runner path to run outside the parent Codex
+# sandbox. Do NOT allow bash, python, node, claude, or codex directly, and do
+# NOT invoke the runner via `bash -lc "..."` — that wrapper defeats the prefix
+# match and re-opens the broad-shell hole.
+
+prefix_rule(
+    pattern = ["/Users/you/.local/bin/agent-runner"],
+    # "prompt": ask before each out-of-sandbox run (interactive use).
+    # "allow":  run without asking (unattended automation only).
+    decision = "prompt",
+    justification = "Allow only the controlled agent runner outside the parent Codex sandbox.",
+)
+
+# Verify the rule matches your actual invocation:
+#
+#   codex execpolicy check --pretty --rules ~/.codex/rules/default.rules -- \
+#     /Users/you/.local/bin/agent-runner run --request /abs/request.json

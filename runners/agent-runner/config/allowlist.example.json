@@ -1,0 +1,35 @@
+{
+  "_comment": "agent-runner allowlist. Copy to ~/.config/agent-runner/allowlist.json (or point $AGENT_RUNNER_CONFIG at it) and edit for your machine. With no repo_roots set, EVERY request is rejected: the runner is closed by default and you open it deliberately here.",
+
+  "repo_roots": [
+    "/Users/you/Code",
+    "/Users/you/5xflm-fwsap/Codes/Crawler"
+  ],
+
+  "modes": [
+    "debate-proposal",
+    "debate-critique",
+    "debate-cross-review"
+  ],
+
+  "_providers_note": "claude and codex by default. copilot is supported but OPT-IN and lower-assurance (the GitHub Copilot CLI has no OS filesystem sandbox); add \"copilot\" to this list only if you want it, and make sure `copilot login` is done.",
+  "providers": ["claude", "codex"],
+
+  "_profiles_note": "Only codex has local profiles the runner can honor (claude strips CLAUDE_CONFIG_DIR; copilot has no profile concept here). Listing a profile for claude or copilot is an error; leave them empty to force the default account.",
+  "profiles": {
+    "claude": [],
+    "codex": []
+  },
+
+  "_capabilities_note": "Child sandbox postures the runner may use. read_only_review = codex read-only sandbox + claude default permission (debate/critique, cannot edit). workspace_write = codex workspace-write + network + claude acceptEdits (implementation). To guarantee no automated child ever edits a repo, list only read_only_review.",
+  "capabilities": ["read_only_review", "workspace_write"],
+
+  "limits": {
+    "min_timeout_seconds": 30,
+    "max_timeout_seconds": 3600,
+    "max_prompt_chars": 200000,
+    "max_batch_items": 8,
+    "max_parallel": 4,
+    "max_parallel_per_provider": 2
+  }
+}
