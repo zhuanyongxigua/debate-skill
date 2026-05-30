@@ -405,7 +405,7 @@ prompt, the target repo, and the desired output format. Pick a unique `<id>`
 **Step 2 — Watch the response folder.** After writing the request, watch
 `~/.debate-router/responses/` for a file whose name starts with the same `<id>`
 (`<id>.json`, or a plain `<id>.md`). A human runs the actual debate (later, an
-`agent-runner` daemon outside the sandbox can do this automatically) and drops
+`debate-agent` daemon outside the sandbox can do this automatically) and drops
 the result there. Poll the path periodically until it appears, or until a
 reasonable wait elapses. Reading the same path repeatedly is fine; do **not**
 spawn anything to wait.
@@ -457,9 +457,9 @@ below apply. **Allocate providers yourself** (e.g. four agents = two `codex` +
 two `claude`); `cli-launch` only launches what this skill decides and never
 balances providers.
 
-### Plan/step mode (read-only brain for the agent-runner daemon)
+### Plan/step mode (read-only brain for the debate-agent daemon)
 
-The `agent-runner` daemon runs the debate without anyone spawning sub-agents: it
+The `debate-agent` daemon runs the debate without anyone spawning sub-agents: it
 calls you (read-only) as the **brain**, you decide the single next action, and
 the daemon executes it as read-only worker CLIs, then calls you again with the
 results — until you return the final answer. You **never spawn or write**; you

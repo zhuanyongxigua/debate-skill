@@ -75,7 +75,7 @@ async function main(): Promise<void> {
   };
 
   // self-contained scratch mailbox
-  process.env.AGENT_RUNNER_MAILBOX = mailboxDir;
+  process.env.DEBATE_AGENT_MAILBOX = mailboxDir;
   rmSync(mailboxDir, { recursive: true, force: true });
   const mb = openMailbox();
   writeFileSync(join(mb.requestsDir, `${raw.id}.json`), JSON.stringify(raw, null, 2));

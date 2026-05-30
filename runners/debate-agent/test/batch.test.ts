@@ -68,14 +68,14 @@ beforeEach(() => {
   mkdirSync(repo);
   binDir = join(root, "bin");
   mkdirSync(binDir);
-  process.env.AGENT_RUNNER_AUDIT_HOME = join(root, "audit");
+  process.env.DEBATE_AGENT_AUDIT_HOME = join(root, "audit");
   makeStub(binDir, "claude", CLAUDE_STUB);
   makeStub(binDir, "codex", CLAUDE_STUB); // same stub stands in for codex
   allow = makeAllowlist(repo);
 });
 
 afterEach(() => {
-  delete process.env.AGENT_RUNNER_AUDIT_HOME;
+  delete process.env.DEBATE_AGENT_AUDIT_HOME;
   cleanup(root);
 });
 

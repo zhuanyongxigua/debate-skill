@@ -228,15 +228,15 @@ export function loadAllowlist(configPath: string | null | undefined): Allowlist 
 
 /**
  * Standard search order for the allowlist config.
- *   1. $AGENT_RUNNER_CONFIG if set.
- *   2. ~/.config/agent-runner/allowlist.json.
+ *   1. $DEBATE_AGENT_CONFIG if set.
+ *   2. ~/.config/debate-agent/allowlist.json.
  * Returns null if neither exists (defaults apply).
  */
 export function defaultConfigPath(): string | null {
-  const env = process.env.AGENT_RUNNER_CONFIG;
+  const env = process.env.DEBATE_AGENT_CONFIG;
   if (env) {
     return expandUser(env);
   }
-  const user = join(homedir(), ".config", "agent-runner", "allowlist.json");
+  const user = join(homedir(), ".config", "debate-agent", "allowlist.json");
   return existsSync(user) ? user : null;
 }

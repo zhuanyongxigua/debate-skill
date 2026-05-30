@@ -1,5 +1,5 @@
 {
-  "name": "agent-runner",
+  "name": "debate-agent",
   "version": "0.1.0",
   "description": "Thin execution adapter for already-decided CLI launch requests.",
   "private": true,
@@ -7,7 +7,7 @@
     "node": ">=18"
   },
   "bin": {
-    "agent-runner": "bin/agent-runner"
+    "debate-agent": "bin/debate-agent"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Build and run the agent-runner test suite. No real claude/codex login needed.
+# Build and run the debate-agent test suite. No real claude/codex login needed.
 #
 #   run_tests.sh            # everything (unit + integration)
 #   run_tests.sh --unit     # fast unit tests only (no subprocess/sleep)
 #   run_tests.sh --integration   # integration tests only
 #
 # The opt-in Codex Rules check additionally needs:
-#   AGENT_RUNNER_CODEX_RULES_TEST=1 and codex on PATH.
+#   DEBATE_AGENT_CODEX_RULES_TEST=1 and codex on PATH.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

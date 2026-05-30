@@ -17,7 +17,7 @@ It currently packages two reusable skills plus one standalone runner:
   profile/env isolation, sandbox, network, timeout, and redacted display
   commands.
 
-[`runners/agent-runner`](runners/agent-runner/README.md) is **not** a skill — it
+[`runners/debate-agent`](runners/debate-agent/README.md) is **not** a skill — it
 is a standalone processor (TypeScript/Node) that the human runs outside the
 sandbox to execute debate requests and write the results back. It is reached
 through the request/response file mailbox above, not by invoking it from a
@@ -178,7 +178,7 @@ The skill layer in `skills/` is runtime-free and framework-free. Optional local
 runners live **outside** `skills/` as narrow execution adapters, for
 environments that explicitly grant them permission.
 
-[`runners/agent-runner`](runners/agent-runner/README.md) is a standalone
+[`runners/debate-agent`](runners/debate-agent/README.md) is a standalone
 processor (TypeScript/Node) that the human runs **outside** the sandbox. It
 launches the `claude` and `codex` CLIs — one at a time (`run`) or N in parallel
 (`run-batch`) — to execute debate requests, without the sandboxed parent ever
@@ -194,11 +194,11 @@ just **writes a request file** to `~/.debate-router/requests/`; the runner (the
 human's out-of-sandbox processor) does the work and writes the result to
 `~/.debate-router/responses/`. The runner is reached through that file mailbox,
 not by invoking it from a session. It is not yet published to npm — install from
-`runners/agent-runner` via `install.sh` (see its README for allowlist + setup).
+`runners/debate-agent` via `install.sh` (see its README for allowlist + setup).
 
 The two audit trails stay separate, linked only by `run_id`:
 `~/.debate-router/<run-id>/` (protocol, owned by `debate-router`) and
-`~/.agent-runner/<run-id>/` (execution, owned by the runner).
+`~/.debate-agent/<run-id>/` (execution, owned by the runner).
 
 ## Project Layout
 
@@ -210,7 +210,7 @@ skills/
   cli-launch/            # build non-interactive CLI launch specs
     SKILL.md  scripts/
 runners/
-  agent-runner/          # standalone processor (outside skills/, run by the human)
+  debate-agent/          # standalone processor (outside skills/, run by the human)
     README.md            # spec + security model
     src/  bin/  config/  rules/  test/   # TypeScript (Node >=18), compiled to dist/
     package.json  tsconfig.json  install.sh
@@ -244,7 +244,7 @@ It does not schedule tasks, manage memory, run supervisors, or replace coding
 tools. It provides compact skill instructions and helper scripts that other
 agents or parent workflows can compose. The skill layer carries no runtime; the
 only executable component is the optional, separately-permissioned
-[`runners/agent-runner`](runners/agent-runner/README.md) execution adapter.
+[`runners/debate-agent`](runners/debate-agent/README.md) execution adapter.
 
 It is also not a broad method catalog. General task routing and non-debate
 workflows are deliberately outside `debate-router`.

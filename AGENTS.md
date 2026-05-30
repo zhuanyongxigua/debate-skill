@@ -12,7 +12,7 @@ plus one optional execution adapter:
   bounded critique/cross-review/arbitration flow.
 - `skills/cli-launch` — builds non-interactive launch specs for selected local
   agent CLIs.
-- `runners/agent-runner` — an optional, separately-permissioned thin execution
+- `runners/debate-agent` — an optional, separately-permissioned thin execution
   adapter (TypeScript/Node) that launches `claude`/`codex` from inside a
   sandboxed parent agent. **This is the only runtime in the repo.**
 - `evals/` — paired evals for the routing/boundary behavior.
@@ -22,7 +22,7 @@ plus one optional execution adapter:
 1. **Skills are prompts, not code.** `skills/*/SKILL.md` are model instructions.
    Installing or changing the runner never changes a skill's behavior on its
    own — the SKILL.md must say so. Keep that in mind when wiring new behavior.
-2. **The runner owns execution, never debate semantics.** `runners/agent-runner`
+2. **The runner owns execution, never debate semantics.** `runners/debate-agent`
    may own allowlists, realpath cwd, static argv, env hygiene, timeout,
    process-group kill, capability/sandbox posture, parallel fan-out, and audit.
    It must **not** know about debate modes, candidate freezing, roles,
@@ -39,19 +39,19 @@ plus one optional execution adapter:
    templates. Keep it that way.
 5. **Two audit trails, linked by id only.** Protocol audit
    (`~/.debate-router/<run-id>/`) is the skill's; execution audit
-   (`~/.agent-runner/<run-id|batch-id>/`) is the runner's. The runner never
+   (`~/.debate-agent/<run-id|batch-id>/`) is the runner's. The runner never
    writes into `~/.debate-router/`.
 6. **Zero runtime dependencies for the runner.** Dev deps are `typescript` and
    `@types/node` only. Do not add runtime packages.
 
-## Working on the runner (`runners/agent-runner`)
+## Working on the runner (`runners/debate-agent`)
 
 - TypeScript → CommonJS via `tsc`; Node `>=18`; tests on the built-in
   `node:test` runner. Source in `src/`, tests in `test/`, build output in
   `dist/` (gitignored).
 - Build: `npm run build`. Test: `test/run_tests.sh` (`--unit` / `--integration`),
   or `npm test`. The opt-in Codex Rules check needs
-  `AGENT_RUNNER_CODEX_RULES_TEST=1` and `codex` on PATH.
+  `DEBATE_AGENT_CODEX_RULES_TEST=1` and `codex` on PATH.
 - Every behavior change needs a test. Security-relevant changes (path handling,
   env, argv, allowlist, audit) need a regression test that fails without the fix.
 - Do not commit `dist/` or `node_modules/`.

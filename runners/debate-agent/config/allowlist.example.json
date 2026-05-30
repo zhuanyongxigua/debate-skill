@@ -1,5 +1,5 @@
 {
-  "_comment": "agent-runner allowlist. Copy to ~/.config/agent-runner/allowlist.json (or point $AGENT_RUNNER_CONFIG at it) and edit for your machine. With no repo_roots set, EVERY request is rejected: the runner is closed by default and you open it deliberately here.",
+  "_comment": "debate-agent allowlist. Copy to ~/.config/debate-agent/allowlist.json (or point $DEBATE_AGENT_CONFIG at it) and edit for your machine. With no repo_roots set, EVERY request is rejected: the runner is closed by default and you open it deliberately here.",
 
   "repo_roots": [
     "/Users/you/Code",

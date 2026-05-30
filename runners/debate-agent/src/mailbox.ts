@@ -1,6 +1,6 @@
 // File mailbox between debate-router (writes requests) and this processor
 // (writes responses). Lives under ~/.debate-router/ by default; override with
-// $AGENT_RUNNER_MAILBOX. Requests and responses correlate by id.
+// $DEBATE_AGENT_MAILBOX. Requests and responses correlate by id.
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -19,7 +19,7 @@ export interface Mailbox {
 }
 
 export function mailboxRoot(): string {
-  const override = process.env.AGENT_RUNNER_MAILBOX;
+  const override = process.env.DEBATE_AGENT_MAILBOX;
   return override ? expandUser(override) : join(homedir(), ".debate-router");
 }
 

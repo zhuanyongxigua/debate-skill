@@ -1,11 +1,11 @@
 // Integration tests: cross the process boundary.
 //
 // Unlike the unit tests (which import src directly), these invoke the real
-// bin/agent-runner the way Codex Rules will, with on-disk JSON config and a
+// bin/debate-agent the way Codex Rules will, with on-disk JSON config and a
 // stub CLI on PATH. They exercise the launcher bootstrap, argparse, install.sh,
 // and real timeout/process-group signal behavior. A stub binary stands in for
 // claude/codex, so no real login is required. The opt-in codex Rules check is
-// skipped unless AGENT_RUNNER_CODEX_RULES_TEST=1 and codex is on PATH.
+// skipped unless DEBATE_AGENT_CODEX_RULES_TEST=1 and codex is on PATH.
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -16,7 +16,7 @@ import { test } from "node:test";
 import { CLAUDE_STUB, cleanup, makeMarkerStub, makeStub, makeTempDir, writeConfig, writeRequest } from "./helpers";
 
 const PKG_ROOT = join(__dirname, "..", "..");
-const BIN = join(PKG_ROOT, "bin", "agent-runner");
+const BIN = join(PKG_ROOT, "bin", "debate-agent");
 const INSTALL = join(PKG_ROOT, "install.sh");
 
 function which(bin: string): string | null {
@@ -58,11 +58,11 @@ function cliEnv(ctx: Ctx, extra: Record<string, string> = {}): NodeJS.ProcessEnv
   return {
     ...process.env,
     // Isolate HOME so defaultConfigPath() cannot pick up the developer's real
-    // ~/.config/agent-runner/allowlist.json — otherwise the "closed by default"
+    // ~/.config/debate-agent/allowlist.json — otherwise the "closed by default"
     // test (and any default-config path) would be environment-dependent.
     HOME: ctx.root,
     PATH: `${ctx.binDir}${delimiter}${process.env.PATH ?? ""}`,
-    AGENT_RUNNER_AUDIT_HOME: ctx.audit,
+    DEBATE_AGENT_AUDIT_HOME: ctx.audit,
     ANTHROPIC_API_KEY: "sk-test-should-be-stripped",
     ...extra,
   };
@@ -149,7 +149,7 @@ test("config via env var", () => {
   try {
     const req = join(ctx.root, "req.json");
     writeRequest(req, ctx.repo);
-    const proc = runCli(ctx, ["validate", "--request", req], cliEnv(ctx, { AGENT_RUNNER_CONFIG: ctx.cfg }));
+    const proc = runCli(ctx, ["validate", "--request", req], cliEnv(ctx, { DEBATE_AGENT_CONFIG: ctx.cfg }));
     assert.equal(proc.status, 0, proc.stderr);
     assert.equal(JSON.parse(proc.stdout).status, "valid");
   } finally {
@@ -163,7 +163,7 @@ test("closed by default without config", () => {
     const req = join(ctx.root, "req.json");
     writeRequest(req, ctx.repo);
     const env = cliEnv(ctx);
-    delete env.AGENT_RUNNER_CONFIG;
+    delete env.DEBATE_AGENT_CONFIG;
     const proc = runCli(ctx, ["validate", "--request", req], env);
     assert.equal(proc.status, 1);
     assert.equal(JSON.parse(proc.stdout).status, "rejected");
@@ -324,7 +324,7 @@ test("frozen install then run", () => {
   try {
     const inst = spawnSync("bash", [INSTALL], { encoding: "utf8", env: { ...process.env, HOME: c.home } });
     assert.equal(inst.status, 0, inst.stderr);
-    const launcher = join(c.home, ".local", "bin", "agent-runner");
+    const launcher = join(c.home, ".local", "bin", "debate-agent");
     assert.ok(existsSync(launcher));
     assert.ok(!lstatSync(launcher).isSymbolicLink(), "frozen install must be a real file");
 
@@ -346,7 +346,7 @@ test("installed launcher runs via exec bit and shebang", () => {
   try {
     const inst = spawnSync("bash", [INSTALL], { encoding: "utf8", env: { ...process.env, HOME: c.home } });
     assert.equal(inst.status, 0, inst.stderr);
-    const launcher = join(c.home, ".local", "bin", "agent-runner");
+    const launcher = join(c.home, ".local", "bin", "debate-agent");
     accessSync(launcher, constants.X_OK);
 
     const req = join(c.root, "req.json");
@@ -366,7 +366,7 @@ test("symlink install is live link", () => {
   try {
     const inst = spawnSync("bash", [INSTALL, "--symlink"], { encoding: "utf8", env: { ...process.env, HOME: c.home } });
     assert.equal(inst.status, 0, inst.stderr);
-    const launcher = join(c.home, ".local", "bin", "agent-runner");
+    const launcher = join(c.home, ".local", "bin", "debate-agent");
     assert.ok(lstatSync(launcher).isSymbolicLink());
     assert.equal(realpathSync(launcher), realpathSync(BIN));
   } finally {
@@ -376,10 +376,10 @@ test("symlink install is live link", () => {
 
 // --- opt-in codex rules check ----------------------------------------------
 
-test("codex execpolicy matches runner path (opt-in)", { skip: !(process.env.AGENT_RUNNER_CODEX_RULES_TEST === "1" && which("codex")) }, () => {
+test("codex execpolicy matches runner path (opt-in)", { skip: !(process.env.DEBATE_AGENT_CODEX_RULES_TEST === "1" && which("codex")) }, () => {
   const d = makeTempDir();
   try {
-    const runnerPath = "/Users/test/.local/bin/agent-runner";
+    const runnerPath = "/Users/test/.local/bin/debate-agent";
     const rules = join(d, "default.rules");
     const gen = spawnSync(process.execPath, [BIN, "print-rules", "--path", runnerPath], { encoding: "utf8" });
     require("node:fs").writeFileSync(rules, gen.stdout);

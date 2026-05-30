@@ -106,7 +106,7 @@ function buildResponse(
   record?: unknown,
 ): DebateResponse {
   const { markdown: traceMd, rows } = buildTrace(history);
-  const archive = `## Archive\n- Per-step worker audit under \`~/.agent-runner/\` (run ids \`${req.id}-s<step>-<worker>\`).`;
+  const archive = `## Archive\n- Per-step worker audit under \`~/.debate-agent/\` (run ids \`${req.id}-s<step>-<worker>\`).`;
   const parts: string[] = [];
   if (answer.trim()) parts.push(answer.trim());
   parts.push(archive);

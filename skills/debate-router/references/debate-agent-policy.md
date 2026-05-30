@@ -83,7 +83,7 @@ capability instead of treating the failure as a model-quality result.
 
 When `debate-router` has selected or inherited `single_external_cli_agent` or
 `heterogeneous_cli_agents`, follow the Execution Path: by default emit a request
-file (the standalone `agent-runner` processor runs the CLIs); spawn them
+file (the standalone `debate-agent` processor runs the CLIs); spawn them
 in-session via `cli-launch` only when the human explicitly asks. See
 `debate-router` SKILL.md "Execution Path".
 

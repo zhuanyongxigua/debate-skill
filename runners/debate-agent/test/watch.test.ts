@@ -32,12 +32,12 @@ beforeEach(() => {
   mkdirSync(repo);
   outDir = join(root, "out");
   mkdirSync(outDir);
-  process.env.AGENT_RUNNER_MAILBOX = join(root, "mailbox");
+  process.env.DEBATE_AGENT_MAILBOX = join(root, "mailbox");
   allow = makeAllowlist(repo, { modes: ["debate-proposal", "debate-critique", "debate-cross-review"] });
 });
 
 afterEach(() => {
-  delete process.env.AGENT_RUNNER_MAILBOX;
+  delete process.env.DEBATE_AGENT_MAILBOX;
   cleanup(root);
 });
 

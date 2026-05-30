@@ -21,13 +21,13 @@ beforeEach(() => {
   binDir = join(root, "bin");
   mkdirSync(binDir);
   auditHome = join(root, "audit");
-  process.env.AGENT_RUNNER_AUDIT_HOME = auditHome;
+  process.env.DEBATE_AGENT_AUDIT_HOME = auditHome;
   makeStub(binDir, "claude", CLAUDE_STUB);
   allow = makeAllowlist(repo);
 });
 
 afterEach(() => {
-  delete process.env.AGENT_RUNNER_AUDIT_HOME;
+  delete process.env.DEBATE_AGENT_AUDIT_HOME;
   cleanup(root);
 });
 

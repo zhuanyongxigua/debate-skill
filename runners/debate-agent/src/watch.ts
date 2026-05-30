@@ -88,7 +88,7 @@ export async function watchLoop(allow: Allowlist, opts: WatchOptions = {}): Prom
   const ignore = snapshotRequestIds(mb);
   const interval = opts.intervalMs ?? 1000;
   process.stderr.write(
-    `agent-runner watch: mailbox ${mb.root} (ignoring ${ignore.size} existing request(s)); polling every ${interval}ms\n`,
+    `debate-agent watch: mailbox ${mb.root} (ignoring ${ignore.size} existing request(s)); polling every ${interval}ms\n`,
   );
   for (;;) {
     try {

@@ -12,7 +12,7 @@ const rulesTemplate = (path: string): string =>
 prefix_rule(
     pattern = ["${path}"],
     decision = "prompt",
-    justification = "Allow only the controlled agent runner outside the parent Codex sandbox.",
+    justification = "Allow only the controlled debate agent outside the parent Codex sandbox.",
 )
 `;
 
@@ -68,11 +68,11 @@ function usage(): void {
   process.stderr.write(
     [
       "Usage:",
-      "  agent-runner [--config <allowlist.json>] run       --request <request.json>",
-      "  agent-runner [--config <allowlist.json>] run-batch  --request <batch.json>",
-      "  agent-runner [--config <allowlist.json>] validate   --request <request.json>",
-      "  agent-runner [--config <allowlist.json>] watch      [--brain claude|codex]",
-      "  agent-runner print-rules [--path <installed-path>]",
+      "  debate-agent [--config <allowlist.json>] run       --request <request.json>",
+      "  debate-agent [--config <allowlist.json>] run-batch  --request <batch.json>",
+      "  debate-agent [--config <allowlist.json>] validate   --request <request.json>",
+      "  debate-agent [--config <allowlist.json>] watch      [--brain claude|codex]",
+      "  debate-agent print-rules [--path <installed-path>]",
       "",
     ].join("\n"),
   );
@@ -162,7 +162,7 @@ export async function main(argv: string[]): Promise<number> {
     }
 
     if (args.command === "print-rules") {
-      console.log(rulesTemplate(args.path ?? "/Users/<you>/.local/bin/agent-runner"));
+      console.log(rulesTemplate(args.path ?? "/Users/<you>/.local/bin/debate-agent"));
       return 0;
     }
 

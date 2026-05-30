@@ -1,4 +1,4 @@
-// agent-runner: a thin execution adapter.
+// debate-agent: a thin execution adapter.
 //
 // This package is the only privileged surface in the repo. Keep it small and
 // auditable. It owns the execution boundary (allowlists, realpath cwd, static

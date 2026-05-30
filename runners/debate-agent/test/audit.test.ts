@@ -12,11 +12,11 @@ let auditHome: string;
 
 beforeEach(() => {
   auditHome = makeTempDir();
-  process.env.AGENT_RUNNER_AUDIT_HOME = auditHome;
+  process.env.DEBATE_AGENT_AUDIT_HOME = auditHome;
 });
 
 afterEach(() => {
-  delete process.env.AGENT_RUNNER_AUDIT_HOME;
+  delete process.env.DEBATE_AGENT_AUDIT_HOME;
   cleanup(auditHome);
 });
 

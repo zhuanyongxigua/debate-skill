@@ -1,4 +1,4 @@
-# agent-runner eval (real LLM)
+# debate-agent eval (real LLM)
 
 A tiny end-to-end eval that runs the **whole debate flow with a real model** —
 unlike `test/`, which mocks the brain/worker seam. It drops a request into a
@@ -17,7 +17,7 @@ response.
 ## Run
 
 ```bash
-cd runners/agent-runner
+cd runners/debate-agent
 npm run eval                     # real model; default brain = claude, sample request
 npm run eval -- --brain codex    # use codex as the brain
 npm run build && node dist/evals/run-eval.js path/to/your-request.json

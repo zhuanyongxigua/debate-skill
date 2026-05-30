@@ -1,6 +1,6 @@
 // Execution audit writer.
 //
-// Audit lives under ~/.agent-runner/<run-id>/, separate from the debate-router
+// Audit lives under ~/.debate-agent/<run-id>/, separate from the debate-router
 // protocol audit under ~/.debate-router/<run-id>/. The two are linked only by
 // run_id (constraint A1). This runner never writes into ~/.debate-router/.
 //
@@ -16,8 +16,8 @@ import { expandUser } from "./paths";
 let seq = 0;
 
 export function auditRoot(): string {
-  const override = process.env.AGENT_RUNNER_AUDIT_HOME;
-  return override ? expandUser(override) : join(homedir(), ".agent-runner");
+  const override = process.env.DEBATE_AGENT_AUDIT_HOME;
+  return override ? expandUser(override) : join(homedir(), ".debate-agent");
 }
 
 export function runAuditDir(runId: string): string {

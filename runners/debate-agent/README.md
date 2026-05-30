@@ -1,4 +1,4 @@
-# agent-runner
+# debate-agent
 
 An **optional, thin execution adapter** that runs already-decided CLI launch
 requests outside a parent agent sandbox, under a narrow allowlist.
@@ -22,13 +22,13 @@ are `typescript` and `@types/node`.
 ## What it owns vs. what it must never own
 
 This boundary is the whole point of the runner. It comes straight from the
-design debate (`~/.debate-router/20260530-165017-external-agent-runner-design/audit.yaml`).
+design debate (`~/.debate-router/20260530-165017-external-debate-agent-design/audit.yaml`).
 
 | Layer | Owner | Responsibility |
 | --- | --- | --- |
 | Debate protocol | `skills/debate-router` | entry-case classification, candidate freeze, critique/cross-review/arbitration, `DebateRecord`, `DebateSummary` |
 | Launch conventions | `skills/cli-launch` | provider command shape, non-interactive flags, profiles, phase-aware timeout defaults |
-| **Execution boundary** | **`runners/agent-runner` (this)** | allowlist enforcement, `realpath` cwd, static argv construction, env allowlist, timeout, process-group kill, **execution audit** |
+| **Execution boundary** | **`runners/debate-agent` (this)** | allowlist enforcement, `realpath` cwd, static argv construction, env allowlist, timeout, process-group kill, **execution audit** |
 
 The runner **must never**:
 
@@ -48,7 +48,7 @@ There are two separate audit directories, linked only by `run_id`:
 
 ```
 ~/.debate-router/<run-id>/audit.yaml          # protocol audit  (owned by debate-router)
-~/.agent-runner/<run-id>/                    # execution audit  (owned by this runner)
+~/.debate-agent/<run-id>/                    # execution audit  (owned by this runner)
   exec-<phase>-<provider>-<ts>-<pid>-<seq>.yaml   # one file per launched child
   exec-<...>.stdout.txt
   exec-<...>.stderr.txt
@@ -63,11 +63,11 @@ by `run_id` from its `DebateRecord.cli_participation` rows.
 ## CLI
 
 ```
-agent-runner [--config <allowlist.json>] run       --request <request.json>
-agent-runner [--config <allowlist.json>] run-batch  --request <batch.json>
-agent-runner [--config <allowlist.json>] validate   --request <request.json>
-agent-runner [--config <allowlist.json>] watch      [--brain claude|codex]
-agent-runner print-rules [--path <installed-path>]
+debate-agent [--config <allowlist.json>] run       --request <request.json>
+debate-agent [--config <allowlist.json>] run-batch  --request <batch.json>
+debate-agent [--config <allowlist.json>] validate   --request <request.json>
+debate-agent [--config <allowlist.json>] watch      [--brain claude|codex]
+debate-agent print-rules [--path <installed-path>]
 ```
 
 `run` / `run-batch` are the low-level executors. `watch` is the **mailbox
@@ -88,7 +88,7 @@ listed here.
 ```json
 {
   "schema_version": 1,
-  "run_id": "20260530-165017-external-agent-runner-design",
+  "run_id": "20260530-165017-external-debate-agent-design",
   "phase": "proposal_generation",
   "provider": "claude",
   "mode": "debate-proposal",
@@ -175,9 +175,9 @@ redacted in `display_command`, but unlike stdin it is visible in `ps`.
   "timeout_seconds": 1800,
   "display_command": "claude --print --permission-mode default <stdin-prompt>",
   "stripped_env_keys": ["ANTHROPIC_API_KEY", "..."],
-  "stdout_path": "/Users/you/.agent-runner/<run-id>/exec-...stdout.txt",
-  "stderr_path": "/Users/you/.agent-runner/<run-id>/exec-...stderr.txt",
-  "audit_path": "/Users/you/.agent-runner/<run-id>/exec-....yaml"
+  "stdout_path": "/Users/you/.debate-agent/<run-id>/exec-...stdout.txt",
+  "stderr_path": "/Users/you/.debate-agent/<run-id>/exec-...stderr.txt",
+  "audit_path": "/Users/you/.debate-agent/<run-id>/exec-....yaml"
 }
 ```
 
@@ -233,7 +233,7 @@ Batch result (items in **input order**):
     { "item_id": "P1", "status": "completed", "...": "full single result" },
     { "item_id": "P2", "status": "rejected", "reject_reason": "..." }
   ],
-  "audit_path": "/Users/you/.agent-runner/<batch-id>/exec-...yaml"
+  "audit_path": "/Users/you/.debate-agent/<batch-id>/exec-...yaml"
 }
 ```
 
@@ -246,7 +246,7 @@ status. Provider allocation is the **caller's** job: the runner has no
 
 `watch` runs the whole debate out of the sandbox so the in-session `debate-router`
 never has to spawn a CLI. It is the human's out-of-sandbox processor for the file
-mailbox under `~/.debate-router/` (override with `$AGENT_RUNNER_MAILBOX`):
+mailbox under `~/.debate-router/` (override with `$DEBATE_AGENT_MAILBOX`):
 
 ```
 ~/.debate-router/
@@ -330,7 +330,7 @@ schema, env hygiene, and audit layers on top of that path-based gate.
 ## Build
 
 ```bash
-cd runners/agent-runner
+cd runners/debate-agent
 npm install      # dev deps: typescript, @types/node
 npm run build    # tsc -> dist/
 ```
@@ -341,16 +341,16 @@ The compiled output in `dist/` is what runs; it has zero runtime dependencies.
 
 Codex Rules match an `argv` prefix, so the privileged entry must live at a
 **stable absolute path**, not inside the repo. The entry installs at
-`~/.local/bin/agent-runner`.
+`~/.local/bin/debate-agent`.
 
 ```bash
-runners/agent-runner/install.sh            # frozen snapshot install (recommended)
-runners/agent-runner/install.sh --symlink  # live symlink to the repo (development)
+runners/debate-agent/install.sh            # frozen snapshot install (recommended)
+runners/debate-agent/install.sh --symlink  # live symlink to the repo (development)
 ```
 
 Both modes build first. The default install is a **frozen snapshot**: it copies
-the compiled `dist/` to `~/.local/share/agent-runner/` and writes a real
-(non-symlink) Node launcher to `~/.local/bin/agent-runner` pinned to that
+the compiled `dist/` to `~/.local/share/debate-agent/` and writes a real
+(non-symlink) Node launcher to `~/.local/bin/debate-agent` pinned to that
 snapshot. Repo edits then do **not** change the privileged entry until you
 re-install. The `--symlink` mode links the live repo (rebuild to pick up edits);
 use it only while iterating.
@@ -359,9 +359,9 @@ Then allow only that fixed path in `~/.codex/rules/default.rules`:
 
 ```python
 prefix_rule(
-    pattern = ["/Users/<you>/.local/bin/agent-runner"],
+    pattern = ["/Users/<you>/.local/bin/debate-agent"],
     decision = "prompt",   # use "allow" only for unattended automation
-    justification = "Allow only the controlled agent runner outside the parent Codex sandbox.",
+    justification = "Allow only the controlled debate agent outside the parent Codex sandbox.",
 )
 ```
 
@@ -369,7 +369,7 @@ See `rules/codex-rules.default.rules.example`. Verify matching with:
 
 ```bash
 codex execpolicy check --pretty --rules ~/.codex/rules/default.rules -- \
-  /Users/<you>/.local/bin/agent-runner run --request /abs/request.json
+  /Users/<you>/.local/bin/debate-agent run --request /abs/request.json
 ```
 
 Do **not** allow `bash`, `node`, `python`, `claude`, or `codex` directly, and do
@@ -382,10 +382,10 @@ Installing the runner is **not** zero-config. To make `debate-router` route
 through it, all of the following must be in place. This is the full list.
 
 1. **Build + install** the runner (above): `install.sh` →
-   `~/.local/bin/agent-runner`. Ensure `~/.local/bin` is on `PATH`.
-2. **Allowlist** at `~/.config/agent-runner/allowlist.json` (or `--config` /
-   `$AGENT_RUNNER_CONFIG`). JSON; loaded from `--config`, then
-   `$AGENT_RUNNER_CONFIG`, then the default path. **With no `repo_roots`, every
+   `~/.local/bin/debate-agent`. Ensure `~/.local/bin` is on `PATH`.
+2. **Allowlist** at `~/.config/debate-agent/allowlist.json` (or `--config` /
+   `$DEBATE_AGENT_CONFIG`). JSON; loaded from `--config`, then
+   `$DEBATE_AGENT_CONFIG`, then the default path. **With no `repo_roots`, every
    request is rejected** (closed by default). Copy `config/allowlist.example.json`
    and set at least `repo_roots`. Keys:
 
@@ -442,17 +442,17 @@ the request id and the expected response path and waits to be resumed.
 ## Layout
 
 ```
-runners/agent-runner/
+runners/debate-agent/
   README.md                 # this spec
   package.json  tsconfig.json
-  bin/agent-runner         # Node launcher (installed to ~/.local/bin)
+  bin/debate-agent         # Node launcher (installed to ~/.local/bin)
   src/
     version.ts              # schema version constants
     paths.ts                # expandUser / realpathLenient helpers
     allowlist.ts            # allowlist type + JSON config loading + defaults
     schema.ts               # versioned request/result schema + strict validation
     launch.ts               # static provider->argv mapping + env allowlist
-    audit.ts                # execution audit writer (~/.agent-runner/<run-id>/)
+    audit.ts                # execution audit writer (~/.debate-agent/<run-id>/)
     runner.ts               # validate -> build -> exec (process group) -> audit -> result; run-batch
     cli.ts                  # run | run-batch | validate | print-rules
   config/
@@ -473,9 +473,9 @@ runners/agent-runner/
 ## Tests
 
 ```bash
-runners/agent-runner/test/run_tests.sh                # unit + integration
-runners/agent-runner/test/run_tests.sh --unit         # fast unit tests only
-runners/agent-runner/test/run_tests.sh --integration  # integration only
+runners/debate-agent/test/run_tests.sh                # unit + integration
+runners/debate-agent/test/run_tests.sh --unit         # fast unit tests only
+runners/debate-agent/test/run_tests.sh --integration  # integration only
 # or: npm test / npm run test:unit / npm run test:integration
 ```
 
@@ -489,7 +489,7 @@ audit uniqueness + root-containment, and an in-process launch via a stub binary
 asserting stdin prompt transport plus execution-audit output.
 
 **Integration tests** cross the process boundary — they invoke the real
-`bin/agent-runner` the way Codex Rules will, with on-disk JSON config and a stub
+`bin/debate-agent` the way Codex Rules will, with on-disk JSON config and a stub
 CLI on PATH:
 
 - `run` success / rejection, `validate`, and all config-resolution paths;
@@ -501,7 +501,7 @@ CLI on PATH:
   shebang;
 - *(opt-in)* `codex execpolicy check` confirming the generated example Rules
   match the runner argv (`decision: prompt`) — skipped unless
-  `AGENT_RUNNER_CODEX_RULES_TEST=1` and `codex` is on PATH.
+  `DEBATE_AGENT_CODEX_RULES_TEST=1` and `codex` is on PATH.
 
 All tests use a stubbed CLI binary, so none require a real `claude` / `codex`
 login. `--unit` is the fast inner loop; the full run takes ~12s (the timeout

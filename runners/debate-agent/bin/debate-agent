@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Fixed entry point for the agent-runner thin execution adapter.
-// Installed to ~/.local/bin/agent-runner so Codex Rules can allow a stable
+// Fixed entry point for the debate-agent thin execution adapter.
+// Installed to ~/.local/bin/debate-agent so Codex Rules can allow a stable
 // path. This file resolves its own real location and loads the compiled CLI
 // from dist/. It must stay tiny: the privileged logic lives in the audited,
 // compiled lib (dist/src/), not here.
@@ -14,7 +14,7 @@ const fs = require("node:fs");
 
 // realpath() follows a dev symlink back to the repo so dist/ is importable.
 const real = fs.realpathSync(__filename);
-const pkgDir = path.dirname(path.dirname(real)); // .../agent-runner
+const pkgDir = path.dirname(path.dirname(real)); // .../debate-agent
 const cli = require(path.join(pkgDir, "dist", "src", "cli.js"));
 
 cli

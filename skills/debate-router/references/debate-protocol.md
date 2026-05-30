@@ -406,8 +406,8 @@ Rules:
   network-capable `workspace-write` sandbox. Record sandbox/profile and network
   status before launch, and mark a Codex critic `blocked` if a parent disabled
   network or the needed access is broader than the sandbox allows. (When the
-  debate is instead run by the standalone `agent-runner` processor, it defaults
-  to a read-only posture — see `runners/agent-runner/README.md`.)
+  debate is instead run by the standalone `debate-agent` processor, it defaults
+  to a read-only posture — see `runners/debate-agent/README.md`.)
 - Do not launch interactive TUI sessions for child agents.
 - Use read-only, plan, or no-edit modes when available. Do not let child agents
   edit files unless implementation was explicitly requested.
