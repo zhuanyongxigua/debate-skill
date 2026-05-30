@@ -1,3 +1,0 @@
-version: 1
-openai:
-  default_prompt: "Use $agent-launch after a user or parent method has already selected external CLI agents. Build a bounded non-interactive launch plan for CLIs such as Claude Code, Codex CLI, or Copilot CLI; do not decide whether CLI agents are worth using."

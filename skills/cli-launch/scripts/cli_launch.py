@@ -473,10 +473,10 @@ def popen_spec(
 class ParallelSpec:
     """Bundles a LaunchSpec with per-call execution context for parallel fan-out.
 
-    caller_metadata is opaque to agent-launch: it is returned verbatim on the
+    caller_metadata is opaque to cli-launch: it is returned verbatim on the
     matching ParallelResult so callers (e.g. debate-router) can attach phase,
     role, candidate id, or any other debate-level semantics without leaking
-    those concepts into agent-launch's schema.
+    those concepts into cli-launch's schema.
     """
 
     spec: LaunchSpec
@@ -622,7 +622,7 @@ def run_specs_parallel(
     matching ParallelSpec, returned unchanged so debate-style callers can
     correlate results to their own phase/role/candidate ids.
 
-    agent-launch only owns mechanical fan-out: each child is started with a
+    cli-launch only owns mechanical fan-out: each child is started with a
     fresh process group and on timeout the group receives SIGTERM, then
     SIGKILL after a 10s grace period. There is no retry, no policy decision
     about whether to continue, no judging, no transcript shape.

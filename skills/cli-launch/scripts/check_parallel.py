@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Mock-based smoke checks for agent_launch.run_specs_parallel. Stubs require_cli,
+# Mock-based smoke checks for cli_launch.run_specs_parallel. Stubs require_cli,
 # subprocess.Popen, and _terminate_process_group so the orchestration contract
 # (status mapping, metadata pass-through, input-order preservation, timeout
 # escalation) can be verified in milliseconds without spawning real children.
@@ -16,8 +16,8 @@ from typing import Any, Callable
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import agent_launch
-from agent_launch import (
+import cli_launch
+from cli_launch import (
     LaunchSpec,
     ParallelSpec,
     run_specs_parallel,
@@ -98,8 +98,8 @@ def check_empty_input() -> None:
 def check_caller_metadata_passthrough() -> None:
     p = Patcher()
     try:
-        p.patch(agent_launch, "require_cli", lambda _: None)
-        p.patch(agent_launch.subprocess, "Popen", make_popen_factory({"a": {}, "b": {}}))
+        p.patch(cli_launch, "require_cli", lambda _: None)
+        p.patch(cli_launch.subprocess, "Popen", make_popen_factory({"a": {}, "b": {}}))
         specs = [
             ParallelSpec(spec=make_spec("a"), caller_metadata={"role": "proposer", "id": "P1"}),
             ParallelSpec(spec=make_spec("b"), caller_metadata={"role": "proposer", "id": "P2"}),
@@ -116,9 +116,9 @@ def check_caller_metadata_passthrough() -> None:
 def check_input_order_preserved() -> None:
     p = Patcher()
     try:
-        p.patch(agent_launch, "require_cli", lambda _: None)
+        p.patch(cli_launch, "require_cli", lambda _: None)
         p.patch(
-            agent_launch.subprocess,
+            cli_launch.subprocess,
             "Popen",
             make_popen_factory(
                 {
@@ -145,8 +145,8 @@ def check_missing_cli() -> None:
     try:
         def raiser(binary: str) -> None:
             raise SystemExit(f"Required CLI not found on PATH: {binary}")
-        p.patch(agent_launch, "require_cli", raiser)
-        p.patch(agent_launch.subprocess, "Popen", make_popen_factory({}))
+        p.patch(cli_launch, "require_cli", raiser)
+        p.patch(cli_launch.subprocess, "Popen", make_popen_factory({}))
         results = run_specs_parallel([ParallelSpec(spec=make_spec("missing"))])
         r = results[0]
         assert r.status == "error", r.status
@@ -161,9 +161,9 @@ def check_missing_cli() -> None:
 def check_nonzero_exit() -> None:
     p = Patcher()
     try:
-        p.patch(agent_launch, "require_cli", lambda _: None)
+        p.patch(cli_launch, "require_cli", lambda _: None)
         p.patch(
-            agent_launch.subprocess,
+            cli_launch.subprocess,
             "Popen",
             make_popen_factory({"fail": {"returncode": 7, "stderr": "oops"}}),
         )
@@ -181,9 +181,9 @@ def check_nonzero_exit() -> None:
 def check_successful_run() -> None:
     p = Patcher()
     try:
-        p.patch(agent_launch, "require_cli", lambda _: None)
+        p.patch(cli_launch, "require_cli", lambda _: None)
         p.patch(
-            agent_launch.subprocess,
+            cli_launch.subprocess,
             "Popen",
             make_popen_factory({"ok": {"returncode": 0, "stdout": "hi"}}),
         )
@@ -202,14 +202,14 @@ def check_timeout_path() -> None:
     p = Patcher()
     terminate_calls: list[int] = []
     try:
-        p.patch(agent_launch, "require_cli", lambda _: None)
+        p.patch(cli_launch, "require_cli", lambda _: None)
         p.patch(
-            agent_launch.subprocess,
+            cli_launch.subprocess,
             "Popen",
             make_popen_factory({"slow": {"timeout_first": True, "stderr": "killed"}}),
         )
         p.patch(
-            agent_launch,
+            cli_launch,
             "_terminate_process_group",
             lambda proc, sig: terminate_calls.append(sig),
         )
@@ -240,8 +240,8 @@ def check_timeout_override_beats_spec_timeout() -> None:
             return super().communicate(input=input, timeout=timeout)
 
     try:
-        p.patch(agent_launch, "require_cli", lambda _: None)
-        p.patch(agent_launch.subprocess, "Popen", lambda command, *a, **k: RecordingPopen())
+        p.patch(cli_launch, "require_cli", lambda _: None)
+        p.patch(cli_launch.subprocess, "Popen", lambda command, *a, **k: RecordingPopen())
         spec = ParallelSpec(
             spec=make_spec("anything", timeout_seconds=900),
             timeout_override=5,

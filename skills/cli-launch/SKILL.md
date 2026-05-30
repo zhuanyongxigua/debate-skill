@@ -1,13 +1,13 @@
 ---
-name: agent-launch
+name: cli-launch
 description: Launch local agent CLIs with consistent non-interactive command specs, profile and environment isolation, sandbox and network intent, timeout policy, prompt transport, and redacted display commands. Use after the user or a parent method has already selected external CLI agents. Do not use to decide whether CLI agents are worth using.
 ---
 
-# Agent Launch
+# CLI Launch
 
 ## Overview
 
-Use `agent-launch` when a user or parent method has already selected one or
+Use `cli-launch` when a user or parent method has already selected one or
 more external agent CLIs such as Claude Code, Codex CLI, GitHub Copilot CLI, or
 another local CLI agent.
 
@@ -26,7 +26,7 @@ launched safely, record it as `blocked` or `unavailable` instead.
 
 ## Responsibilities
 
-`agent-launch` owns bounded CLI startup details:
+`cli-launch` owns bounded CLI startup details:
 
 - provider command shape
 - non-interactive mode
@@ -36,7 +36,7 @@ launched safely, record it as `blocked` or `unavailable` instead.
 - prompt transport and redacted display commands
 - blocked or unavailable CLI reporting
 
-`agent-launch` does not own orchestration lifecycle:
+`cli-launch` does not own orchestration lifecycle:
 
 - no debate turn protocol
 - no judging or arbitration
@@ -277,7 +277,7 @@ human-readable artifacts, with prompts and secrets redacted.
 
 ## Shared Helper
 
-Use `scripts/agent_launch.py` as the shared implementation surface for CLI
+Use `scripts/cli_launch.py` as the shared implementation surface for CLI
 startup details. It provides provider launch specs, Claude environment
 isolation, Codex sandbox/network checks, redacted display commands, default
 and phase-aware timeouts, and thin `run_spec` / `popen_spec` startup helpers.
@@ -294,7 +294,7 @@ proposer agents for `proposal_generation`, or several critics for the first
 independent critique round), use `run_specs_parallel`:
 
 ```python
-from agent_launch import ParallelSpec, run_specs_parallel
+from cli_launch import ParallelSpec, run_specs_parallel
 
 specs = [
     ParallelSpec(spec=codex_spec, caller_metadata={"role": "proposer", "id": "P1"}),
@@ -308,7 +308,7 @@ Contract:
 
 - Results are returned in the same order as the input specs (not completion
   order), so callers can correlate by index.
-- `caller_metadata` is opaque to `agent-launch`: it is returned unchanged on
+- `caller_metadata` is opaque to `cli-launch`: it is returned unchanged on
   the matching `ParallelResult`. Use it to attach debate-level identifiers
   (phase, role, candidate id) without leaking those into this skill's schema.
 - Each child runs in its own process group. On per-spec timeout the group
@@ -332,8 +332,8 @@ caller — they are not safe to fan out.
 
 ## Avoid / Escalate
 
-- Do not use `agent-launch` to decide whether a CLI should be used.
-- Do not use `agent-launch` as a debate, review, candidate, or judging method.
+- Do not use `cli-launch` to decide whether a CLI should be used.
+- Do not use `cli-launch` as a debate, review, candidate, or judging method.
 - Do not silently skip a user-selected CLI because a current-session answer
   would be cheaper.
 - Use an external supervisor for long-running observation, sparse polling, PID
