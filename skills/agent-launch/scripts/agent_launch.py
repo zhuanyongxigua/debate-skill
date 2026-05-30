@@ -26,7 +26,7 @@ PHASE_TIMEOUT_SECONDS = {
     "cross_review": DEFAULT_TIMEOUT_SECONDS,
     "arbitration": DEFAULT_TIMEOUT_SECONDS,
 }
-DEFAULT_CODEX_PROFILE = "azure"
+DEFAULT_CODEX_PROFILE: str | None = None
 DEFAULT_CODEX_EFFORT = "xhigh"
 DEFAULT_CODEX_APPROVAL = "never"
 DEFAULT_CODEX_SANDBOX = "workspace-write"
@@ -314,7 +314,7 @@ def build_codex_spec(
     *,
     prompt: str,
     codex_bin: str = "codex",
-    profile: str = DEFAULT_CODEX_PROFILE,
+    profile: str | None = DEFAULT_CODEX_PROFILE,
     approval: str = DEFAULT_CODEX_APPROVAL,
     effort: str = DEFAULT_CODEX_EFFORT,
     sandbox: str = DEFAULT_CODEX_SANDBOX,
@@ -329,7 +329,10 @@ def build_codex_spec(
     timeout_seconds: int | None = None,
 ) -> LaunchSpec:
     resolved_timeout_seconds = timeout_seconds_for_phase(phase=phase, timeout_seconds=timeout_seconds)
-    cmd = [codex_bin, "--profile", profile, "--ask-for-approval", approval]
+    cmd = [codex_bin]
+    if profile:
+        cmd.extend(["--profile", profile])
+    cmd.extend(["--ask-for-approval", approval])
     if effort != "inherit":
         cmd.extend(["-c", f'model_reasoning_effort="{effort}"'])
     effective_config_overrides = codex_config_overrides_for_launch(

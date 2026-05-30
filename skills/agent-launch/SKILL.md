@@ -63,6 +63,10 @@ project-specific harness for those responsibilities.
   package installation, remote hosts, or other elevated permissions.
 - Use Codex `danger-full-access` only when the user explicitly approves broad
   filesystem and network access as a separate full-access escalation.
+- Apply human-specified CLI options only as explicit structured overrides, such
+  as Codex `profile`, `model`, `reasoning effort`, `sandbox`, `network`,
+  `approval`, timeout, or prompt transport. Do not pass arbitrary free-form CLI
+  arguments through to child CLIs merely because they appeared in user text.
 - If a selected CLI is missing, unauthenticated, blocked on login, or unsafe for
   the requested capability, record that status. Do not silently replace it with
   another CLI unless fallback was already approved.
@@ -126,7 +130,7 @@ modes only when the user explicitly requested a coding or edit task.
 Use Codex CLI in exec mode:
 
 ```shell
-codex --profile azure --ask-for-approval never \
+codex --ask-for-approval never \
   -c 'model_reasoning_effort="xhigh"' \
   -c sandbox_workspace_write.network_access=true \
   exec --sandbox workspace-write --color never -C <cwd> <prompt>
@@ -134,18 +138,29 @@ codex --profile azure --ask-for-approval never \
 
 Defaults:
 
-- profile: `azure`
+- profile: default Codex profile; pass `--profile <name>` only when the caller
+  explicitly selects a local profile
 - reasoning effort: `xhigh`
 - approval: `never`
 - sandbox: `workspace-write`
 - network: `needed_enabled`
 - config override: `sandbox_workspace_write.network_access=true`
 
+If the human explicitly selects a local Codex profile, pass it as a structured
+override:
+
+```shell
+codex --profile <name> --ask-for-approval never \
+  -c 'model_reasoning_effort="xhigh"' \
+  -c sandbox_workspace_write.network_access=true \
+  exec --sandbox workspace-write --color never -C <cwd> <prompt>
+```
+
 The default Codex launch path is network-capable while keeping the Codex sandbox
 enabled:
 
 ```shell
-codex --profile azure --ask-for-approval never \
+codex --ask-for-approval never \
   -c 'model_reasoning_effort="xhigh"' \
   -c sandbox_workspace_write.network_access=true \
   exec --sandbox workspace-write --color never -C <cwd> <prompt>
@@ -184,8 +199,6 @@ AgentLaunchPlan:
       mode: "non_interactive"
       command:
         - "codex"
-        - "--profile"
-        - "azure"
         - "--ask-for-approval"
         - "never"
         - "-c"
@@ -199,10 +212,20 @@ AgentLaunchPlan:
         - "never"
         - "-C"
         - "<cwd>"
-      display_command: "codex --profile azure --ask-for-approval never -c 'model_reasoning_effort=\"xhigh\"' -c sandbox_workspace_write.network_access=true exec --sandbox workspace-write --color never -C <cwd> <redacted-prompt>"
+      display_command: "codex --ask-for-approval never -c 'model_reasoning_effort=\"xhigh\"' -c sandbox_workspace_write.network_access=true exec --sandbox workspace-write --color never -C <cwd> <redacted-prompt>"
       prompt_transport: "argv|stdin|file"
       cwd: ""
-      profile: "azure"
+      profile: null # set only when the human explicitly selects a local profile
+      human_overrides:
+        profile: null
+        model: null
+        reasoning_effort: null
+        sandbox: null
+        network: null
+        approval: null
+        timeout_seconds: null
+        prompt_transport: null
+        rejected_freeform_args: []
       env_policy: "none|inherit|claude_personal|claude_company"
       launch:
         sandbox: "workspace-write|read-only|danger-full-access|profile_default|unknown"
