@@ -51,9 +51,11 @@ project-specific harness for those responsibilities.
 ## Launch Rules
 
 - Always use non-interactive child-agent commands.
-- Use plan or no-edit modes by default where the provider supports them. For
-  Codex, default to `workspace-write` because the narrow sandbox network knob is
-  scoped to that sandbox.
+- Use non-interactive, non-editing launches by default. For Claude Code, use
+  `--permission-mode default` for delegated text, review, debate, and critique
+  tasks; `plan` is a planning mode and may return a plan or no final answer in
+  `--print` mode. For Codex, default to `workspace-write` because the narrow
+  sandbox network knob is scoped to that sandbox.
 - Let child agents edit files only when the user explicitly requested
   implementation.
 - Default Codex launches should allow sandbox network access with
@@ -67,6 +69,10 @@ project-specific harness for those responsibilities.
   as Codex `profile`, `model`, `reasoning effort`, `sandbox`, `network`,
   `approval`, timeout, or prompt transport. Do not pass arbitrary free-form CLI
   arguments through to child CLIs merely because they appeared in user text.
+- Use the caller's current Claude Code login/config by default. Switch
+  `CLAUDE_CONFIG_DIR` or Claude environment profiles only when the human or
+  parent orchestrator explicitly selects that config directory or profile. The
+  override name is `CLAUDE_CONFIG_DIR`; do not invent `CLAUDE_CONFIG`.
 - If a selected CLI is missing, unauthenticated, blocked on login, or unsafe for
   the requested capability, record that status. Do not silently replace it with
   another CLI unless fallback was already approved.
@@ -110,20 +116,39 @@ that merely had quiet periods before the configured timeout.
 Use Claude Code in print mode:
 
 ```shell
-claude --name <session-name> --print --permission-mode plan <prompt>
+claude --print --permission-mode default <prompt>
 ```
+
+Do not pass `--name` by default for short delegated non-interactive calls.
+Use `--name <session-name>` or `--resume <session-id>` only when the human or
+parent orchestrator explicitly requests a named or resumed Claude session.
 
 Supported environment policies:
 
+- `inherit` (default): use the caller's current Claude Code login and
+  environment unchanged.
+- `inherit` plus explicit `config_dir`: set `CLAUDE_CONFIG_DIR=<path>` while
+  otherwise inheriting the caller's environment.
 - `personal`: set `CLAUDE_CONFIG_DIR=~/.claude-personal` and unset
   `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, and
   `ANTHROPIC_MODEL`.
-- `inherit`: use the caller's current Claude environment unchanged.
 - `company`: inherit gateway environment variables and optionally set a
   separate `CLAUDE_CONFIG_DIR`.
 
-Use `--permission-mode plan` for read-only thinking. Use broader permission
-modes only when the user explicitly requested a coding or edit task.
+Use `--permission-mode default` for normal read-only reasoning, review, debate,
+and critique. Use `plan` only when the human or parent orchestrator explicitly
+wants Claude's plan-mode behavior. Use broader permission modes only when the
+user explicitly requested a coding or edit task.
+
+If the human explicitly selects a Claude config directory, pass it as a
+structured environment override rather than changing the default:
+
+```yaml
+profile: "inherit"
+config_dir: "~/.claude-work"
+env:
+  CLAUDE_CONFIG_DIR: "~/.claude-work"
+```
 
 ### Codex CLI
 
@@ -217,6 +242,9 @@ AgentLaunchPlan:
       cwd: ""
       profile: null # set only when the human explicitly selects a local profile
       human_overrides:
+        claude_config_dir: null
+        claude_profile: null
+        claude_permission_mode: null
         profile: null
         model: null
         reasoning_effort: null

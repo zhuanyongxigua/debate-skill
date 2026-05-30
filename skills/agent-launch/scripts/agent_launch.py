@@ -32,7 +32,7 @@ DEFAULT_CODEX_APPROVAL = "never"
 DEFAULT_CODEX_SANDBOX = "workspace-write"
 DEFAULT_CODEX_NETWORK_ACCESS = True
 CODEX_WORKSPACE_NETWORK_OVERRIDE = "sandbox_workspace_write.network_access=true"
-DEFAULT_CLAUDE_PROFILE = "personal"
+DEFAULT_CLAUDE_PROFILE = "inherit"
 DEFAULT_PERSONAL_CLAUDE_CONFIG_DIR = "~/.claude-personal"
 CLAUDE_COMPANY_ENV_VARS = (
     "ANTHROPIC_AUTH_TOKEN",
@@ -142,6 +142,10 @@ def claude_env(
     base_env: dict[str, str] | None = None,
 ) -> dict[str, str] | None:
     if profile == "inherit":
+        if config_dir:
+            env = dict(os.environ if base_env is None else base_env)
+            env["CLAUDE_CONFIG_DIR"] = str(Path(config_dir).expanduser())
+            return env
         return None
 
     env = dict(os.environ if base_env is None else base_env)
@@ -249,12 +253,12 @@ def resolve_codex_launch_policy(
 def build_claude_spec(
     *,
     prompt: str,
-    session_name: str,
+    session_name: str | None = None,
     resume: bool = False,
     claude_bin: str = "claude",
     profile: str = DEFAULT_CLAUDE_PROFILE,
     config_dir: str | None = None,
-    permission_mode: str = "plan",
+    permission_mode: str = "default",
     prompt_transport: str = "argv",
     input_format: str | None = None,
     output_format: str | None = None,
@@ -265,9 +269,9 @@ def build_claude_spec(
 ) -> LaunchSpec:
     resolved_timeout_seconds = timeout_seconds_for_phase(phase=phase, timeout_seconds=timeout_seconds)
     cmd = [claude_bin]
-    if resume:
+    if resume and session_name:
         cmd.extend(["--resume", session_name])
-    else:
+    elif session_name:
         cmd.extend(["--name", session_name])
     cmd.append("--print")
     if input_format:
