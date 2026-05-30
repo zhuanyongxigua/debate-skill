@@ -22,14 +22,21 @@ expensive. If the debate cannot run, record the concrete blocker in the
 `DebateRecord`.
 
 If the caller uses explicit discussion or debate signals such as "discuss",
-"debate", "argue about", "讨论", or "辩论", treat that as an instruction to use
-multiple external CLI agents. This is not a model judgment about whether CLIs
-are worthwhile; the caller has selected the multi-CLI path. Use the multi-CLI
-path for both proposal generation and debate execution unless the caller
-explicitly disables external CLIs or the selected CLIs are blocked or
-unavailable.
+"debate", "argue about", "讨论", or "辩论", that selects a multi-CLI debate. By
+default, do **not** run it in this session: emit a debate **request file** (see
+`Execution Path`) into `~/.debate-router/requests/` for a human to process, and
+stop. Only run the CLIs yourself, via `cli-launch`, when the human explicitly
+asks for the in-session CLI debate.
 
 ## Required Output
+
+> **Scope.** This section and everything below about *running* the debate
+> (`DebateRoute` / `DebateRecord` / `DebateSummary`, proposal generation,
+> critique, arbitration) applies only when you actually run the debate — the
+> explicit `cli-launch` path, or the standalone processor. In the **default**
+> path you write the request file and later *present* the processor's response
+> (applying the caller's required format here) — but you do not run the debate or
+> produce a `DebateRecord` / `Trace` in-session.
 
 Caller output format outranks the debate-router visible layout. This is a
 mandatory final-output gate, not a style preference.
@@ -302,10 +309,10 @@ four cases impossible.
 - `proposal_generation` produces raw proposals from selected external CLI
   proposers when provided; otherwise use same-runtime or current-session
   proposers. External CLI proposal generation is usually slower than a critic
-  pass; use `agent-launch` with `phase: "proposal_generation"` and a default
-  `timeout_seconds: 1800` unless the caller explicitly chose another budget.
-  Do not mark a proposer `failed/no_output` merely because a short poll has no
-  readable output.
+  pass; spawn it via `cli-launch` with `phase: "proposal_generation"` and a
+  default `timeout_seconds: 1800` unless the caller explicitly chose another
+  budget. Do not mark a proposer `failed/no_output` merely because a short poll
+  has no readable output.
 - `proposal_normalization` validates proposals, removes near-duplicates,
   trims or supplements to 2-4 distinct proposals, assigns stable IDs, and
   records proposer source and fallback reasons. It may normalize; it must not
@@ -366,21 +373,133 @@ Proposal state terms:
   example `[from P3]`, so valid fragments from weak proposals are not laundered
   into the result without attribution.
 
+## Execution Path
+
+A requested debate runs one of two ways. **Default to emitting a request file.**
+
+### Default: emit a request file, watch for the response, present it
+
+By default, do **not** run the debate, spawn anything, or invoke any other skill.
+You only exchange files with an external processor: write a request, watch for
+its response, and present the result. Writing/reading files is allowed inside a
+sandboxed parent agent; spawning CLIs is not, which is why this is the default.
+
+**Step 1 — Write the request file.** Create `~/.debate-router/requests/` if
+needed and write one request file (an external, human-visible archive) with the
+prompt, the target repo, and the desired output format. Pick a unique `<id>`
+(`YYYYMMDD-HHMMSS-slug`).
+
+`~/.debate-router/requests/<id>.json`:
+
+```json
+{
+  "schema_version": 1,
+  "id": "<YYYYMMDD-HHMMSS-slug>",
+  "kind": "debate_request",
+  "prompt": "<the requirement / candidates / question to debate>",
+  "repo": "<absolute repo path>",
+  "output_contract": { "format": "default|caller", "template_hint": "<optional>" }
+}
+```
+
+**Step 2 — Watch the response folder.** After writing the request, watch
+`~/.debate-router/responses/` for a file whose name starts with the same `<id>`
+(`<id>.json`, or a plain `<id>.md`). A human runs the actual debate (later, an
+`agent-runner` daemon outside the sandbox can do this automatically) and drops
+the result there. Poll the path periodically until it appears, or until a
+reasonable wait elapses. Reading the same path repeatedly is fine; do **not**
+spawn anything to wait.
+
+**Step 3 — Present the result.** When the response appears, read it and present
+the answer:
+
+- `<id>.json` → render `answer_markdown`; if `status` is not `completed`, say so
+  briefly with `status_reason`.
+- `<id>.md` / plain text → present its content as the answer.
+
+If the original task had a required output format, render the answer in that
+format here (this is where `debate-router` still owns caller-format
+preservation). Do **not** run the debate yourself or fabricate a result.
+
+Response file `~/.debate-router/responses/<id>.json`:
+
+```json
+{
+  "schema_version": 1,
+  "request_id": "<same id>",
+  "status": "completed|degraded|blocked|error",
+  "status_reason": "",
+  "answer_markdown": "<the final answer to show the user>",
+  "archive_path": "<optional path to the full DebateRecord>"
+}
+```
+
+**If no response appears within your wait window**, tell the user the `<id>`,
+the request path, and the expected response path, and that you will present the
+result when they ask you to resume / re-check. Do not fabricate a result.
+
+### Only on explicit request: cli-launch (run the debate in-session)
+
+If — and only if — the human explicitly asks to run the debate via local CLIs
+(e.g. "use the CLI debate", "spawn the CLIs directly"), run the bounded debate
+in this session and spawn the selected external CLIs directly through
+`cli-launch` (requires a parent that can spawn CLIs, i.e. not sandboxed). In this
+path `debate-router` owns the full flow — entry case, candidate freeze, roles,
+provider allocation, proposal generation, critique, cross-review, and
+arbitration — and the `CLI Topology`, `Phase Concurrency`, and workflow sections
+below apply. **Allocate providers yourself** (e.g. four agents = two `codex` +
+two `claude`); `cli-launch` only launches what this skill decides and never
+balances providers.
+
+### Plan/step mode (read-only brain for the agent-runner daemon)
+
+The `agent-runner` daemon runs the debate without anyone spawning sub-agents: it
+calls you (read-only) as the **brain**, you decide the single next action, and
+the daemon executes it as read-only worker CLIs, then calls you again with the
+results — until you return the final answer. You **never spawn or write**; you
+only return JSON. This keeps every CLI read-only.
+
+You enter this mode when the prompt says you are in plan/step mode and gives a
+debate **state** (`{ request, history }`). Apply the **full** debate protocol
+(entry case, proposal generation, normalization, critique, cross-review,
+arbitration, degrade/reopen) to decide the next step from the state, and output
+**exactly one JSON object, nothing else**:
+
+```json
+// run the next phase (independent read-only workers, fanned out in parallel):
+{"kind":"run","phase":"proposal_generation|critique|cross_review|arbitration|other",
+ "launches":[{"id":"P1","provider":"claude|codex","prompt":"<full prompt for this worker>"}]}
+
+// or finish:
+{"kind":"final","status":"completed|degraded|blocked","status_reason":"",
+ "answer_markdown":"<final answer, in the caller's required format if any>"}
+```
+
+Rules in this mode:
+- Each launch is an independent read-only worker — write the complete prompt it
+  needs (workers do not run this skill; they just answer the prompt you give).
+- **Allocate providers yourself** (e.g. four agents = two `codex` + two `claude`).
+- Read prior outputs from `history` to write the next phase's prompts and to do
+  normalization / critique / arbitration / degrade exactly as the protocol says.
+- The daemon forces every worker to read-only and validates each launch against
+  its allowlist; do not ask a worker to edit files, and expect a launch to a
+  non-allowlisted provider to come back `rejected` in `history` (adapt around it).
+
 ## CLI Topology
+
+> Applies only on the explicit `cli-launch` path (running the debate
+> in-session). In the default path you only write the request file.
 
 `debate-router` does not decide whether external CLI agents are worth using.
 
-Use the user or parent workflow's selected topology:
+When the human has explicitly asked to run the debate in-session:
 
-- Discussion/debate signals such as "discuss", "debate", "argue about", "讨论",
-  or "辩论" count as selected `heterogeneous_cli_agents`. Plan two or more
-  external CLI agents through `agent-launch`. Prefer the locally configured
-  debate CLIs, and record any unavailable selected CLI as blocked instead of
-  silently falling back to current-session debate.
+- Discussion/debate signals select `heterogeneous_cli_agents`. Plan two or more
+  external CLI agents and spawn them through `cli-launch`. Prefer the locally
+  configured debate CLIs, and record any unavailable selected CLI as blocked
+  instead of silently falling back to current-session debate.
 - If no external CLI agents are selected, run the bounded debate in the current
   session or same runtime.
-- If one or more external CLI agents are selected, use `agent-launch` for the
-  concrete non-interactive startup plan.
 - Record each selected or attempted CLI in `DebateRecord.cli_participation`.
   Separate `proposal_generation` from `debate_execution`; include failed,
   blocked, or unavailable CLIs instead of dropping them from the visible output.
@@ -398,10 +517,13 @@ Use the user or parent workflow's selected topology:
 
 ## Phase Concurrency
 
+> Applies only on the explicit `cli-launch` path. In the default path you only
+> write the request file.
+
 When a phase has multiple selected CLIs whose outputs do not depend on each
-other, fan them out in parallel via `agent-launch.run_specs_parallel`.
-Parallel is the default for any independent phase; running independent CLIs
-serially is a deviation and must be justified in `DebateRecord`.
+other, fan them out in parallel via `cli-launch.run_specs_parallel`. Parallel is
+the default for any independent phase; running independent CLIs serially is a
+deviation and must be justified in `DebateRecord`.
 
 The rule that decides parallel vs serial is one line: each child's output
 must not read or depend on any other child's output within the same phase.
@@ -430,10 +552,10 @@ When fanning out, attach the per-call debate identifier through
 `ParallelSpec.caller_metadata` (for example `{"phase": "proposal_generation",
 "role": "proposer", "id": "P2"}`) so the returned `ParallelResult` can be
 correlated back to the frozen-candidate ID without leaking debate semantics
-into `agent-launch`. Results come back in input order, not completion order.
+into `cli-launch`. Results come back in input order, not completion order.
 
 Per-spec failures, timeouts, retries, and "is this enough surviving evidence
-to continue" decisions belong to this skill, not to `agent-launch`. The
+to continue" decisions belong to this skill, not to `cli-launch`. The
 parallel helper only guarantees mechanical fan-out (process group, SIGTERM
 then SIGKILL after a 10s grace period) and per-spec status (`completed`,
 `timed_out`, `error`). Translate those into `DebateRecord.cli_participation`
@@ -447,6 +569,11 @@ would make concurrent calls counterproductive. Record the reason in
 `DebateRecord` whenever the default fan-out is not used.
 
 ## Workflow
+
+> **Default path:** when a debate is requested, do steps 1–2 only as far as
+> needed to fill the request file, then write `~/.debate-router/requests/<id>.json`
+> (see `Execution Path`) and stop. The full workflow below runs only on the
+> explicit `cli-launch` path (or a downstream processor).
 
 1. Classify the final output contract as `caller_format` or
    `default_debate_layout`. If the task is a document/wiki/diary/review/archive
@@ -463,13 +590,13 @@ would make concurrent calls counterproductive. Record the reason in
    If the trigger was a discussion/debate signal, use the selected external CLI
    agents as proposers before normalization.
    When two or more external CLI proposers are selected, fan them out in
-   parallel via `agent-launch.run_specs_parallel`. See `Phase Concurrency`.
+   parallel via `cli-launch.run_specs_parallel`. See `Phase Concurrency`.
 5. For the other entry cases, freeze the user-provided proposal, candidates, or
    judgments before critique.
 6. Run one independent critique round. If the trigger was a discussion/debate
    signal, run this round through the selected external CLI agents. When two
    or more external critics are selected, fan them out in parallel via
-   `agent-launch.run_specs_parallel`. See `Phase Concurrency`.
+   `cli-launch.run_specs_parallel`. See `Phase Concurrency`.
 7. Run one cross-review round. This round must remain serial across critics —
    each cross-reviewer reads the completed independent critique findings
    before producing their cross-review.
@@ -530,9 +657,9 @@ would make concurrent calls counterproductive. Record the reason in
   candidates.
 - Letting critics edit the candidates they are critiquing.
 - Using model votes, confidence, or consensus as the arbiter's evidence.
-- Calling `agent-launch` to decide whether CLI agents should be used.
+- Calling `cli-launch` to decide whether CLI agents should be used.
 - Running independent CLI proposers or independent critics serially when
-  `agent-launch.run_specs_parallel` could fan them out — parallel is the
+  `cli-launch.run_specs_parallel` could fan them out — parallel is the
   default for any phase that does not read prior child output.
 - Fanning out `cross_review`, `arbitration`, `proposal_normalization`, final
   rendering, or any shared-state mutation through `run_specs_parallel` —
