@@ -119,7 +119,10 @@ test("processes a new request: writes a matching response", async () => {
   const resp = JSON.parse(readFileSync(respPath, "utf8"));
   assert.equal(resp.request_id, "20260531-e2e");
   assert.equal(resp.status, "completed");
-  assert.equal(resp.answer_markdown, "ANSWER");
+  assert.match(resp.answer_markdown, /ANSWER/);
+  // runner-built process summary (Trace) from the actual launches
+  assert.match(resp.answer_markdown, /## Trace/);
+  assert.ok(Array.isArray(resp.cli_participation) && resp.cli_participation.length >= 1);
   // request was claimed out of the inbox
   assert.ok(!existsSync(join(mb.requestsDir, "20260531-e2e.json")));
   // the worker ran read-only

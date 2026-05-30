@@ -77,6 +77,20 @@ test("multi-phase debate: brain → proposers → critic → final, with feedbac
   assert.equal(res.steps, 2);
   assert.match(res.answer_markdown, /FINAL: output-of-C1/);
 
+  // debate-skill output layout: brain sections + runner-built Archive + Trace
+  assert.match(res.answer_markdown, /## Archive/);
+  assert.match(res.answer_markdown, /## Trace/);
+  assert.match(res.answer_markdown, /\| 1 \| proposal_generation \| P1 \| codex \| completed \|/);
+  // structured ground-truth process record
+  assert.deepEqual(
+    res.cli_participation.map((r) => `${r.step}:${r.phase}:${r.worker}:${r.provider}:${r.status}`),
+    [
+      "1:proposal_generation:P1:codex:completed",
+      "1:proposal_generation:P2:claude:completed",
+      "2:critique:C1:claude:completed",
+    ],
+  );
+
   // phase 0: 2 proposers, providers preserved, capability FORCED read-only
   const p0 = workers.calls[0]!;
   assert.deepEqual(

@@ -47,9 +47,13 @@ To run the next phase (independent read-only CLI workers, fanned out in parallel
 {"kind":"run","phase":"proposal_generation|critique|cross_review|arbitration|other",
  "launches":[{"id":"P1","provider":"claude|codex","prompt":"<full prompt for this worker>"}]}
 
-When the debate is done:
+When the debate is done — answer_markdown is the human-first debate layout
+(## Decision / ## Rationale / ## Dissent / ## Open Questions / optional
+## Next Step). Do NOT include a Trace; the runner appends a faithful Trace +
+Archive from the actual execution. If the caller required a specific output
+format, use that instead.
 {"kind":"final","status":"completed|degraded|blocked","status_reason":"",
- "answer_markdown":"<final answer, in the caller's required output format if any>"}
+ "answer_markdown":"## Decision\\n…\\n## Rationale\\n…\\n## Dissent\\n…\\n## Open Questions\\n…"}
 
 Rules:
 - Each launch is an independent, read-only worker; write the complete prompt it needs.

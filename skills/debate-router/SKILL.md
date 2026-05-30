@@ -429,10 +429,16 @@ Response file `~/.debate-router/responses/<id>.json`:
   "request_id": "<same id>",
   "status": "completed|degraded|blocked|error",
   "status_reason": "",
-  "answer_markdown": "<the final answer to show the user>",
-  "archive_path": "<optional path to the full DebateRecord>"
+  "answer_markdown": "<the debate-skill layout: Decision / Rationale / Dissent / Open Questions / (Next Step) / Archive / Trace>",
+  "cli_participation": [{ "step": 1, "phase": "proposal_generation", "worker": "P1", "provider": "codex", "status": "completed" }],
+  "steps": 3
 }
 ```
+
+`answer_markdown` already carries the full human-first layout including a faithful
+`Trace` of which CLIs ran in which phase (the daemon builds the Trace from what
+it actually executed, not the brain's recollection). Present it as-is; re-render
+in the caller's required format only if the original task demanded one.
 
 **If no response appears within your wait window**, tell the user the `<id>`,
 the request path, and the expected response path, and that you will present the
@@ -470,9 +476,12 @@ arbitration, degrade/reopen) to decide the next step from the state, and output
 {"kind":"run","phase":"proposal_generation|critique|cross_review|arbitration|other",
  "launches":[{"id":"P1","provider":"claude|codex","prompt":"<full prompt for this worker>"}]}
 
-// or finish:
+// or finish — answer_markdown is the human-first debate layout (## Decision /
+// ## Rationale / ## Dissent / ## Open Questions / optional ## Next Step), in the
+// caller's required format if one was given. Do NOT include a Trace: the daemon
+// appends a faithful ## Archive + ## Trace from the actual launches it ran.
 {"kind":"final","status":"completed|degraded|blocked","status_reason":"",
- "answer_markdown":"<final answer, in the caller's required format if any>"}
+ "answer_markdown":"## Decision\n…\n## Rationale\n…\n## Dissent\n…\n## Open Questions\n…"}
 ```
 
 Rules in this mode:

@@ -26,6 +26,14 @@ export interface DebateDeps {
   maxSteps?: number;
 }
 
+export interface TraceRow {
+  step: number;
+  phase: string;
+  worker: string;
+  provider: string;
+  status: string;
+}
+
 export interface DebateResponse {
   schema_version: number;
   request_id: string;
@@ -33,6 +41,7 @@ export interface DebateResponse {
   status_reason: string;
   answer_markdown: string;
   debate_record?: unknown;
+  cli_participation: TraceRow[]; // ground-truth process record (every launch)
   steps: number;
   finished_at: string;
 }
@@ -67,14 +76,49 @@ function readOutput(result: BatchItemResult): string {
   return "";
 }
 
-function finalResponse(req: DebateRequest, status: string, reason: string, answer: string, steps: number, record?: unknown): DebateResponse {
+/** Build the faithful Trace (and structured cli_participation) from what the
+ * daemon actually ran — ground truth, not the brain's recollection. */
+function buildTrace(history: DebateState["history"]): { markdown: string; rows: TraceRow[] } {
+  const rows: TraceRow[] = [];
+  history.forEach((h, i) => {
+    for (const r of h.results) rows.push({ step: i + 1, phase: h.phase, worker: r.id, provider: r.provider, status: r.status });
+  });
+  if (rows.length === 0) return { markdown: "", rows };
+  const md = [
+    "## Trace",
+    "",
+    "| Step | Phase | Worker | Provider | Status |",
+    "| --- | --- | --- | --- | --- |",
+    ...rows.map((r) => `| ${r.step} | ${r.phase} | ${r.worker} | ${r.provider} | ${r.status} |`),
+  ].join("\n");
+  return { markdown: md, rows };
+}
+
+/** Assemble the debate-skill output layout: the brain's human-first sections,
+ * then a runner-built Archive + Trace summarizing the actual process. */
+function buildResponse(
+  req: DebateRequest,
+  status: string,
+  reason: string,
+  answer: string,
+  steps: number,
+  history: DebateState["history"],
+  record?: unknown,
+): DebateResponse {
+  const { markdown: traceMd, rows } = buildTrace(history);
+  const archive = `## Archive\n- Per-step worker audit under \`~/.agent-runner/\` (run ids \`${req.id}-s<step>-<worker>\`).`;
+  const parts: string[] = [];
+  if (answer.trim()) parts.push(answer.trim());
+  parts.push(archive);
+  if (traceMd) parts.push(traceMd);
   return {
     schema_version: RESULT_SCHEMA_VERSION,
     request_id: req.id,
     status,
     status_reason: reason,
-    answer_markdown: answer,
+    answer_markdown: parts.join("\n\n"),
     debate_record: record,
+    cli_participation: rows,
     steps,
     finished_at: new Date().toISOString(),
   };
@@ -98,11 +142,11 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
     try {
       decision = await deps.brain(state);
     } catch (err) {
-      return finalResponse(req, "error", `brain failed at step ${step}: ${String(err)}`, "", step);
+      return buildResponse(req, "error", `brain failed at step ${step}: ${String(err)}`, "", step, state.history);
     }
 
     if (decision.kind === "final") {
-      return finalResponse(req, decision.status, decision.status_reason ?? "", decision.answer_markdown, step, decision.debate_record);
+      return buildResponse(req, decision.status, decision.status_reason ?? "", decision.answer_markdown, step, state.history, decision.debate_record);
     }
 
     const phase = validPhase(decision.phase);
@@ -134,7 +178,7 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
     try {
       results = await runItems(items, allow, deps.baseEnv, allow.maxParallel);
     } catch (err) {
-      return finalResponse(req, "error", `execution failed at step ${step}: ${String(err)}`, "", step);
+      return buildResponse(req, "error", `execution failed at step ${step}: ${String(err)}`, "", step, state.history);
     }
 
     const phaseResults: PhaseResult[] = results.map((r, i) => ({
@@ -146,5 +190,5 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
     state.history.push({ phase: decision.phase, results: phaseResults });
   }
 
-  return finalResponse(req, "degraded", `debate did not finish within ${maxSteps} steps`, "", maxSteps);
+  return buildResponse(req, "degraded", `debate did not finish within ${maxSteps} steps`, "", maxSteps, state.history);
 }

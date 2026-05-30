@@ -284,6 +284,22 @@ and workers — is read-only, so this is safe even with a sandbox enabled.
 The response is always written (brain/exec failures and the step cap become
 `status: error|degraded`), so the in-session side never hangs.
 
+### Response format (matches the debate skill)
+
+`responses/<id>.json` carries `request_id`, `status`, `status_reason`, `steps`,
+and:
+
+- `answer_markdown` — the debate-skill **human-first layout**: the brain's
+  `## Decision` / `## Rationale` / `## Dissent` / `## Open Questions` (/ optional
+  `## Next Step`), followed by a runner-built `## Archive` and `## Trace`.
+- `cli_participation` — the structured **ground-truth** process record (one row
+  per launch: `step`, `phase`, `worker`, `provider`, `status`).
+
+The `Trace` is built by the daemon from what it actually ran — not the brain's
+recollection — so the process summary is faithful (provider per worker, per-phase
+status, rejected/degraded launches included). `debate-router` presents
+`answer_markdown` as-is.
+
 ## Security model
 
 1. **Static argv.** The runner builds the child command itself from a fixed

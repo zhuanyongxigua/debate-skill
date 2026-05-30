@@ -43,6 +43,7 @@ function errorResponse(id: string, message: string): DebateResponse {
     status: "error",
     status_reason: message,
     answer_markdown: "",
+    cli_participation: [],
     steps: 0,
     finished_at: new Date().toISOString(),
   };
