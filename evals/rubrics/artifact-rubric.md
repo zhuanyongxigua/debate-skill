@@ -119,4 +119,4 @@ instead of requiring the default human-first sections.
 - External CLI selected but no `AgentLaunchPlan`.
 - External CLI proposal generation is marked `failed/no_output` before the
   configured timeout without a concrete blocker.
-- `agent-launch` used as a reasoning method rather than a launch helper.
+- `cli-launch` used as a reasoning method rather than a launch helper.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Eval runner for debate-router and agent-launch routing evals.
+Eval runner for debate-router and cli-launch routing evals.
 Runs each task against each condition and saves raw results.
 
 Usage:

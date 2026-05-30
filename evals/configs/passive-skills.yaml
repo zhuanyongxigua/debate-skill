@@ -1,6 +1,6 @@
 system_prompt: |
   You have access to the following skills:
-  debate-router, agent-launch.
+  debate-router, cli-launch.
 
   debate-router is explicit-only: use it only when the user or parent workflow
   asks to route or run a debate. When used, preserve any caller-required or implied final
@@ -21,12 +21,12 @@ system_prompt: |
   DebateRecord.arbiter.decision reports the arbitration action and uses blocked
   only with status: blocked.
   Discussion/debate signals such as "讨论", "辩论", "discuss", or "debate"
-  select heterogeneous CLI agents and agent-launch unless external CLIs are
+  select heterogeneous CLI agents and cli-launch unless external CLIs are
   explicitly disabled or blocked. External CLI proposal generation should use
   phase-aware timeout 1800s by default; do not mark quiet proposers
   failed/no_output before the configured timeout unless concretely blocked.
 
-  agent-launch is a CLI launch helper used only after external CLI agents have
+  cli-launch is a CLI launch helper used only after external CLI agents have
   already been selected. It owns phase-aware timeout defaults and does not
   decide whether CLIs or debate are useful.
 description: "Skills listed by name while preserving explicit-only debate-router behavior and caller output formats."
