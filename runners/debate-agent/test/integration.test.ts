@@ -8,8 +8,8 @@
 // skipped unless DEBATE_AGENT_CODEX_RULES_TEST=1 and codex is on PATH.
 
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { accessSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
 
@@ -70,6 +70,15 @@ function cliEnv(ctx: Ctx, extra: Record<string, string> = {}): NodeJS.ProcessEnv
 
 function runCli(ctx: Ctx, args: string[], env = cliEnv(ctx)) {
   return spawnSync(process.execPath, [BIN, ...args], { encoding: "utf8", env });
+}
+
+/** Poll `pred` until true or the deadline; for driving the async watch daemon. */
+async function waitFor(pred: () => boolean, timeoutMs: number, what: string): Promise<void> {
+  const start = Date.now();
+  while (!pred()) {
+    if (Date.now() - start > timeoutMs) throw new Error(`waitFor timed out: ${what}`);
+    await new Promise((r) => setTimeout(r, 100));
+  }
 }
 
 test("run success writes audit and transports prompt", () => {
@@ -273,6 +282,75 @@ test("run-batch executes items in parallel and returns ordered results", () => {
     assert.equal(result.items[1].status, "completed");
     assert.equal(result.items[2].status, "rejected");
   } finally {
+    cleanup(ctx.root);
+  }
+});
+
+test("watch daemon: real bin subprocess runs a run_batch_request end-to-end", async () => {
+  const ctx = setup();
+  // worker stub records the argv it was launched with and returns text on stdout.
+  const argsFile = join(ctx.root, "worker_args");
+  makeStub(
+    ctx.binDir,
+    "claude",
+    "#!/usr/bin/env bash\n" + `echo "$@" >> ${JSON.stringify(argsFile)}\n` + "cat >/dev/null\n" + "printf 'BATCH-PROPOSAL\\n'\n",
+  );
+  const mailbox = join(ctx.root, "mailbox");
+  const env = cliEnv(ctx, { DEBATE_AGENT_MAILBOX: mailbox });
+  let daemon: ReturnType<typeof spawn> | undefined;
+  try {
+    // Start the REAL daemon as its own process group (so we can kill the tree).
+    let stderr = "";
+    daemon = spawn(process.execPath, [BIN, "--config", ctx.cfg, "watch"], { env, detached: true });
+    daemon.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
+    daemon.on("error", (e) => (stderr += `spawn error: ${String(e)}`));
+    // The daemon snapshots+ignores existing requests at startup, so submit only
+    // AFTER it is polling (the banner is printed once it is up).
+    await waitFor(() => stderr.includes("polling every"), 8000, `daemon banner (stderr so far: ${stderr})`);
+
+    const id = "20260531-itest-batch";
+    writeFileSync(
+      join(mailbox, "requests", `${id}.json`),
+      JSON.stringify({
+        schema_version: 1,
+        id,
+        kind: "run_batch_request",
+        repo: realpathSync(ctx.repo),
+        items: [{ item_id: "P1", provider: "claude", prompt: "propose", phase: "proposal_generation" }],
+      }),
+    );
+
+    const respPath = join(mailbox, "responses", `${id}.json`);
+    await waitFor(() => existsSync(respPath), 12000, `response ${id}.json (stderr: ${stderr})`);
+
+    const resp = JSON.parse(readFileSync(respPath, "utf8"));
+    assert.equal(resp.kind, "run_batch_result");
+    assert.equal(resp.status, "completed", JSON.stringify(resp));
+    assert.equal(resp.items.length, 1);
+    assert.equal(resp.items[0].item_id, "P1");
+    assert.equal(resp.items[0].status, "completed");
+    assert.match(resp.items[0].output, /BATCH-PROPOSAL/); // worker stdout embedded for the skill
+
+    // the read-only argv reached the spawned worker; the prompt went on stdin
+    const workerArgs = readFileSync(argsFile, "utf8");
+    assert.match(workerArgs, /--permission-mode default/);
+    assert.match(workerArgs, /--disallowedTools/);
+    assert.ok(!workerArgs.includes("propose"), "prompt must go on stdin, not argv");
+
+    // the daemon cleared its in-flight marker
+    assert.ok(!existsSync(join(mailbox, "processing", `${id}.json`)), "processing entry cleared");
+  } finally {
+    if (daemon?.pid !== undefined) {
+      try {
+        process.kill(-daemon.pid, "SIGKILL");
+      } catch {
+        try {
+          daemon.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+    }
     cleanup(ctx.root);
   }
 });

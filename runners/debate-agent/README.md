@@ -66,12 +66,13 @@ by `run_id` from its `DebateRecord.cli_participation` rows.
 debate-agent [--config <allowlist.json>] run       --request <request.json>
 debate-agent [--config <allowlist.json>] run-batch  --request <batch.json>
 debate-agent [--config <allowlist.json>] validate   --request <request.json>
-debate-agent [--config <allowlist.json>] watch      [--brain claude|codex]
+debate-agent [--config <allowlist.json>] watch
 debate-agent print-rules [--path <installed-path>]
 ```
 
 `run` / `run-batch` are the low-level executors. `watch` is the **mailbox
-daemon** that processes whole debates — see [watch](#watch-the-debate-daemon).
+daemon** that executes read-only worker batches on behalf of a sandboxed
+`debate-router` — see [watch](#watch-the-execution-daemon).
 
 `run` prints a single **result JSON** object to stdout and exits non-zero if the
 request was rejected or the child failed. `run-batch` runs N requests in parallel
@@ -255,15 +256,18 @@ Exit code is `0` only when every item completed; `degraded` / `rejected` exit
 status. Provider allocation is the **caller's** job: the runner has no
 `provider: auto` and never rebalances.
 
-## watch (the debate daemon)
+## watch (the execution daemon)
 
-`watch` runs the whole debate out of the sandbox so the in-session `debate-router`
-never has to spawn a CLI. It is the human's out-of-sandbox processor for the file
-mailbox under `~/.debate-router/` (override with `$DEBATE_AGENT_MAILBOX`):
+`watch` is the out-of-sandbox **executor** for the file mailbox under
+`~/.debate-router/` (override with `$DEBATE_AGENT_MAILBOX`). It does **not** run a
+debate or own any debate semantics: the `debate-router` skill plans the whole
+debate in its own (sandboxed) context and sends the daemon one **batch of
+read-only worker launches per phase**; the daemon just runs them and returns each
+worker's output.
 
 ```
 ~/.debate-router/
-  requests/    debate-router writes <id>.json here
+  requests/    debate-router writes <id>.json (a run_batch_request) here
   processing/  daemon claims a request by atomic rename
   responses/   daemon writes <id>.json result + <id>.log progress here
 ```
@@ -272,66 +276,93 @@ On start it **recovers any orphaned `processing/` entries** (a request claimed
 before a previous crash/restart gets an `error` response so the caller stops
 waiting), then **snapshots existing requests and ignores them** (submit after the
 daemon is up). It then polls `requests/`, and for each NEW request: claims it
-(atomic rename), runs the debate, and atomically writes `responses/<id>.json`.
-One debate at a time.
+(atomic rename), runs the batch, and atomically writes `responses/<id>.json`.
+One batch at a time.
 
 The allowlist is **re-read for each new request**, so config edits (e.g. adding a
-`repo_root`) apply to the next debate without restarting the daemon. A
+`repo_root`) apply to the next batch without restarting the daemon. A
 malformed/half-saved edit is ignored — the last-good config stays in effect and a
 warning is logged — so an in-progress edit never breaks processing.
 
 Alongside each response the daemon streams a **live progress log** to
-`responses/<id>.log` (timestamped: claim, each step's phase + worker launches,
-each worker's status + audit path, final status). It is created at claim time, so
-another agent can `tail -f responses/<id>.log` to watch a debate in flight. The
-**response** is `<id>.json` — pollers wait for that, not the `.log`.
+`responses/<id>.log` (timestamped: each queued launch, each worker's status +
+audit path, final status). It is created at claim time, so another agent can
+`tail -f responses/<id>.log` to watch a batch in flight. The **response** is
+`<id>.json` — pollers wait for that, not the `.log`.
 
-### How a debate runs: the read-only step loop
+### The request: a batch of read-only worker launches
 
 Crucially, **no agent ever spawns another agent** — only the daemon (code)
-spawns, and every CLI it spawns is **read-only**:
+spawns, and every worker it spawns is **read-only**. The skill drives it with a
+`run_batch_request`:
 
-1. The daemon calls the **brain** — `debate-router` in read-only plan/step mode
-   (default `claude`, or `--brain codex`) — with the current debate state.
-2. The brain returns the single next action as JSON: either a set of read-only
-   worker launches (`{"kind":"run", phase, launches:[...]}`) or the final answer
-   (`{"kind":"final", status, answer_markdown}`).
-3. For a `run`, the daemon builds a request per launch with **capability forced
-   to `read_only_review` in code**, validates each against the allowlist, and
-   runs them via `run-batch` (read-only workers).
-4. It feeds the workers' outputs back into the state and calls the brain again,
-   until the brain returns `final` (or a step cap → `degraded`).
+```json
+{
+  "schema_version": 1,
+  "id": "20260531-120000-auth-debate",
+  "kind": "run_batch_request",
+  "repo": "/Users/you/Code/app",
+  "fast": false,
+  "items": [
+    { "item_id": "P1", "provider": "codex",  "prompt": "<full worker prompt>", "phase": "proposal_generation" },
+    { "item_id": "P2", "provider": "claude", "prompt": "<full worker prompt>", "phase": "proposal_generation" }
+  ]
+}
+```
 
-So the debate protocol stays authored in the `debate-router` skill (the brain
-applies it); the daemon is a pure executor. The brain authors each worker's
-prompt and allocates providers; the workers just answer. Every launch — brain
-and workers — is read-only, so this is safe even with a sandbox enabled.
+| Field | Type | Validation |
+| --- | --- | --- |
+| `id` | string | safe slug; the response/log are named `<id>.json` / `<id>.log` |
+| `repo` | string | absolute; `realpath` must resolve under an allowed repo root (shared by all items) |
+| `fast` | bool | default `false`; when `true` every worker launches in turbo mode |
+| `max_parallel` | int | optional; capped by `allowlist.max_parallel` |
+| `items[].item_id` | string | safe slug, unique within the batch |
+| `items[].provider` | string | in the provider allowlist |
+| `items[].prompt` | string | non-empty, ≤ `max_prompt_chars`; transported on stdin |
+| `items[].phase` | string | optional audit label (one of the valid phases); sets a default timeout |
+| `items[].timeout_seconds` | int | optional; positive integer ≤ `86400` |
 
-The debate request may carry `language` (the human's primary language — the
-brain writes every worker prompt and the final answer in it) and `fast` (turbo
-mode). When `fast` is true the brain runs a leaner debate **and** every CLI it
-spawns — the brain and all workers — launches in turbo mode (codex
-`service_tier`/`fast_mode`, claude `--settings fastMode`; copilot exempt). All via
-per-invocation flags; no global config is touched.
+For each item the daemon builds a worker request with **capability forced to
+`read_only_review` in code** (the skill cannot ask a worker to write), validates
+it against the allowlist, and runs them all via the `run-batch` machinery
+(parallel, capped). The skill plans the debate and allocates providers; the
+daemon owns execution only — no brain, no step loop, no debate state here. Every
+worker is read-only, so this is safe even with a sandbox enabled.
 
-The response is always written (brain/exec failures and the step cap become
-`status: error|degraded`), so the in-session side never hangs.
+When `fast` is true every worker launches in turbo mode (codex
+`service_tier`/`fast_mode`, claude `--settings fastMode`; copilot exempt), via
+per-invocation flags; no global config is touched. Whether the *debate* itself is
+leaner under `fast` is the skill's decision, not the daemon's.
 
-### Response format (matches the debate skill)
+### Response format
 
-`responses/<id>.json` carries `request_id`, `status`, `status_reason`, `steps`,
-and:
+`responses/<id>.json` is a `run_batch_result`: each item carries the worker's
+**stdout embedded inline** (`output`) so the sandboxed skill reads the whole
+result from the mailbox alone — it never needs access to the execution audit
+under `~/.debate-agent/`.
 
-- `answer_markdown` — the debate-skill **human-first layout**: the brain's
-  `## Decision` / `## Rationale` / `## Dissent` / `## Open Questions` (/ optional
-  `## Next Step`), followed by a runner-built `## Archive` and `## Trace`.
-- `cli_participation` — the structured **ground-truth** process record (one row
-  per launch: `step`, `phase`, `worker`, `provider`, `status`).
+```json
+{
+  "schema_version": 1,
+  "request_id": "20260531-120000-auth-debate",
+  "kind": "run_batch_result",
+  "status": "completed",
+  "status_reason": "",
+  "items": [
+    { "item_id": "P1", "provider": "codex",  "status": "completed", "output": "<worker stdout>",
+      "elapsed_seconds": 41.2, "audit_path": "/Users/you/.debate-agent/<id>-P1/exec-....yaml" },
+    { "item_id": "P2", "provider": "claude", "status": "completed", "output": "<worker stdout>" }
+  ],
+  "finished_at": "2026-05-31T12:00:41Z"
+}
+```
 
-The `Trace` is built by the daemon from what it actually ran — not the brain's
-recollection — so the process summary is faithful (provider per worker, per-phase
-status, rejected/degraded launches included). `debate-router` presents
-`answer_markdown` as-is.
+`status` is `completed` when every item completed, otherwise `degraded`
+(one bad item never fails the whole batch); a request that cannot even be
+validated becomes `status: error`. The response is always written, so the
+in-session side never hangs. `debate-router` reads the per-item `output`,
+composes the debate (normalization, critique, cross-review, arbitration) in its
+own context, and builds the final `DebateRecord` / `Trace` itself.
 
 ## Security model
 
@@ -462,12 +493,12 @@ only if you explicitly want automated children to be able to edit repos.
 
 ## How debate-router reaches this runner (file mailbox)
 
-`debate-router` does **not** invoke this runner directly. By default it writes a
-request file to `~/.debate-router/requests/<id>.json` and keeps watching
-`~/.debate-router/responses/` until the matching result appears. This runner is
-the human's out-of-sandbox processor for that mailbox (the `watch` daemon is the
-next piece to build; today the human runs `run` / `run-batch` and writes the
-response).
+`debate-router` does **not** invoke this runner directly. While it plans the
+debate, it writes one `run_batch_request` per phase to
+`~/.debate-router/requests/<id>.json` and watches `~/.debate-router/responses/`
+until each matching `<id>.json` result appears, reads the embedded worker
+outputs, and composes the next phase. The `watch` daemon is the out-of-sandbox
+executor for that mailbox.
 
 If the parent session is interrupted before a response appears, `debate-router`
 does not fabricate one: it reports the request id and the expected response path
@@ -488,7 +519,10 @@ runners/debate-agent/
     launch.ts               # static provider->argv mapping + env allowlist
     audit.ts                # execution audit writer (~/.debate-agent/<run-id>/)
     runner.ts               # validate -> build -> exec (process group) -> audit -> result; run-batch
-    cli.ts                  # run | run-batch | validate | print-rules
+    mailbox.ts              # file mailbox + run_batch_request validation
+    mailbox-batch.ts        # run a run_batch_request -> embedded-output response
+    watch.ts                # the watch daemon (claim/run/respond, per-request reload, orphan recovery)
+    cli.ts                  # run | run-batch | validate | watch | print-rules
   config/
     allowlist.example.json  # repo/mode/provider/profile/capability + batch limits
   rules/
@@ -500,6 +534,8 @@ runners/debate-agent/
     schema.test.ts  allowlist.test.ts  launch.test.ts  audit.test.ts
     runner.test.ts          # in-process launch via a stub binary
     batch.test.ts           # run-batch envelope + parallel execution
+    watch.test.ts           # mailbox primitives + request->response via injected workers
+    watch-e2e.test.ts       # daemon batch execution with REAL worker subprocess spawns
     integration.test.ts     # real bin/ subprocess, install, signals, run-batch
   dist/                     # compiled output (gitignored)
 ```
@@ -528,6 +564,10 @@ CLI on PATH:
 
 - `run` success / rejection, `validate`, and all config-resolution paths;
 - **child env** dump proving no secret reaches the child;
+- the **`watch` daemon end-to-end**: start the real `bin/debate-agent watch`
+  subprocess against a scratch mailbox, drop a `run_batch_request`, and assert the
+  `run_batch_result` (embedded worker output, read-only argv on the spawned child,
+  cleared `processing/` entry);
 - **timeout + process-group kill**: a stub backgrounds a grandchild whose marker
   file never appears, proving the whole group is signalled;
 - `install.sh` frozen vs `--symlink`, then invoking the installed launcher —

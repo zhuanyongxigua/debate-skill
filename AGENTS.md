@@ -26,10 +26,13 @@ plus one optional execution adapter:
    may own allowlists, realpath cwd, static argv, env hygiene, timeout,
    process-group kill, capability/sandbox posture, parallel fan-out, and audit.
    It must **not** know about debate modes, candidate freezing, roles,
-   `DebateRecord`, arbitration, or provider allocation. Those live in
-   `debate-router`. Do not add a `proposal_attack` / `multi_path` /
-   `provider: auto` API to the runner; add generic primitives (`run`,
-   `run-batch`) and let the caller compose them.
+   `DebateRecord`, arbitration, provider allocation, or how a debate decomposes
+   into phases. Those live in `debate-router`, which **plans the whole debate in
+   its own context** and drives the runner one read-only worker batch per phase.
+   Do not add a `proposal_attack` / `multi_path` / `provider: auto` API or a
+   planning/step "brain" to the runner; add generic primitives (`run`,
+   `run-batch`, and the `run_batch_request` mailbox form) and let the caller
+   compose them.
 3. **The runner is closed by default and fails closed.** No `repo_roots` ⇒ every
    request rejected. Malformed config raises at startup; the daemon's per-request
    allowlist reload instead keeps the last-good config and warns — neither path
@@ -57,29 +60,30 @@ plus one optional execution adapter:
   env, argv, allowlist, audit) need a regression test that fails without the fix.
 - Do not commit `dist/` or `node_modules/`.
 
-### Testing the debate daemon (the `watch` step loop)
+### Testing the watch daemon (the execution mailbox)
 
 The execution core (`run` / `run-batch`) is tested with **stub CLI binaries**
 (a fake `claude`/`codex` that echoes argv/stdin) — keep that.
 
-The **daemon** (`watch`: read `~/.debate-router/requests/`, run the debate, write
-`responses/`) is tested by **mocking the LLM at the brain/worker seam**, in the
-spirit of `~/Documents/Code/codex` (`codex-rs/core/tests/common/responses.rs`) —
-script the responses, drive the loop end-to-end, assert on both the prompts sent
-and the response written:
-- `test/debate.test.ts` — the step loop with an **injected scripted brain**
-  (`BrainFn`) and **stubbed workers** (`DebateDeps.runItems`): asserts multi-phase
-  flow + feedback, capability forced read-only, provider passthrough, degraded on
-  step cap, error on brain failure.
-- `test/brain.test.ts` — the brain's JSON step-decision parser.
-- `test/watch.test.ts` — mailbox primitives (validate / claim / snapshot / atomic
-  write) + `processNewRequests` end-to-end via injected `makeDeps`.
+The **daemon** (`watch`: read `~/.debate-router/requests/`, run a batch of
+read-only worker launches, write `responses/`) owns execution only — there is no
+brain, step loop, or debate state in the runner. It is tested by **injecting the
+worker executor** so the loop runs end-to-end without real CLIs:
+- `test/watch.test.ts` — mailbox primitives (validate `run_batch_request` / claim
+  / snapshot / atomic write) + `processNewRequests` end-to-end via an injected
+  `runItems` stub: asserts embedded worker output, capability forced read-only,
+  provider passthrough, per-item degrade (one bad item never fails the batch),
+  orphan recovery, per-request allowlist reload, and the id-mismatch error.
+- `test/watch-e2e.test.ts` — the same path with **REAL worker subprocess spawns**
+  (a bash stub CLI): asserts the embedded stdout, the claimed→cleared
+  `processing/` entry, the live `<id>.log`, and that the read-only argv reached
+  the child.
 
-Keep these deterministic seams: `runDebate(req, allow, deps)` takes an injectable
-`brain` and `runItems`; `processNewRequests(..., { makeDeps })` injects per-request
-deps. No real model calls, no login. When extending the protocol, add a scripted
-brain case that exercises the new behavior. (An HTTP/SDK mock — codex's `wiremock`
-analog — would only be needed if a future brain talks to an LLM over HTTP.)
+Keep these deterministic seams: `runMailboxBatch(req, allow, deps)` takes an
+injectable `runItems` (defaults to the real `runPreparedItems`) and `readOutput`;
+`processNewRequests(mb, ignore, allow, { runItems })` injects the worker executor.
+No real model calls, no login. The debate protocol itself is exercised in the
+`debate-router` skill, not here.
 
 ## Conventions
 
