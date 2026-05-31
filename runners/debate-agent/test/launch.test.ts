@@ -135,13 +135,16 @@ test("xhigh thinking is the default for claude and codex", () => {
   assert.ok(x.argv.some((a) => a === 'model_reasoning_effort="xhigh"'));
 });
 
-test("fast mode adds per-invocation flags (claude --settings, codex service_tier)", () => {
-  const c = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {}, fast: true });
-  assert.ok(c.argv.includes("--settings"));
-  assert.ok(c.argv.includes('{"fastMode":true}'));
+test("fast mode applies to codex ONLY (claude is exempt — needs an API token)", () => {
+  // codex honors fast via per-invocation -c overrides
   const x = buildChildLaunch({ provider: "codex", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {}, fast: true });
   assert.ok(x.argv.includes('service_tier="fast"'));
   assert.ok(x.argv.includes("features.fast_mode=true"));
+  // claude is fast-exempt: even with fast=true it gets NO fast flag (its fast mode
+  // needs an API token, which the runner strips — it runs on the logged-in account)
+  const c = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {}, fast: true });
+  assert.ok(!c.argv.includes("--settings"));
+  assert.ok(!c.argv.some((a) => a.includes("fastMode")));
 });
 
 test("no fast flags when fast is false / omitted", () => {

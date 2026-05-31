@@ -419,7 +419,8 @@ Pick a unique `<id>` (`YYYYMMDD-HHMMSS-slug`).
 - `language`: the language the human is using; the debate answers in it. Omit if
   unsure.
 - `fast`: set `true` on urgency signals ("快一点", "尽快", "hurry", "fast"); it
-  runs a leaner debate and launches every CLI in turbo mode.
+  runs a leaner debate and launches **codex** CLIs in turbo mode (claude/copilot
+  are exempt — claude's fast mode needs an API token the runner does not provide).
 
 **Step 2 — Watch for the response.** Poll `~/.debate-router/responses/` for
 **`<id>.json`** (a human may instead drop a plain `<id>.md`). The companion

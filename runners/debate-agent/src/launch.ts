@@ -100,16 +100,19 @@ export function buildChildEnv(
 // deterministic, far stronger than relying on "won't edit non-interactively".
 const CLAUDE_WRITE_TOOLS = "Edit Write MultiEdit NotebookEdit Bash";
 
-function buildClaudeArgv(capability: string, fast: boolean): string[] {
+function buildClaudeArgv(capability: string): string[] {
   // Mirrors cli-launch Claude Code defaults: print mode, prompt via stdin,
   // xhigh thinking. Claude profiles are unsupported (caller fails closed before
   // reaching here). read_only_review additionally hard-denies edit/write/shell
   // tools; workspace_write auto-accepts edits.
+  //
+  // Claude is EXEMPT from fast/turbo mode (like copilot): Claude's fast mode
+  // needs an API token, but the runner strips API keys and runs the child on the
+  // default logged-in account config, so a fast flag could not take effect. Only
+  // codex honors `fast`.
   const permissionMode = capability === "workspace_write" ? "acceptEdits" : "default";
   const argv = ["claude", "--print", "--permission-mode", permissionMode, "--effort", "xhigh"];
   if (capability !== "workspace_write") argv.push("--disallowedTools", CLAUDE_WRITE_TOOLS);
-  // Fast/turbo mode via a per-invocation settings override (no global config change).
-  if (fast) argv.push("--settings", '{"fastMode":true}');
   return argv;
 }
 
@@ -175,7 +178,7 @@ export function buildChildLaunch(args: {
     if (profile !== null) {
       throw new Error("claude profile is not supported by this runner");
     }
-    argv = buildClaudeArgv(capability, fast);
+    argv = buildClaudeArgv(capability); // claude is fast-exempt (needs an API token)
     promptTransport = "stdin";
   } else if (provider === "codex") {
     argv = buildCodexArgv(cwd, profile, capability, fast);
