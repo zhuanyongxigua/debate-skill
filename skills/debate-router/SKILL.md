@@ -22,24 +22,31 @@ expensive. If the debate cannot run, record the concrete blocker in the
 `DebateRecord`.
 
 If the caller uses explicit discussion or debate signals such as "discuss",
-"debate", "argue about", "讨论", or "辩论", that selects a multi-CLI debate. By
-default you **plan and run the bounded debate yourself in this session**, but you
-do not spawn CLIs directly (the parent is sandboxed): you delegate each phase's
-worker launches to an out-of-sandbox daemon by writing a `run_batch_request` to
-`~/.debate-router/requests/`, reading the workers' outputs back, and composing
-the debate (normalization, critique, cross-review, arbitration) here. See
-`Execution Path`. Spawn the CLIs yourself in-session via `cli-launch` only when
-the human explicitly asks for the in-session CLI debate (a non-sandboxed parent).
+"debate", "argue about", "讨论", or "辩论", that selects a multi-CLI debate. This
+skill runs in one of **three modes** (see `Execution Path`):
+
+- **Mode 2 — emit a request file (DEFAULT).** You are sandboxed and cannot spawn
+  a CLI, so you only write ONE high-level `debate_request` to
+  `~/.debate-router/requests/`, watch for the response, and present it. The
+  out-of-sandbox `debate-agent` daemon does everything in between — it plans the
+  debate (calling you back in Mode 3) and executes it. You do not run the debate.
+- **Mode 3 — planner.** The daemon's planner step invokes you (read-only, out of
+  sandbox) to design the debate as a structured **plan**. You apply the debate
+  STRATEGY below; the daemon supplies the exact output format and validates it.
+- **Mode 1 — cli-launch in-session.** Only when the human explicitly asks to run
+  the debate via local CLIs in a non-sandboxed parent: you run the whole bounded
+  debate yourself, spawning CLIs through `cli-launch`.
 
 ## Required Output
 
 > **Scope.** This section and everything below about *running* the debate
 > (`DebateRoute` / `DebateRecord` / `DebateSummary`, proposal generation,
-> critique, arbitration) applies whenever you run the debate — which is **both**
-> execution paths: the **default** run-batch-over-the-mailbox path *and* the
-> explicit in-session `cli-launch` path. You produce the `DebateRecord` / `Trace`
-> in-session in both. The two paths differ only in how worker CLIs are launched
-> (a `run_batch_request` to the daemon vs a direct `cli-launch` spawn).
+> critique, arbitration) applies only when you actually **run** the debate
+> in-session — i.e. **Mode 1** (`cli-launch`). In **Mode 2** you only write the
+> request file and later *present* the daemon's `answer_markdown` (re-rendering to
+> a caller-required format here); you do not run the debate or produce a
+> `DebateRecord` / `Trace`. In **Mode 3** you output a structured plan in the
+> format the daemon gives you (no `DebateRecord`).
 
 Caller output format outranks the debate-router visible layout. This is a
 mandatory final-output gate, not a style preference.
@@ -378,31 +385,18 @@ Proposal state terms:
 
 ## Execution Path
 
-You run the bounded debate **yourself** (entry case, candidate freeze, critique,
-cross-review, arbitration, `DebateRecord`). The daemon only **executes worker
-CLIs** — it owns no debate semantics. How you launch those workers depends on the
-parent environment; everything else (Entry Cases, Debate Styles, Debate Rules,
-Phase Concurrency, Final Synthesis) is identical either way.
+This skill runs in three modes. **Default to Mode 2 (emit a request file).**
 
-- **Default — run-batch over the mailbox (sandboxed parent).** You cannot spawn a
-  CLI, but you can read/write files. Plan the debate, then launch each phase's
-  independent workers by writing a `run_batch_request`, polling for the response,
-  and reading the embedded outputs. Compose the rest here.
-- **Only on explicit request — `cli-launch` in-session (non-sandboxed parent).**
-  When the human explicitly asks to spawn the CLIs directly, run the same debate
-  but launch workers through `cli-launch` instead of the mailbox.
+### Mode 2 (default): emit a debate_request, watch, present
 
-### Default: plan, execute workers via run-batch, compose, present
+You are sandboxed: you can read/write files but cannot spawn a CLI (the parent's
+top-level reviewer would kill that). So you do **not** run the debate — you write
+ONE high-level request and let the out-of-sandbox `debate-agent` daemon plan and
+run it. Do not invoke any other skill or spawn anything.
 
-Plan and run the whole bounded debate in THIS context; delegate only the actual
-CLI worker launches to the out-of-sandbox daemon through the file mailbox.
-Writing/reading files is allowed in a sandboxed parent; spawning CLIs is not,
-which is why workers go through the mailbox.
-
-**Step 1 — Write a `run_batch_request` for the phase.** Create
-`~/.debate-router/requests/` if needed and write one batch file holding all of
-ONE phase's independent workers. Pick a unique `<id>` per phase
-(`YYYYMMDD-HHMMSS-slug`, e.g. `…-proposals`, `…-critique`).
+**Step 1 — Write the request file.** Create `~/.debate-router/requests/` if needed
+and write ONE request with the task, the target repo, and the human's language.
+Pick a unique `<id>` (`YYYYMMDD-HHMMSS-slug`).
 
 `~/.debate-router/requests/<id>.json`:
 
@@ -410,104 +404,92 @@ ONE phase's independent workers. Pick a unique `<id>` per phase
 {
   "schema_version": 1,
   "id": "<YYYYMMDD-HHMMSS-slug>",
-  "kind": "run_batch_request",
+  "kind": "debate_request",
+  "prompt": "<the requirement / candidates / question to debate>",
   "repo": "<absolute repo path>",
-  "fast": false,
-  "items": [
-    { "item_id": "P1", "provider": "codex",  "prompt": "<full worker prompt>", "phase": "proposal_generation" },
-    { "item_id": "P2", "provider": "claude", "prompt": "<full worker prompt>", "phase": "proposal_generation" }
-  ]
+  "language": "<the human's primary language, e.g. 中文 / English>",
+  "fast": false
 }
 ```
 
-- Each item is an **independent read-only worker**: write the COMPLETE prompt it
-  needs (workers do not run this skill — they only answer the prompt you give).
-  Write every worker prompt in the **human's language** (their primary language in
-  this conversation), and bake any required output shape into the prompt.
+- `prompt`: the whole task to debate — do **not** pre-plan phases or write worker
+  prompts; the daemon's planner does that (it calls you back in Mode 3).
 - `repo`: an **absolute** path under an allowlisted root — resolve it yourself
-  (e.g. from the cwd); a relative path, or a path outside the roots, is rejected.
-- `provider`: **allocate providers yourself** (e.g. 2 `codex` + 2 `claude`). A
-  non-allowlisted provider returns as a `rejected` item — adapt around it.
-- `phase`: optional audit label; pick the matching phase so the worker gets a
-  sensible default timeout.
+  (e.g. from the cwd); a relative path or one outside the roots comes back rejected.
+- `language`: the language the human is using; the debate answers in it. Omit if
+  unsure.
 - `fast`: set `true` on urgency signals ("快一点", "尽快", "hurry", "fast"); it
-  launches every worker in turbo mode. You separately decide whether to also run a
-  leaner debate (fewer agents, merged phases).
-- Capability is **forced read-only** by the daemon; never ask a worker to edit.
-- One request fans out in parallel (capped by the allowlist), so put a whole
-  phase's independent workers in ONE request — not one request per worker.
+  runs a leaner debate and launches every CLI in turbo mode.
 
 **Step 2 — Watch for the response.** Poll `~/.debate-router/responses/` for
-**`<id>.json`**. The companion **`<id>.log`** is a live progress log (you, or any
-other agent, can read/tail it to see how far the daemon has gotten); it is **not**
-the response and appears before/during processing. Open-ended listening: do
-**not** stop merely because a few polls produced no response, and do **not** treat
-`<id>.log` as the response. Reading the same path repeatedly is fine; do **not**
-spawn anything to wait.
+**`<id>.json`** (a human may instead drop a plain `<id>.md`). The companion
+**`<id>.log`** is a live progress log (plan attempts, each phase, each worker) —
+you, or any other agent, can tail it for status, but it is **not** the response.
+Open-ended listening: do **not** stop merely because a few polls produced no
+response, and do **not** treat `<id>.log` as the response. Reading the same path
+repeatedly is fine; do **not** spawn anything to wait.
 
-**Step 3 — Read the outputs.** The response is a `run_batch_result`; each
-`items[].output` is that worker's **full stdout**, embedded so you read it
-directly from the mailbox (you do **not** need access to `~/.debate-agent/`).
+Stop polling only when: `<id>.json` (or `<id>.md`) appears; the human gives a wait
+limit that expires; the human interrupts / redirects / asks for status only; or
+the parent forces the turn to end. If you stop for a non-response reason, read
+`~/.debate-router/responses/<id>.log` and report the latest progress plus the
+`<id>`, request path, expected response path, and that it is still pending.
 
-```json
-{
-  "schema_version": 1,
-  "request_id": "<same id>",
-  "kind": "run_batch_result",
-  "status": "completed|degraded|error",
-  "status_reason": "",
-  "items": [
-    { "item_id": "P1", "provider": "codex",  "status": "completed", "output": "<worker stdout>" },
-    { "item_id": "P2", "provider": "claude", "status": "completed", "output": "<worker stdout>" }
-  ]
-}
-```
+**Step 3 — Present the result.** `responses/<id>.json` is a `debate_result`:
+render `answer_markdown`; if `status` is not `completed`, say so briefly with
+`status_reason`. `trace` is a faithful per-launch record (phase, item, provider,
+status) you may surface if useful. If the original task had a required output
+format, render the answer in that format here (this is where Mode 2 still owns
+caller-format preservation). Do **not** run the debate yourself or fabricate a
+result.
 
-`degraded` means one or more items did not complete (`rejected` / `error` /
-`timed_out`); the others still ran. Adapt around a missing worker per the
-protocol's degrade rules; do not silently drop it from the `Trace`.
+### Mode 3: planner (invoked by the daemon's planner step)
 
-**Step 4 — Run the next phase, then arbitrate.** Drive the protocol's phases:
-proposal generation → normalization → independent critique → cross-review →
-arbitration. Phases with **independent** workers each go out as one
-`run_batch_request` (proposal generation, the first critique round, cross-CLI
-probes). **Serial** phases — normalization, cross-review, arbitration, final
-rendering — you do **yourself in this context**, reading the prior phase's
-embedded outputs. You MAY delegate a heavy synthesis/arbitration pass to a CLI by
-sending a one-item `run_batch_request`, but the default is to arbitrate here — it
-needs no extra CLI round-trip.
+The daemon runs the debate by first asking YOU (read-only, out of sandbox) to
+design it as a structured **plan**, then executing that plan as read-only worker
+CLIs. You enter this mode when the prompt says you are the planner and gives the
+exact output format. You **never spawn or write files**; you only output the plan.
 
-**Step 5 — Archive + present.** Build `DebateRecord` / `DebateSummary` from the
-phases you ran, archive to `~/.debate-router/<run-id>/audit.yaml`, then present
-the final answer (the human-first layout, or the caller's required format if the
-task demanded one). Build the visible `Trace` from the `run_batch` responses you
-collected — one row per worker per phase (`provider`, `status`), including
-rejected/failed workers. Do not fabricate rows.
+Apply the debate STRATEGY in this skill (Entry Cases, Debate Styles, Debate Rules,
+Final Synthesis) to design THIS task's debate: which phases, how many
+proposers/critics, which providers, and each worker's full prompt. Then output the
+plan in **exactly the format the daemon gave you** — the plan FORMAT lives in the
+daemon, not in this skill, so follow its spec literally.
 
-**If the parent environment interrupts** before a phase response appears, tell the
-user the pending `<id>`(s), the request path, and the expected response path, and
-that the work is still pending. If asked for status only, read the latest line of
-`~/.debate-router/responses/<id>.log` and report it. Do not fabricate a result.
+Rules in this mode:
 
-### Only on explicit request: cli-launch (run the debate in-session)
+- Each launch is one independent read-only worker: write its COMPLETE,
+  self-contained prompt (workers do not run this skill; they only answer your
+  prompt). Write every worker prompt and the final answer in the human's language.
+- A later phase's prompt may embed an EARLIER launch's output via the placeholder
+  the daemon specifies (e.g. `{{P1.output}}`); write the surrounding framing
+  yourself ("Here are the proposals:\n{{P1.output}}\n…\nCritique them."). Launches
+  within one phase run in **parallel** and must not depend on each other.
+- **Allocate providers yourself** (e.g. 2 `codex` + 2 `claude`).
+- Designate the launch whose output is the final answer; its prompt must instruct
+  that worker to write the final answer in the required layout and language.
+- If the task is `fast`, design a **lean** debate (fewer workers, merge/skip
+  phases per the degrade rules).
+- Do **not** call `cli-launch`, do **not** write files, do **not** execute
+  anything, do **not** include a Trace. Output **only** the plan.
+
+### Mode 1 (only on explicit request): cli-launch in-session
 
 If — and only if — the human explicitly asks to run the debate via local CLIs
-(e.g. "use the CLI debate", "spawn the CLIs directly"), run the SAME bounded
-debate but spawn the selected external CLIs directly through `cli-launch` instead
-of the mailbox (requires a parent that can spawn CLIs, i.e. not sandboxed).
-`debate-router` owns the full flow either way — entry case, candidate freeze,
-roles, provider allocation, proposal generation, critique, cross-review, and
-arbitration — and the `CLI Topology`, `Phase Concurrency`, and workflow sections
-below apply. **Allocate providers yourself** (e.g. four agents = two `codex` +
-two `claude`); `cli-launch` only launches what this skill decides and never
-balances providers.
+(e.g. "use the CLI debate", "spawn the CLIs directly") in a non-sandboxed parent,
+run the whole bounded debate yourself and spawn the selected CLIs directly through
+`cli-launch`. Here `debate-router` owns the full flow — entry case, candidate
+freeze, roles, provider allocation, proposal generation, critique, cross-review,
+and arbitration — and the `CLI Topology`, `Phase Concurrency`, and workflow
+sections below apply. **Allocate providers yourself** (e.g. four agents = two
+`codex` + two `claude`); `cli-launch` only launches what this skill decides and
+never balances providers.
 
 ## CLI Topology
 
-> Applies whenever you run the debate (both paths). The only difference: on the
-> default path you "launch" a CLI by adding it as an item in a
-> `run_batch_request`; on the explicit in-session path you spawn it via
-> `cli-launch`. The role/allocation/recording rules are identical.
+> Applies only to **Mode 1** (running the debate in-session via `cli-launch`). In
+> Mode 2 you only write the request file; in Mode 3 you output a plan (its
+> per-launch `provider` choices follow the same allocation rules).
 
 `debate-router` does not decide whether external CLI agents are worth using.
 
@@ -536,15 +518,14 @@ When the human has explicitly asked to run the debate in-session:
 
 ## Phase Concurrency
 
-> Applies whenever you run the debate (both paths). On the default path,
-> "fan out in parallel" means **put all of that phase's independent workers in one
-> `run_batch_request`** (the daemon runs them concurrently, capped by the
-> allowlist); on the in-session path it means `cli-launch.run_specs_parallel`.
+> Applies only to **Mode 1** (`cli-launch` in-session). In Mode 3 the same
+> independence rule shapes the plan: put a phase's independent workers in the same
+> plan phase (the daemon runs one phase's launches in parallel); never make one
+> launch depend on another in the same phase.
 
 When a phase has multiple selected CLIs whose outputs do not depend on each
-other, fan them out in parallel — one `run_batch_request` holding all of them
-(default path) or `cli-launch.run_specs_parallel` (in-session). Parallel is the
-default for any independent phase; running independent CLIs serially is a
+other, fan them out in parallel via `cli-launch.run_specs_parallel`. Parallel is
+the default for any independent phase; running independent CLIs serially is a
 deviation and must be justified in `DebateRecord`.
 
 The rule that decides parallel vs serial is one line: each child's output
@@ -592,12 +573,10 @@ would make concurrent calls counterproductive. Record the reason in
 
 ## Workflow
 
-> This full workflow runs on **both** execution paths. The only difference is how
-> each phase's workers are launched: on the **default** path you write a
-> `run_batch_request` per independent phase and read the embedded outputs back
-> (see `Execution Path`); on the explicit in-session path you spawn them via
-> `cli-launch`. Steps 1–3 (classification) and the serial steps (normalization,
-> cross-review, arbitration, archive, render) you always do in-session.
+> This full workflow runs only in **Mode 1** (`cli-launch` in-session). In Mode 2
+> you write a `debate_request` and present the result; in Mode 3 you express this
+> same strategy as a plan for the daemon (the planner uses the steps below to
+> decide phases/launches, but does not run them). See `Execution Path`.
 
 1. Classify the final output contract as `caller_format` or
    `default_debate_layout`. If the task is a document/wiki/diary/review/archive
@@ -614,15 +593,13 @@ would make concurrent calls counterproductive. Record the reason in
    If the trigger was a discussion/debate signal, use the selected external CLI
    agents as proposers before normalization.
    When two or more external CLI proposers are selected, fan them out in
-   parallel — one `run_batch_request` holding all proposers (default path) or
-   `cli-launch.run_specs_parallel` (in-session). See `Phase Concurrency`.
+   parallel via `cli-launch.run_specs_parallel`. See `Phase Concurrency`.
 5. For the other entry cases, freeze the user-provided proposal, candidates, or
    judgments before critique.
 6. Run one independent critique round. If the trigger was a discussion/debate
    signal, run this round through the selected external CLI agents. When two
-   or more external critics are selected, fan them out in parallel — one
-   `run_batch_request` holding all critics (default path) or
-   `cli-launch.run_specs_parallel` (in-session). See `Phase Concurrency`.
+   or more external critics are selected, fan them out in parallel via
+   `cli-launch.run_specs_parallel`. See `Phase Concurrency`.
 7. Run one cross-review round. This round must remain serial across critics —
    each cross-reviewer reads the completed independent critique findings
    before producing their cross-review.
