@@ -9,9 +9,9 @@ It currently packages two reusable skills plus one standalone runner:
 
 - [`debate-router`](skills/debate-router/SKILL.md): classify an explicitly
   requested debate. By default it does not run the debate in-session — it writes
-  a request file to `~/.debate-router/requests/`, watches `responses/` for the
-  result, and presents it. It runs the debate in-session (via `cli-launch`) only
-  when the human explicitly asks.
+  a request file to `~/.debate-router/requests/`, keeps watching `responses/`
+  until the result appears, and presents it. It runs the debate in-session (via
+  `cli-launch`) only when the human explicitly asks.
 - [`cli-launch`](skills/cli-launch/SKILL.md): build consistent
   non-interactive launch specs for selected local agent CLIs, including
   profile/env isolation, sandbox, network, timeout, and redacted display

@@ -398,17 +398,45 @@ prompt, the target repo, and the desired output format. Pick a unique `<id>`
   "kind": "debate_request",
   "prompt": "<the requirement / candidates / question to debate>",
   "repo": "<absolute repo path>",
-  "output_contract": { "format": "default|caller", "template_hint": "<optional>" }
+  "output_contract": { "format": "default|caller", "template_hint": "<optional>" },
+  "language": "<the human's primary language, e.g. zh / en / 中文 / English>",
+  "fast": false
 }
 ```
 
-**Step 2 — Watch the response folder.** After writing the request, watch
-`~/.debate-router/responses/` for a file whose name starts with the same `<id>`
-(`<id>.json`, or a plain `<id>.md`). A human runs the actual debate (later, an
-`debate-agent` daemon outside the sandbox can do this automatically) and drops
-the result there. Poll the path periodically until it appears, or until a
-reasonable wait elapses. Reading the same path repeatedly is fine; do **not**
-spawn anything to wait.
+- `repo`: an **absolute** path to the target repository — resolve it yourself
+  (e.g. from the cwd); a relative path is rejected by the daemon. It must sit
+  under one of the operator's allowlisted repo roots, or the request comes back
+  rejected.
+- `language`: set it to the language the **human** is using to invoke you (their
+  primary language in this conversation). The debate answers and worker prompts
+  are written in it. If unsure, omit it.
+- `fast`: set `true` when the human signals urgency ("快一点", "尽快", "hurry",
+  "fast", etc.). It runs a leaner debate and launches every CLI in turbo mode.
+  Default `false`.
+
+**Step 2 — Watch the response folder.** After writing the request, keep watching
+`~/.debate-router/responses/` for the response file **`<id>.json`** (a human may
+instead drop a plain `<id>.md`). The final answer is the `.json` (or `.md`) — do
+**not** treat the companion **`<id>.log`** as the response: that is a live
+progress log the `debate-agent` daemon streams while the debate runs (you, or any
+other agent, can read/tail it to see how far along it is), and it appears *before*
+and during processing. A human runs the actual debate, or the `debate-agent`
+daemon outside the sandbox does it automatically, and drops the result there.
+Poll the path periodically until `<id>.json` appears. The default is open-ended
+listening, not a short wait window: do **not** stop merely because a few polls
+produced no response, and do **not** stop just because `<id>.log` exists.
+Reading the same path repeatedly is fine; do **not** spawn anything to wait.
+
+Stop polling only when one of these happens:
+
+- the response file `<id>.json` (or `<id>.md`) appears — **not** `<id>.log`
+- the human gives an explicit wait limit and that limit expires
+- the human interrupts, redirects, or asks for status only
+- the parent environment forces the turn/session to end
+
+If polling must stop for any non-response reason, report the `<id>`, request
+path, expected response path, and the fact that the request is still pending.
 
 **Step 3 — Present the result.** When the response appears, read it and present
 the answer:
@@ -440,9 +468,9 @@ Response file `~/.debate-router/responses/<id>.json`:
 it actually executed, not the brain's recollection). Present it as-is; re-render
 in the caller's required format only if the original task demanded one.
 
-**If no response appears within your wait window**, tell the user the `<id>`,
-the request path, and the expected response path, and that you will present the
-result when they ask you to resume / re-check. Do not fabricate a result.
+**If the parent environment interrupts open-ended polling before a response
+appears**, tell the user the `<id>`, the request path, and the expected response
+path, and that the request is still pending. Do not fabricate a result.
 
 ### Only on explicit request: cli-launch (run the debate in-session)
 
@@ -466,14 +494,21 @@ results — until you return the final answer. You **never spawn or write**; you
 only return JSON. This keeps every CLI read-only.
 
 You enter this mode when the prompt says you are in plan/step mode and gives a
-debate **state** (`{ request, history }`). Apply the **full** debate protocol
-(entry case, proposal generation, normalization, critique, cross-review,
-arbitration, degrade/reopen) to decide the next step from the state, and output
-**exactly one JSON object, nothing else**:
+debate **state** (`{ request, history }`). The daemon injects the debate protocol
+(the strategies in `references/debate-protocol.md`) into your prompt, so apply
+**those ready-made strategies**, not an improvised debate.
+
+Each call: first work out from `history` **where this debate is** in the protocol
+— which entry case, which phases are done, what the protocol prescribes next
+(proposal generation → normalization → critique → cross-review → arbitration;
+cross-review before arbitration; degrade if fewer than two distinct proposals).
+Put that one-line assessment in an optional `"notes"` field, then return the
+action the protocol says to take next. Output **exactly one JSON object, nothing
+else**:
 
 ```json
 // run the next phase (independent read-only workers, fanned out in parallel):
-{"kind":"run","phase":"proposal_generation|critique|cross_review|arbitration|other",
+{"kind":"run","notes":"<where we are + what the protocol says next>","phase":"proposal_generation|critique|cross_review|arbitration|other",
  "launches":[{"id":"P1","provider":"claude|codex","prompt":"<full prompt for this worker>"}]}
 
 // or finish — answer_markdown is the human-first debate layout (## Decision /
@@ -487,6 +522,10 @@ arbitration, degrade/reopen) to decide the next step from the state, and output
 Rules in this mode:
 - Each launch is an independent read-only worker — write the complete prompt it
   needs (workers do not run this skill; they just answer the prompt you give).
+- Write every worker prompt and the final answer in `state.request.language`. If
+  `state.request.fast` is true, run a lean debate (fewer agents, skip/merge
+  phases) and finish in as few steps as possible. (The daemon also launches every
+  CLI in turbo mode when `fast` — you just decide the leaner shape.)
 - **Allocate providers yourself** (e.g. four agents = two `codex` + two `claude`).
 - Read prior outputs from `history` to write the next phase's prompts and to do
   normalization / critique / arbitration / degrade exactly as the protocol says.
