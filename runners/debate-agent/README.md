@@ -275,6 +275,11 @@ daemon is up). It then polls `requests/`, and for each NEW request: claims it
 (atomic rename), runs the debate, and atomically writes `responses/<id>.json`.
 One debate at a time.
 
+The allowlist is **re-read for each new request**, so config edits (e.g. adding a
+`repo_root`) apply to the next debate without restarting the daemon. A
+malformed/half-saved edit is ignored — the last-good config stays in effect and a
+warning is logged — so an in-progress edit never breaks processing.
+
 Alongside each response the daemon streams a **live progress log** to
 `responses/<id>.log` (timestamped: claim, each step's phase + worker launches,
 each worker's status + audit path, final status). It is created at claim time, so

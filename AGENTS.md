@@ -31,9 +31,10 @@ plus one optional execution adapter:
    `provider: auto` API to the runner; add generic primitives (`run`,
    `run-batch`) and let the caller compose them.
 3. **The runner is closed by default and fails closed.** No `repo_roots` ⇒ every
-   request rejected. Malformed config raises rather than silently widening.
-   Unknown request/batch fields are rejected. Default `capability` is
-   `read_only_review`. Preserve these when editing.
+   request rejected. Malformed config raises at startup; the daemon's per-request
+   allowlist reload instead keeps the last-good config and warns — neither path
+   ever silently widens. Unknown request/batch fields are rejected. Default
+   `capability` is `read_only_review`. Preserve these when editing.
 4. **Static argv only.** No request value is ever spliced into a child `argv` as
    a flag; the prompt goes on stdin. Capability/profile select among fixed safe
    templates. Keep it that way.

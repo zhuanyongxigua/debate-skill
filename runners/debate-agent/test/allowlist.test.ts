@@ -5,8 +5,30 @@ import { realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { AllowlistError, DEFAULT_ALLOWLIST, loadAllowlist, repoRootMatch } from "../src/allowlist";
+import { AllowlistError, DEFAULT_ALLOWLIST, loadAllowlist, repoRootMatch, safeReloadAllowlist } from "../src/allowlist";
 import { cleanup, makeTempDir } from "./helpers";
+
+test("safeReloadAllowlist picks up a valid edit, falls back to last-good on a bad one", () => {
+  const d = makeTempDir();
+  try {
+    const cfg = join(d, "allowlist.json");
+    writeFileSync(cfg, JSON.stringify({ repo_roots: [d], providers: ["codex"] }));
+    const good = loadAllowlist(cfg);
+    let warned = "";
+    // a valid edit is reloaded
+    writeFileSync(cfg, JSON.stringify({ repo_roots: [d], providers: ["claude", "codex"] }));
+    const reloaded = safeReloadAllowlist(cfg, good, (m) => (warned = m));
+    assert.deepEqual(reloaded.providers, ["claude", "codex"]);
+    assert.equal(warned, "");
+    // a malformed edit keeps the last-good config and warns
+    writeFileSync(cfg, "{ not valid json");
+    const fallback = safeReloadAllowlist(cfg, reloaded, (m) => (warned = m));
+    assert.deepEqual(fallback.providers, ["claude", "codex"]);
+    assert.match(warned, /reload failed/);
+  } finally {
+    cleanup(d);
+  }
+});
 
 test("missing path returns closed default", () => {
   const allow = loadAllowlist(null);

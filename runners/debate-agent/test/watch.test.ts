@@ -197,6 +197,26 @@ test("orphaned processing/ request is recovered as an error response on startup"
   assert.ok(existsSync(join(mb.responsesDir, "orphan.log")), "progress log written");
 });
 
+test("processNewRequests re-reads the allowlist per request via reloadAllow", async () => {
+  const mb = openMailbox();
+  const ignore = snapshotRequestIds(mb);
+  // A second repo the base `allow` does NOT permit, but the reloaded one does.
+  const repo2 = join(root, "repo2");
+  mkdirSync(repo2);
+  const expanded = makeAllowlist(repo2, { modes: ["debate-proposal", "debate-critique", "debate-cross-review"] });
+  writeFileSync(
+    join(mb.requestsDir, "r2.json"),
+    JSON.stringify({ schema_version: 1, id: "r2", kind: "debate_request", prompt: "x", repo: realpathSync(repo2) }),
+  );
+  const { makeDeps } = stubDeps();
+  // base `allow` (repoRoots=[repo]) would reject repo2; reloadAllow returns the
+  // expanded allowlist (repoRoots=[repo2]) so the request is accepted.
+  const processed = await processNewRequests(mb, ignore, allow, { makeDeps, reloadAllow: () => expanded });
+  assert.deepEqual(processed, ["r2"]);
+  const resp = JSON.parse(readFileSync(join(mb.responsesDir, "r2.json"), "utf8"));
+  assert.equal(resp.status, "completed");
+});
+
 test("loadDebateRequest round-trips a written request", () => {
   const mb = openMailbox();
   writeRequestFile("r1");

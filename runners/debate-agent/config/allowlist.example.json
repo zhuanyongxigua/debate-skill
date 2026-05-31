@@ -1,5 +1,5 @@
 {
-  "_comment": "debate-agent allowlist. Copy to ~/.config/debate-agent/allowlist.json (or point $DEBATE_AGENT_CONFIG at it) and edit for your machine. With no repo_roots set, EVERY request is rejected: the runner is closed by default and you open it deliberately here.",
+  "_comment": "debate-agent allowlist. Copy to ~/.config/debate-agent/allowlist.json (or point $DEBATE_AGENT_CONFIG at it) and edit for your machine. With no repo_roots set, EVERY request is rejected: the runner is closed by default and you open it deliberately here. The watch daemon re-reads this file for each new request, so edits apply to the next debate WITHOUT a restart; a malformed/half-saved edit is ignored (the last-good config stays in effect) and a warning is logged.",
 
   "repo_roots": [
     "/Users/you/Code",

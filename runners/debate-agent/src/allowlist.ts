@@ -228,6 +228,25 @@ export function loadAllowlist(configPath: string | null | undefined): Allowlist 
 }
 
 /**
+ * Reload the allowlist, but never let a malformed/half-saved edit break
+ * processing: on any error, keep the last-known-good allowlist and warn. This is
+ * what makes per-request reload safe — an in-flight bad save just pins the prior
+ * policy until the file is valid again, rather than failing requests.
+ */
+export function safeReloadAllowlist(
+  configPath: string,
+  lastGood: Allowlist,
+  onWarn: (message: string) => void,
+): Allowlist {
+  try {
+    return loadAllowlist(configPath);
+  } catch (err) {
+    onWarn(`allowlist reload failed (${configPath}); keeping last good config: ${String(err)}`);
+    return lastGood;
+  }
+}
+
+/**
  * Standard search order for the allowlist config.
  *   1. $DEBATE_AGENT_CONFIG if set.
  *   2. ~/.config/debate-agent/allowlist.json.

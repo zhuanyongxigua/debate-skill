@@ -34,6 +34,10 @@ export interface WatchOptions {
   // text is injected into the brain prompt so the brain applies the ready-made
   // strategies instead of improvising.
   protocolPath?: string;
+  // When set, the allowlist is re-read for EACH request via this thunk (so config
+  // edits apply without a restart). It must never throw — fall back to last-good
+  // internally (see safeReloadAllowlist). Absent → the fixed `allow` is used.
+  reloadAllow?: () => Allowlist;
   // Injectable for tests: build the per-request deps (brain + worker runner).
   makeDeps?: (req: DebateRequest) => DebateDeps;
 }
@@ -94,13 +98,21 @@ export async function processNewRequests(
     const { log, close } = openResponseLog(mb, id);
     let response: DebateResponse;
     try {
-      const req = validateDebateRequest(loadDebateRequest(mb.processingDir + `/${id}.json`), allow);
+      // Re-read the allowlist per request (if a reloader is configured) so config
+      // edits take effect without a restart; one consistent snapshot per debate.
+      const allowNow = opts.reloadAllow ? opts.reloadAllow() : allow;
+      const req = validateDebateRequest(loadDebateRequest(mb.processingDir + `/${id}.json`), allowNow);
       // The file name is the id callers poll by; a payload id that disagrees
       // would write the response under a name the caller never watches.
       if (req.id !== id) throw new Error(`request id "${req.id}" does not match file name "${id}"`);
+      // The brain is a launched CLI too: re-check it against the current allowlist.
+      const brainProvider = opts.brainProvider ?? "claude";
+      if (!opts.makeDeps && !allowNow.providers.includes(brainProvider)) {
+        throw new Error(`brain provider ${brainProvider} is not in the current allowlist providers (${allowNow.providers.join(", ")})`);
+      }
       const deps = opts.makeDeps ? opts.makeDeps(req) : defaultDeps(req, opts);
       deps.log = log;
-      response = await runDebate(req, allow, deps);
+      response = await runDebate(req, allowNow, deps);
     } catch (err) {
       log(`error: ${String(err)}`);
       response = errorResponse(id, String(err));

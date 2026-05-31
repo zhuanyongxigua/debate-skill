@@ -1,6 +1,6 @@
 // Command-line surface: run | run-batch | validate | watch | print-rules.
 
-import { AllowlistError, defaultConfigPath, loadAllowlist } from "./allowlist";
+import { AllowlistError, defaultConfigPath, loadAllowlist, safeReloadAllowlist } from "./allowlist";
 import { runBatchFile, runRequestFile } from "./runner";
 import { RequestRejected, loadRequestDict, validateRequest } from "./schema";
 import { watchLoop } from "./watch";
@@ -155,7 +155,8 @@ export async function main(argv: string[]): Promise<number> {
     }
 
     if (args.command === "watch") {
-      const allow = loadAllowlist(args.config ?? defaultConfigPath());
+      const configPath = args.config ?? defaultConfigPath();
+      const allow = loadAllowlist(configPath);
       const brain = args.brain ?? "claude";
       if (brain !== "claude" && brain !== "codex") {
         process.stderr.write(`--brain must be claude or codex, got ${brain}\n`);
@@ -171,7 +172,16 @@ export async function main(argv: string[]): Promise<number> {
         return 2;
       }
       const protocolPath = args.protocol ?? process.env.DEBATE_AGENT_PROTOCOL;
-      await watchLoop(allow, { brainProvider: brain, protocolPath }); // runs until killed
+      // Re-read the allowlist per request so config edits apply without a restart.
+      // A bad/half-saved edit falls back to the last-good config (never throws).
+      let lastGood = allow;
+      const reloadAllow = configPath
+        ? (): typeof allow => {
+            lastGood = safeReloadAllowlist(configPath, lastGood, (m) => process.stderr.write(`  ${m}\n`));
+            return lastGood;
+          }
+        : undefined;
+      await watchLoop(allow, { brainProvider: brain, protocolPath, reloadAllow }); // runs until killed
       return 0; // unreachable
     }
 
