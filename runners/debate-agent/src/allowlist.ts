@@ -51,6 +51,11 @@ export const PHASE_DEFAULT_TIMEOUT: Record<string, number> = {
 };
 export const FALLBACK_DEFAULT_TIMEOUT = 900;
 
+// Fixed sanity cap on an explicit `timeout_seconds` (not a configurable knob):
+// just keeps a request from asking for a negative/absurd wall. The phase
+// defaults above are the values that actually matter in the debate flow.
+export const MAX_TIMEOUT_SECONDS = 86400;
+
 export class AllowlistError extends Error {}
 
 export interface Allowlist {
@@ -63,8 +68,6 @@ export interface Allowlist {
   // Permitted child sandbox postures. An operator can lock the runner to
   // read-only by listing only "read_only_review".
   capabilities: string[];
-  minTimeoutSeconds: number;
-  maxTimeoutSeconds: number;
   maxPromptChars: number;
   // run-batch resource bounds (matter most under Codex Rules `allow`).
   maxBatchItems: number;
@@ -79,9 +82,9 @@ export const DEFAULT_ALLOWLIST: Allowlist = {
   modes: ["debate-proposal", "debate-critique", "debate-cross-review"],
   providers: ["claude", "codex"], // copilot is supported but opt-in: add it here to enable
   profiles: { claude: [], codex: [], copilot: [] },
-  capabilities: [...VALID_CAPABILITIES],
-  minTimeoutSeconds: 30,
-  maxTimeoutSeconds: 3600,
+  // Read-only by default. workspace_write is supported but OPT-IN (like copilot):
+  // an operator must add it here before any request can ask for child writes.
+  capabilities: [DEFAULT_CAPABILITY],
   maxPromptChars: 200000,
   maxBatchItems: 8,
   maxParallel: 4,
@@ -217,8 +220,6 @@ export function loadAllowlist(configPath: string | null | undefined): Allowlist 
     providers,
     profiles,
     capabilities,
-    minTimeoutSeconds: limit("min_timeout_seconds", base.minTimeoutSeconds),
-    maxTimeoutSeconds: limit("max_timeout_seconds", base.maxTimeoutSeconds),
     maxPromptChars: limit("max_prompt_chars", base.maxPromptChars),
     maxBatchItems: limit("max_batch_items", base.maxBatchItems),
     maxParallel: limit("max_parallel", base.maxParallel),

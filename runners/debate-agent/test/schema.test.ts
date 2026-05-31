@@ -124,6 +124,15 @@ test("explicit workspace_write capability accepted when allowlisted", () => {
   assert.equal(req.capability, "workspace_write");
 });
 
+test("fast defaults to false and accepts a boolean", () => {
+  assert.equal(validateRequest(baseRequest(repo), allow).fast, false);
+  assert.equal(validateRequest({ ...baseRequest(repo), fast: true }, allow).fast, true);
+});
+
+test("non-boolean fast rejected", () => {
+  expectReject({ ...baseRequest(repo), fast: "yes" }, /fast must be a boolean/);
+});
+
 test("capability not in allowlist rejected", () => {
   const ro = makeAllowlist(repo, { capabilities: ["read_only_review"] });
   assert.throws(
@@ -142,6 +151,11 @@ test("empty prompt rejected", () => {
 
 test("timeout out of bounds rejected", () => {
   expectReject({ ...baseRequest(repo), timeout_seconds: 999999 }, /timeout_seconds/);
+});
+
+test("timeout boundary: 86400 accepted, 86401 rejected", () => {
+  assert.equal(validateRequest({ ...baseRequest(repo), timeout_seconds: 86400 }, allow).timeoutSeconds, 86400);
+  expectReject({ ...baseRequest(repo), timeout_seconds: 86401 }, /timeout_seconds/);
 });
 
 test("symlink escape rejected after realpath", () => {

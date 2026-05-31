@@ -80,8 +80,14 @@ async function main(): Promise<void> {
   const mb = openMailbox();
   writeFileSync(join(mb.requestsDir, `${raw.id}.json`), JSON.stringify(raw, null, 2));
 
-  const opts = mock ? { makeDeps: mockDeps } : { brainProvider, maxSteps: 8 };
-  process.stderr.write(`Running debate "${raw.id}" (brain=${mock ? "MOCK" : brainProvider}); mailbox ${mailboxDir}\n`);
+  // Inject the real debate-router protocol so the brain applies the ready-made
+  // strategies (entry cases, normalization, cross-review, arbitration), not just
+  // the built-in contract.
+  const protocolPath = resolve(EVALS, "..", "..", "..", "skills", "debate-router", "references", "debate-protocol.md");
+  const opts = mock ? { makeDeps: mockDeps } : { brainProvider, maxSteps: 8, protocolPath };
+  process.stderr.write(
+    `Running debate "${raw.id}" (brain=${mock ? "MOCK" : brainProvider}); protocol ${mock ? "—" : protocolPath}; mailbox ${mailboxDir}\n`,
+  );
 
   const processed = await processNewRequests(mb, new Set<string>(), allow, opts);
   for (const id of processed) {

@@ -21,12 +21,10 @@
     "codex": []
   },
 
-  "_capabilities_note": "Child sandbox postures the runner may use. read_only_review = codex read-only sandbox + claude default permission (debate/critique, cannot edit). workspace_write = codex workspace-write + network + claude acceptEdits (implementation). To guarantee no automated child ever edits a repo, list only read_only_review.",
-  "capabilities": ["read_only_review", "workspace_write"],
+  "_capabilities_note": "Child sandbox postures the runner may use. read_only_review = codex read-only sandbox + claude default permission (debate/critique, cannot edit) — this is the DEFAULT and the only one listed here. workspace_write = codex workspace-write + network + claude acceptEdits (lets a child edit the repo) is OPT-IN: add it to this list only if you want that.",
+  "capabilities": ["read_only_review"],
 
   "limits": {
-    "min_timeout_seconds": 30,
-    "max_timeout_seconds": 3600,
     "max_prompt_chars": 200000,
     "max_batch_items": 8,
     "max_parallel": 4,

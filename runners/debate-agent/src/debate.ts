@@ -24,6 +24,9 @@ export interface DebateDeps {
   ) => Promise<BatchItemResult[]>;
   baseEnv?: Record<string, string | undefined>;
   maxSteps?: number;
+  // Optional progress sink. The daemon points this at responses/<id>.log so other
+  // agents can follow a debate live. Receives plain lines (no timestamp).
+  log?: (line: string) => void;
 }
 
 export interface TraceRow {
@@ -132,8 +135,21 @@ function buildResponse(
 export async function runDebate(req: DebateRequest, allow: Allowlist, deps: DebateDeps): Promise<DebateResponse> {
   const runItems = deps.runItems ?? runPreparedItems;
   const maxSteps = deps.maxSteps ?? DEFAULT_MAX_STEPS;
+  const log = deps.log;
+  const done = (resp: DebateResponse): DebateResponse => {
+    log?.(`done: ${resp.status} in ${resp.steps} step(s) — response → ${req.id}.json`);
+    return resp;
+  };
+  log?.(`debate ${req.id}: repo=${req.repo} language=${req.language ?? "-"} fast=${req.fast}`);
   const state: DebateState = {
-    request: { id: req.id, prompt: req.prompt, repo: req.repo, output_contract: req.outputContract },
+    request: {
+      id: req.id,
+      prompt: req.prompt,
+      repo: req.repo,
+      output_contract: req.outputContract,
+      language: req.language,
+      fast: req.fast,
+    },
     history: [],
   };
 
@@ -142,15 +158,18 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
     try {
       decision = await deps.brain(state);
     } catch (err) {
-      return buildResponse(req, "error", `brain failed at step ${step}: ${String(err)}`, "", step, state.history);
+      return done(buildResponse(req, "error", `brain failed at step ${step}: ${String(err)}`, "", step, state.history));
     }
 
     if (decision.kind === "final") {
-      return buildResponse(req, decision.status, decision.status_reason ?? "", decision.answer_markdown, step, state.history, decision.debate_record);
+      log?.(`brain → final: ${decision.status}`);
+      return done(buildResponse(req, decision.status, decision.status_reason ?? "", decision.answer_markdown, step, state.history, decision.debate_record));
     }
 
     const phase = validPhase(decision.phase);
     const launches = decision.launches.slice(0, allow.maxBatchItems);
+    log?.(`step ${step + 1}: ${phase} — launching ${launches.map((l) => `${l.id} ${l.provider}`).join(", ")}`);
+    if (decision.notes) log?.(`  note: ${decision.notes}`);
 
     // Build + validate each worker launch. Capability is FORCED to read-only in
     // code; the brain cannot request write access.
@@ -166,6 +185,7 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
           repo: req.repo,
           prompt: l.prompt,
           capability: "read_only_review",
+          fast: req.fast,
         };
         return { itemId, req: validateRequest(reqObj, allow) };
       } catch (err) {
@@ -178,7 +198,21 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
     try {
       results = await runItems(items, allow, deps.baseEnv, allow.maxParallel);
     } catch (err) {
-      return buildResponse(req, "error", `execution failed at step ${step}: ${String(err)}`, "", step, state.history);
+      return done(buildResponse(req, "error", `execution failed at step ${step}: ${String(err)}`, "", step, state.history));
+    }
+
+    for (const r of results) {
+      const detail =
+        r.status === "completed"
+          ? typeof r.stdout_path === "string"
+            ? ` → ${r.stdout_path}`
+            : ""
+          : r.reject_reason
+            ? ` (${r.reject_reason})`
+            : r.error_category
+              ? ` (${r.error_category})`
+              : "";
+      log?.(`  ${r.item_id} ${r.provider ?? "?"} ${r.status}${detail}`);
     }
 
     const phaseResults: PhaseResult[] = results.map((r, i) => ({
@@ -190,5 +224,5 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
     state.history.push({ phase: decision.phase, results: phaseResults });
   }
 
-  return buildResponse(req, "degraded", `debate did not finish within ${maxSteps} steps`, "", maxSteps, state.history);
+  return done(buildResponse(req, "degraded", `debate did not finish within ${maxSteps} steps`, "", maxSteps, state.history));
 }

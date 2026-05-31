@@ -283,7 +283,7 @@ test("timeout kills process group", async () => {
     const marker = join(ctx.root, "done.marker");
     const timeoutStub = "#!/usr/bin/env bash\n" + `( sleep 6 && echo DONE > "${marker}" ) &\n` + "wait\n";
     makeStub(ctx.binDir, "claude", timeoutStub);
-    writeConfig(ctx.cfg, ctx.repo, 1);
+    writeConfig(ctx.cfg, ctx.repo);
 
     const req = join(ctx.root, "req.json");
     writeRequest(req, ctx.repo, { timeout_seconds: 1 });

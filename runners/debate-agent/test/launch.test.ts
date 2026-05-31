@@ -117,6 +117,45 @@ test("claude permission-mode follows capability", () => {
   assert.equal(rw.argv[rw.argv.indexOf("--permission-mode") + 1], "acceptEdits");
 });
 
+test("claude read_only_review hard-denies edit/write/shell tools", () => {
+  const ro = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {} });
+  const denied = ro.argv[ro.argv.indexOf("--disallowedTools") + 1];
+  for (const tool of ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"]) {
+    assert.ok(denied!.includes(tool), `${tool} should be denied`);
+  }
+  // workspace_write must NOT deny edits (it is allowed to write)
+  const rw = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "workspace_write", prompt: "P", baseEnv: {} });
+  assert.ok(!rw.argv.includes("--disallowedTools"));
+});
+
+test("xhigh thinking is the default for claude and codex", () => {
+  const c = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {} });
+  assert.equal(c.argv[c.argv.indexOf("--effort") + 1], "xhigh");
+  const x = buildChildLaunch({ provider: "codex", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {} });
+  assert.ok(x.argv.some((a) => a === 'model_reasoning_effort="xhigh"'));
+});
+
+test("fast mode adds per-invocation flags (claude --settings, codex service_tier)", () => {
+  const c = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {}, fast: true });
+  assert.ok(c.argv.includes("--settings"));
+  assert.ok(c.argv.includes('{"fastMode":true}'));
+  const x = buildChildLaunch({ provider: "codex", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {}, fast: true });
+  assert.ok(x.argv.includes('service_tier="fast"'));
+  assert.ok(x.argv.includes("features.fast_mode=true"));
+});
+
+test("no fast flags when fast is false / omitted", () => {
+  const c = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {} });
+  assert.ok(!c.argv.includes("--settings"));
+  const x = buildChildLaunch({ provider: "codex", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {}, fast: false });
+  assert.ok(!x.argv.some((a) => a.includes("service_tier") || a.includes("fast_mode")));
+});
+
+test("copilot is exempt from fast mode", () => {
+  const cp = buildChildLaunch({ provider: "copilot", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {}, fast: true });
+  assert.ok(!cp.argv.some((a) => a.includes("fast") || a.includes("--settings") || a.includes("service_tier")));
+});
+
 test("claude profile is a hard error", () => {
   assert.throws(
     () =>

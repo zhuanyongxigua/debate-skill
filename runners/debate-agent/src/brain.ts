@@ -13,13 +13,14 @@ export interface BrainLaunch {
 }
 
 export type StepDecision =
-  | { kind: "run"; phase: string; launches: BrainLaunch[] }
+  | { kind: "run"; phase: string; launches: BrainLaunch[]; notes?: string }
   | {
       kind: "final";
       status: string; // completed | degraded | blocked
       status_reason?: string;
       answer_markdown: string;
       debate_record?: unknown;
+      notes?: string;
     };
 
 export interface PhaseResult {
@@ -30,16 +31,25 @@ export interface PhaseResult {
 }
 
 export interface DebateState {
-  request: { id: string; prompt: string; repo: string; output_contract: Record<string, unknown> | null };
+  request: {
+    id: string;
+    prompt: string;
+    repo: string;
+    output_contract: Record<string, unknown> | null;
+    language: string | null;
+    fast: boolean;
+  };
   history: { phase: string; results: PhaseResult[] }[];
 }
 
 export class BrainError extends Error {}
 
 const CONTRACT = `You are debate-router operating in PLAN/STEP mode (read-only).
-Apply the debate-router protocol to decide the SINGLE next action for this debate,
-given the state below. You do NOT run anything yourself — you only return the next
-action as one JSON object, and the runner executes it.
+Apply the debate protocol (given under "Debate protocol" below when present;
+otherwise your best understanding of a rigorous bounded multi-agent debate) to
+decide the SINGLE next action for this debate, given the state below. You do NOT
+run anything yourself — you only return the next action as one JSON object, and
+the runner executes it.
 
 Output EXACTLY one JSON object and nothing else (no prose, no markdown fences):
 
@@ -56,14 +66,27 @@ format, use that instead.
  "answer_markdown":"## Decision\\n…\\n## Rationale\\n…\\n## Dissent\\n…\\n## Open Questions\\n…"}
 
 Rules:
+- First, from state.history, work out WHERE this debate is in the protocol — which
+  entry case, which phases are already done, and what the protocol prescribes next
+  (e.g. proposal_generation -> proposal_normalization -> critique -> cross_review
+  -> arbitration; cross-review before arbitration; degrade if < 2 distinct
+  proposals). Put that one-line assessment in an optional "notes" field, then
+  return the action the protocol says to take next.
+- Language: write EVERY worker prompt AND the final answer_markdown in
+  state.request.language (if null, use the language of the prompt).
+- Fast/turbo mode: if state.request.fast is true, run a LEAN debate to finish
+  quickly — fewer agents (e.g. 2 proposers), skip or merge phases (e.g. skip
+  cross-review), and reach "final" in as few steps as possible while still being
+  a real debate. When false, run the full protocol.
 - Each launch is an independent, read-only worker; write the complete prompt it needs.
 - Allocate providers per the protocol (e.g. 4 agents = 2 codex + 2 claude).
 - Read prior phase outputs from state.history to write the next phase's prompts and
   to decide normalization / critique / cross-review / arbitration / degrade.
 - Capability is forced to read-only by the runner; never ask a worker to edit files.`;
 
-export function buildBrainPrompt(state: DebateState): string {
-  return `${CONTRACT}\n\n## Debate state\n\n\`\`\`json\n${JSON.stringify(state, null, 2)}\n\`\`\`\n`;
+export function buildBrainPrompt(state: DebateState, protocol?: string): string {
+  const protocolSection = protocol && protocol.trim() ? `\n\n## Debate protocol\n\n${protocol.trim()}\n` : "";
+  return `${CONTRACT}${protocolSection}\n\n## Debate state\n\n\`\`\`json\n${JSON.stringify(state, null, 2)}\n\`\`\`\n`;
 }
 
 /** Tolerantly extract + validate a StepDecision from brain stdout. */
@@ -89,6 +112,7 @@ export function parseStepDecision(stdout: string): StepDecision {
       status_reason: typeof d.status_reason === "string" ? d.status_reason : "",
       answer_markdown: d.answer_markdown,
       debate_record: d.debate_record,
+      notes: typeof d.notes === "string" ? d.notes : undefined,
     };
   }
   if (d.kind === "run") {
@@ -104,7 +128,7 @@ export function parseStepDecision(stdout: string): StepDecision {
       const id = typeof o.id === "string" && o.id.trim() ? o.id : `L${i + 1}`;
       return { id, provider: o.provider, prompt: o.prompt };
     });
-    return { kind: "run", phase, launches };
+    return { kind: "run", phase, launches, notes: typeof d.notes === "string" ? d.notes : undefined };
   }
   throw new BrainError(`brain decision kind must be "run" or "final", got ${JSON.stringify(d.kind)}`);
 }
@@ -147,6 +171,8 @@ export interface BrainOptions {
   provider: string; // claude (default) or codex
   baseEnv?: Record<string, string | undefined>;
   timeoutSeconds?: number;
+  protocol?: string; // debate-router protocol text injected into the brain prompt
+  fast?: boolean; // launch the brain CLI in fast/turbo mode too
 }
 
 /** Default brain: spawn the configured CLI read-only on the brain prompt and
@@ -158,8 +184,9 @@ export function makeCliBrain(repo: string, opts: BrainOptions): BrainFn {
       cwd: repo,
       profile: null,
       capability: "read_only_review",
-      prompt: buildBrainPrompt(state),
+      prompt: buildBrainPrompt(state, opts.protocol),
       baseEnv: opts.baseEnv ?? process.env,
+      fast: opts.fast ?? false,
     });
     const result = await execute(launch, opts.timeoutSeconds ?? 1800);
     if (result.status !== "completed") {

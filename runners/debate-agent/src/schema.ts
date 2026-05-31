@@ -12,6 +12,7 @@ import {
   Allowlist,
   DEFAULT_CAPABILITY,
   FALLBACK_DEFAULT_TIMEOUT,
+  MAX_TIMEOUT_SECONDS,
   PHASE_DEFAULT_TIMEOUT,
   VALID_PHASES,
   repoRootMatch,
@@ -30,6 +31,7 @@ const ALLOWED_REQUEST_FIELDS = new Set([
   "repo",
   "profile",
   "capability",
+  "fast",
   "prompt",
   "timeout_seconds",
 ]);
@@ -60,6 +62,7 @@ export interface ValidatedRequest {
   repoRoot: string;
   profile: string | null;
   capability: string;
+  fast: boolean;
   prompt: string;
   timeoutSeconds: number;
   requestDigest: string;
@@ -193,6 +196,13 @@ export function validateRequest(raw: Record<string, unknown>, allow: Allowlist):
     `capability ${JSON.stringify(capability)} not in allowlist ${JSON.stringify(allow.capabilities)}`,
   );
 
+  // --- fast (turbo mode) --------------------------------------------------
+  let fast = false;
+  if (raw.fast !== undefined && raw.fast !== null) {
+    req(typeof raw.fast === "boolean", "fast must be a boolean");
+    fast = raw.fast as boolean;
+  }
+
   // --- prompt -------------------------------------------------------------
   const prompt = raw.prompt;
   req(typeof prompt === "string" && prompt.trim() !== "", "prompt must be a non-empty string");
@@ -211,8 +221,8 @@ export function validateRequest(raw: Record<string, unknown>, allow: Allowlist):
     timeout = PHASE_DEFAULT_TIMEOUT[phase] ?? FALLBACK_DEFAULT_TIMEOUT;
   }
   req(
-    allow.minTimeoutSeconds <= timeout && timeout <= allow.maxTimeoutSeconds,
-    `timeout_seconds ${timeout} outside [${allow.minTimeoutSeconds}, ${allow.maxTimeoutSeconds}]`,
+    timeout >= 1 && timeout <= MAX_TIMEOUT_SECONDS,
+    `timeout_seconds ${timeout} outside [1, ${MAX_TIMEOUT_SECONDS}]`,
   );
 
   return {
@@ -224,6 +234,7 @@ export function validateRequest(raw: Record<string, unknown>, allow: Allowlist):
     repoRoot: matchedRoot,
     profile,
     capability,
+    fast,
     prompt: prompt as string,
     timeoutSeconds: timeout,
     requestDigest: computeDigest(raw),

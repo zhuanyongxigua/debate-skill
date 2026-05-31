@@ -110,8 +110,12 @@ listed here.
 | `repo` | string | absolute path; `realpath` must resolve under an allowed repo root and be an existing directory |
 | `profile` | string \| null | `null`, or in the profile allowlist for that provider. **Only Codex has profiles the runner can honor** — Claude profiles (strips `CLAUDE_CONFIG_DIR`) and Copilot profiles are rejected |
 | `capability` | string | `read_only_review` (default) or `workspace_write`; must be in the `capabilities` allowlist. Controls the child sandbox posture (see below) |
+| `fast` | bool | default `false`. When `true`, the child CLI launches in turbo mode via per-invocation flags (no global config change): codex `-c service_tier="fast" -c features.fast_mode=true`, claude `--settings '{"fastMode":true}'`. Copilot is exempt |
 | `prompt` | string | non-empty, length ≤ `max_prompt_chars`; transported to the child via **stdin only** |
-| `timeout_seconds` | int | within `[min_timeout_seconds, max_timeout_seconds]`; if omitted, the phase-aware default is used |
+| `timeout_seconds` | int | a positive integer ≤ `86400` (fixed internal sanity cap, not configurable); if omitted, the phase-aware default is used |
+
+Thinking effort is always `xhigh` (codex `model_reasoning_effort="xhigh"`, claude
+`--effort xhigh`). `fast` is independent of effort.
 
 `provider` selects the binary. `mode` is only a coarse allowlisted intent label
 recorded in the audit — it never selects a different binary or alters argv.
@@ -141,13 +145,22 @@ operator **both** allowlists `workspace_write` **and** a request asks for it.
 
 | capability | codex | claude | copilot | use |
 | --- | --- | --- | --- | --- |
-| `read_only_review` (default) | `exec --sandbox read-only` (no network) | `--permission-mode default` | `--deny-tool=write --deny-tool=shell` | proposer / critic — reasons, cannot edit |
+| `read_only_review` (default) | `exec --sandbox read-only` (no network) | `--permission-mode default --disallowedTools "Edit Write MultiEdit NotebookEdit Bash"` | `--deny-tool=write --deny-tool=shell` | proposer / critic — reasons, cannot edit |
 | `workspace_write` | `--sandbox workspace-write` + network | `--permission-mode acceptEdits` | `--allow-tool=write --add-dir <repo>` (no shell) | implementation — may edit the repo |
 
-To guarantee no automated child ever writes — important once Codex Rules are set
-to `allow` (unattended) — set `"capabilities": ["read_only_review"]` in the
-allowlist. The argv stays static: capability only selects among fixed, safe
-templates.
+**Assurance differs by provider.** Codex read-only is an **OS-level** sandbox
+(`--sandbox read-only`) — a kernel guarantee. Claude has no OS sandbox here, so
+its read-only posture is a **harness-level deny**: `--disallowedTools` explicitly
+forbids the edit/write/shell tools (deterministic, far stronger than relying on
+"won't edit non-interactively", but not a kernel boundary). Copilot is similar
+(tool-permission flags, no OS sandbox). Treat codex as hard-isolated and
+claude/copilot as deny-listed when reasoning about blast radius.
+
+The **default allowlist lists only `read_only_review`**, so no automated child
+can ever write — important once Codex Rules are set to `allow` (unattended).
+`workspace_write` is OPT-IN: add it to `capabilities` only if you explicitly want
+children to edit repos. The argv stays static: capability only selects among
+fixed, safe templates.
 
 ### Prompt transport
 
@@ -252,13 +265,21 @@ mailbox under `~/.debate-router/` (override with `$DEBATE_AGENT_MAILBOX`):
 ~/.debate-router/
   requests/    debate-router writes <id>.json here
   processing/  daemon claims a request by atomic rename
-  responses/   daemon writes <id>.json result here
+  responses/   daemon writes <id>.json result + <id>.log progress here
 ```
 
-On start it **snapshots existing requests and ignores them** (submit after the
+On start it **recovers any orphaned `processing/` entries** (a request claimed
+before a previous crash/restart gets an `error` response so the caller stops
+waiting), then **snapshots existing requests and ignores them** (submit after the
 daemon is up). It then polls `requests/`, and for each NEW request: claims it
 (atomic rename), runs the debate, and atomically writes `responses/<id>.json`.
 One debate at a time.
+
+Alongside each response the daemon streams a **live progress log** to
+`responses/<id>.log` (timestamped: claim, each step's phase + worker launches,
+each worker's status + audit path, final status). It is created at claim time, so
+another agent can `tail -f responses/<id>.log` to watch a debate in flight. The
+**response** is `<id>.json` — pollers wait for that, not the `.log`.
 
 ### How a debate runs: the read-only step loop
 
@@ -280,6 +301,13 @@ So the debate protocol stays authored in the `debate-router` skill (the brain
 applies it); the daemon is a pure executor. The brain authors each worker's
 prompt and allocates providers; the workers just answer. Every launch — brain
 and workers — is read-only, so this is safe even with a sandbox enabled.
+
+The debate request may carry `language` (the human's primary language — the
+brain writes every worker prompt and the final answer in it) and `fast` (turbo
+mode). When `fast` is true the brain runs a leaner debate **and** every CLI it
+spawns — the brain and all workers — launches in turbo mode (codex
+`service_tier`/`fast_mode`, claude `--settings fastMode`; copilot exempt). All via
+per-invocation flags; no global config is touched.
 
 The response is always written (brain/exec failures and the step cap become
 `status: error|degraded`), so the in-session side never hangs.
@@ -395,8 +423,7 @@ through it, all of the following must be in place. This is the full list.
    | `modes` | allowed audit labels | `debate-proposal`, `debate-critique`, `debate-cross-review` |
    | `providers` | launchable CLIs | `claude`, `codex` |
    | `profiles` | per-provider local profiles (claude must be empty) | `{}` |
-   | `capabilities` | child sandbox postures | `read_only_review`, `workspace_write` |
-   | `limits.min/max_timeout_seconds` | per-call timeout bounds | 30 / 3600 |
+   | `capabilities` | child sandbox postures | `read_only_review` (workspace_write opt-in) |
    | `limits.max_prompt_chars` | prompt size cap | 200000 |
    | `limits.max_batch_items` | items per `run-batch` | 8 |
    | `limits.max_parallel` | global batch concurrency | 4 |
@@ -424,20 +451,22 @@ do not conflate them:
 
 Once Rules are `allow` (no prompt), the runner's **allowlist is the entire
 security boundary** between the parent agent and arbitrary CLI runs in
-allowlisted repos. So before going `allow`: tighten `repo_roots`, and set
-`"capabilities": ["read_only_review"]` unless you explicitly want automated
-children to be able to edit repos.
+allowlisted repos. So before going `allow`: tighten `repo_roots`, and leave
+`capabilities` at its read-only default — `workspace_write` is opt-in, so add it
+only if you explicitly want automated children to be able to edit repos.
 
 ## How debate-router reaches this runner (file mailbox)
 
 `debate-router` does **not** invoke this runner directly. By default it writes a
-request file to `~/.debate-router/requests/<id>.json` and watches
-`~/.debate-router/responses/` for the matching result. This runner is the human's
-out-of-sandbox processor for that mailbox (the `watch` daemon is the next piece
-to build; today the human runs `run` / `run-batch` and writes the response).
+request file to `~/.debate-router/requests/<id>.json` and keeps watching
+`~/.debate-router/responses/` until the matching result appears. This runner is
+the human's out-of-sandbox processor for that mailbox (the `watch` daemon is the
+next piece to build; today the human runs `run` / `run-batch` and writes the
+response).
 
-If no response ever appears, `debate-router` does not fabricate one: it reports
-the request id and the expected response path and waits to be resumed.
+If the parent session is interrupted before a response appears, `debate-router`
+does not fabricate one: it reports the request id and the expected response path
+and leaves the request pending for a later re-check.
 
 ## Layout
 

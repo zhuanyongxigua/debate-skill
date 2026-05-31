@@ -45,8 +45,6 @@ export function makeAllowlist(repoRoot: string, overrides: Partial<Allowlist> = 
     providers: ["claude", "codex"],
     profiles: { claude: [], codex: ["work"] },
     capabilities: ["read_only_review", "workspace_write"],
-    minTimeoutSeconds: 30,
-    maxTimeoutSeconds: 3600,
     maxPromptChars: 200000,
     maxBatchItems: 8,
     maxParallel: 4,
@@ -67,7 +65,7 @@ export function baseRequest(repo: string): Record<string, unknown> {
   };
 }
 
-export function writeConfig(path: string, repoRoot: string, minTimeout = 30): void {
+export function writeConfig(path: string, repoRoot: string): void {
   writeFileSync(
     path,
     JSON.stringify({
@@ -75,7 +73,7 @@ export function writeConfig(path: string, repoRoot: string, minTimeout = 30): vo
       modes: ["debate-proposal"],
       providers: ["claude", "codex"],
       profiles: { claude: [], codex: [] },
-      limits: { min_timeout_seconds: minTimeout, max_timeout_seconds: 3600, max_prompt_chars: 200000 },
+      limits: { max_prompt_chars: 200000 },
     }),
   );
 }

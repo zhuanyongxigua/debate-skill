@@ -30,7 +30,7 @@ afterEach(() => cleanup(root));
 
 function debateRequest(): DebateRequest {
   const r = realpathSync(repo);
-  return { id: "20260531-test", prompt: "debate this", repo: r, repoRoot: r, outputContract: null };
+  return { id: "20260531-test", prompt: "debate this", repo: r, repoRoot: r, outputContract: null, language: null, fast: false };
 }
 
 /** Stubbed worker runner: records the items it was asked to run, writes each

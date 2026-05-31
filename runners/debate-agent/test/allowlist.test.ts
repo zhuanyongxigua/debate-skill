@@ -24,12 +24,12 @@ test("loads and resolves repo roots", () => {
     const cfg = join(d, "allowlist.json");
     writeFileSync(
       cfg,
-      JSON.stringify({ repo_roots: [d], modes: ["debate-proposal"], providers: ["claude"], limits: { max_timeout_seconds: 1200 } }),
+      JSON.stringify({ repo_roots: [d], modes: ["debate-proposal"], providers: ["claude"], limits: { max_batch_items: 5 } }),
     );
     const allow = loadAllowlist(cfg);
     assert.deepEqual(allow.repoRoots, [realpathSync(d)]);
     assert.deepEqual(allow.providers, ["claude"]);
-    assert.equal(allow.maxTimeoutSeconds, 1200);
+    assert.equal(allow.maxBatchItems, 5);
   } finally {
     cleanup(d);
   }
@@ -133,11 +133,11 @@ test("malformed limits (non-object) is rejected", () => {
 });
 
 test("non-numeric limit value is rejected", () => {
-  expectShapeError({ limits: { max_timeout_seconds: "lots" } }, /limits\.max_timeout_seconds must be a number/);
+  expectShapeError({ limits: { max_batch_items: "lots" } }, /limits\.max_batch_items must be a number/);
 });
 
-test("default allowlist has both capabilities and batch limits", () => {
-  assert.deepEqual(DEFAULT_ALLOWLIST.capabilities, ["read_only_review", "workspace_write"]);
+test("default allowlist is read-only and carries batch limits", () => {
+  assert.deepEqual(DEFAULT_ALLOWLIST.capabilities, ["read_only_review"]);
   assert.equal(DEFAULT_ALLOWLIST.maxBatchItems, 8);
   assert.equal(DEFAULT_ALLOWLIST.maxParallelPerProvider, 2);
 });

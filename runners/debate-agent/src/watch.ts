@@ -3,6 +3,9 @@
 // debate via the step loop, and writes the result to responses/<id>.json. One
 // debate at a time. Every CLI it spawns (brain + workers) runs read-only.
 
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { Allowlist } from "./allowlist";
 import { makeCliBrain } from "./brain";
 import { DebateDeps, DebateResponse, runDebate } from "./debate";
@@ -10,8 +13,11 @@ import {
   DebateRequest,
   Mailbox,
   claimRequest,
+  clearProcessing,
   loadDebateRequest,
   openMailbox,
+  openResponseLog,
+  processingIds,
   requestIds,
   snapshotRequestIds,
   validateDebateRequest,
@@ -24,13 +30,32 @@ export interface WatchOptions {
   baseEnv?: Record<string, string | undefined>;
   maxSteps?: number;
   intervalMs?: number;
+  // Path to the debate-router protocol (e.g. references/debate-protocol.md). Its
+  // text is injected into the brain prompt so the brain applies the ready-made
+  // strategies instead of improvising.
+  protocolPath?: string;
   // Injectable for tests: build the per-request deps (brain + worker runner).
   makeDeps?: (req: DebateRequest) => DebateDeps;
 }
 
+function loadProtocol(path: string | undefined): string | undefined {
+  if (!path) return undefined;
+  try {
+    return readFileSync(path, "utf8");
+  } catch (err) {
+    process.stderr.write(`  warning: could not read protocol ${path}: ${String(err)} (brain runs without it)\n`);
+    return undefined;
+  }
+}
+
 function defaultDeps(req: DebateRequest, opts: WatchOptions): DebateDeps {
   return {
-    brain: makeCliBrain(req.repo, { provider: opts.brainProvider ?? "claude", baseEnv: opts.baseEnv }),
+    brain: makeCliBrain(req.repo, {
+      provider: opts.brainProvider ?? "claude",
+      baseEnv: opts.baseEnv,
+      protocol: loadProtocol(opts.protocolPath),
+      fast: req.fast, // the whole debate (brain + workers) goes fast when requested
+    }),
     baseEnv: opts.baseEnv,
     maxSteps: opts.maxSteps,
   };
@@ -66,29 +91,72 @@ export async function processNewRequests(
     ignore.add(id); // claim-once: never retry, even if this run fails
     if (claimRequest(mb, id) === null) continue; // someone else took it / it vanished
 
+    const { log, close } = openResponseLog(mb, id);
     let response: DebateResponse;
     try {
       const req = validateDebateRequest(loadDebateRequest(mb.processingDir + `/${id}.json`), allow);
+      // The file name is the id callers poll by; a payload id that disagrees
+      // would write the response under a name the caller never watches.
+      if (req.id !== id) throw new Error(`request id "${req.id}" does not match file name "${id}"`);
       const deps = opts.makeDeps ? opts.makeDeps(req) : defaultDeps(req, opts);
+      deps.log = log;
       response = await runDebate(req, allow, deps);
     } catch (err) {
+      log(`error: ${String(err)}`);
       response = errorResponse(id, String(err));
+    } finally {
+      close();
     }
     writeResponse(mb, id, response as unknown as Record<string, unknown>);
+    clearProcessing(mb, id); // finished: drop the in-flight marker so processing/ only holds live requests
     processed.push(id);
   }
   return processed;
+}
+
+/** Recover requests left in processing/ by a previous crash/restart: if no
+ * response exists, write an error response so the caller stops waiting; then
+ * clear the stale processing entry either way. Returns the recovered ids. */
+export function recoverOrphans(mb: Mailbox): string[] {
+  const recovered: string[] = [];
+  for (const id of processingIds(mb)) {
+    if (!existsSync(join(mb.responsesDir, `${id}.json`))) {
+      const { log, close } = openResponseLog(mb, id);
+      log("daemon restarted while this request was in flight — abandoned");
+      close();
+      writeResponse(
+        mb,
+        id,
+        errorResponse(id, "daemon restarted while this request was in flight; resubmit if still needed") as unknown as Record<string, unknown>,
+      );
+      recovered.push(id);
+    }
+    clearProcessing(mb, id);
+  }
+  return recovered;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /** Run the daemon forever: snapshot existing requests (ignored), then poll. */
 export async function watchLoop(allow: Allowlist, opts: WatchOptions = {}): Promise<never> {
+  // Fail closed: the real brain is a launched CLI, so its provider must be in the
+  // allowlist (skipped when makeDeps injects a stub brain, e.g. tests).
+  if (!opts.makeDeps) {
+    const brainProvider = opts.brainProvider ?? "claude";
+    if (!allow.providers.includes(brainProvider)) {
+      throw new Error(`brain provider ${brainProvider} is not in the allowlist providers (${allow.providers.join(", ")})`);
+    }
+  }
   const mb = openMailbox();
+  const recovered = recoverOrphans(mb);
   const ignore = snapshotRequestIds(mb);
   const interval = opts.intervalMs ?? 1000;
+  const protocolNote = opts.protocolPath
+    ? `protocol ${opts.protocolPath}`
+    : "no protocol (brain uses the built-in contract + its own competence; pass --protocol for the ready-made strategies)";
   process.stderr.write(
-    `debate-agent watch: mailbox ${mb.root} (ignoring ${ignore.size} existing request(s)); polling every ${interval}ms\n`,
+    `debate-agent watch: mailbox ${mb.root}; brain=${opts.brainProvider ?? "claude"}; ${protocolNote}; recovered ${recovered.length} orphaned request(s); ignoring ${ignore.size} existing request(s); polling every ${interval}ms\n`,
   );
   for (;;) {
     try {

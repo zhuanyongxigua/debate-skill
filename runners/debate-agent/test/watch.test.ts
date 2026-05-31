@@ -18,7 +18,7 @@ import {
   writeResponse,
 } from "../src/mailbox";
 import { BatchItemResult, PreparedItem } from "../src/runner";
-import { processNewRequests } from "../src/watch";
+import { processNewRequests, recoverOrphans, watchLoop } from "../src/watch";
 import { cleanup, makeAllowlist, makeTempDir } from "./helpers";
 
 let root: string;
@@ -77,6 +77,24 @@ test("validateDebateRequest accepts a good request", () => {
   );
   assert.equal(req.id, "r1");
   assert.equal(req.repo, realpathSync(repo));
+  assert.equal(req.language, null); // defaults
+  assert.equal(req.fast, false);
+});
+
+test("validateDebateRequest accepts language + fast", () => {
+  const req = validateDebateRequest(
+    { schema_version: 1, id: "r1", kind: "debate_request", prompt: "x", repo: realpathSync(repo), language: "中文", fast: true },
+    allow,
+  );
+  assert.equal(req.language, "中文");
+  assert.equal(req.fast, true);
+});
+
+test("validateDebateRequest rejects a non-boolean fast", () => {
+  assert.throws(
+    () => validateDebateRequest({ schema_version: 1, id: "r1", kind: "debate_request", prompt: "x", repo: realpathSync(repo), fast: "yes" }, allow),
+    /fast must be a boolean/,
+  );
 });
 
 test("validateDebateRequest rejects unknown field / outside repo / bad id", () => {
@@ -84,6 +102,29 @@ test("validateDebateRequest rejects unknown field / outside repo / bad id", () =
   assert.throws(() => validateDebateRequest({ ...base, oops: 1 }, allow), DebateRequestRejected);
   assert.throws(() => validateDebateRequest({ ...base, repo: "/etc" }, allow), DebateRequestRejected);
   assert.throws(() => validateDebateRequest({ ...base, id: "../escape" }, allow), DebateRequestRejected);
+  assert.throws(() => validateDebateRequest({ ...base, kind: "nope" }, allow), /kind must be/);
+});
+
+test("payload id mismatching the file name becomes an error response", async () => {
+  const mb = openMailbox();
+  const ignore = snapshotRequestIds(mb);
+  writeFileSync(
+    join(mb.requestsDir, "fileid.json"),
+    JSON.stringify({ schema_version: 1, id: "otherid", kind: "debate_request", prompt: "x", repo: realpathSync(repo) }),
+  );
+  const { makeDeps } = stubDeps();
+  await processNewRequests(mb, ignore, allow, { makeDeps });
+  const resp = JSON.parse(readFileSync(join(mb.responsesDir, "fileid.json"), "utf8"));
+  assert.equal(resp.status, "error");
+  assert.match(resp.status_reason, /does not match file name/);
+});
+
+test("watchLoop fails closed when the brain provider is not allowlisted", async () => {
+  const onlyCodex = makeAllowlist(repo, { providers: ["codex"] });
+  await assert.rejects(
+    () => watchLoop(onlyCodex, { brainProvider: "claude" }),
+    /brain provider claude is not in the allowlist/,
+  );
 });
 
 test("claim is atomic: second claim returns null", () => {
@@ -138,6 +179,22 @@ test("a malformed request becomes an error response (never hangs)", async () => 
   const resp = JSON.parse(readFileSync(join(mb.responsesDir, "bad.json"), "utf8"));
   assert.equal(resp.status, "error");
   assert.equal(resp.request_id, "bad");
+});
+
+test("orphaned processing/ request is recovered as an error response on startup", () => {
+  const mb = openMailbox();
+  // simulate a crash mid-flight: a claimed request sits in processing/ with no response
+  writeFileSync(
+    join(mb.processingDir, "orphan.json"),
+    JSON.stringify({ schema_version: 1, id: "orphan", kind: "debate_request", prompt: "x", repo: realpathSync(repo) }),
+  );
+  const recovered = recoverOrphans(mb);
+  assert.deepEqual(recovered, ["orphan"]);
+  const resp = JSON.parse(readFileSync(join(mb.responsesDir, "orphan.json"), "utf8"));
+  assert.equal(resp.status, "error");
+  assert.match(resp.status_reason, /in flight/);
+  assert.ok(!existsSync(join(mb.processingDir, "orphan.json")), "processing entry cleared");
+  assert.ok(existsSync(join(mb.responsesDir, "orphan.log")), "progress log written");
 });
 
 test("loadDebateRequest round-trips a written request", () => {

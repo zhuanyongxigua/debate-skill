@@ -3,7 +3,26 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { BrainError, parseStepDecision } from "../src/brain";
+import { BrainError, buildBrainPrompt, parseStepDecision } from "../src/brain";
+
+const sampleState = {
+  request: { id: "r1", prompt: "p", repo: "/r", output_contract: null, language: null, fast: false },
+  history: [],
+};
+
+test("buildBrainPrompt injects the protocol text when provided", () => {
+  const withP = buildBrainPrompt(sampleState, "## Entry cases\nrequirement_debate: …");
+  assert.match(withP, /## Debate protocol/);
+  assert.match(withP, /Entry cases/);
+  assert.match(withP, /## Debate state/); // state still present
+  assert.ok(!buildBrainPrompt(sampleState).includes("## Debate protocol"));
+});
+
+test("carries an optional notes (progress assessment) field", () => {
+  const d = parseStepDecision('{"kind":"run","notes":"done proposals; protocol says critique next","launches":[{"provider":"codex","prompt":"x"}]}');
+  assert.equal(d.kind, "run");
+  if (d.kind === "run") assert.match(d.notes ?? "", /critique next/);
+});
 
 test("parses a run decision", () => {
   const d = parseStepDecision('{"kind":"run","phase":"proposal_generation","launches":[{"id":"P1","provider":"codex","prompt":"go"}]}');

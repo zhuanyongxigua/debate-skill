@@ -22,6 +22,7 @@ interface ParsedArgs {
   request?: string;
   path?: string;
   brain?: string;
+  protocol?: string;
   error?: string;
 }
 
@@ -53,6 +54,9 @@ function parse(argv: string[]): ParsedArgs {
     } else if (flag === "--brain") {
       out.brain = argv[++i];
       i++;
+    } else if (flag === "--protocol") {
+      out.protocol = argv[++i];
+      i++;
     } else if (flag === "--config") {
       out.config = argv[++i];
       i++;
@@ -71,7 +75,7 @@ function usage(): void {
       "  debate-agent [--config <allowlist.json>] run       --request <request.json>",
       "  debate-agent [--config <allowlist.json>] run-batch  --request <batch.json>",
       "  debate-agent [--config <allowlist.json>] validate   --request <request.json>",
-      "  debate-agent [--config <allowlist.json>] watch      [--brain claude|codex]",
+      "  debate-agent [--config <allowlist.json>] watch      [--brain claude|codex] [--protocol <debate-protocol.md>]",
       "  debate-agent print-rules [--path <installed-path>]",
       "",
     ].join("\n"),
@@ -157,7 +161,17 @@ export async function main(argv: string[]): Promise<number> {
         process.stderr.write(`--brain must be claude or codex, got ${brain}\n`);
         return 2;
       }
-      await watchLoop(allow, { brainProvider: brain }); // runs until killed
+      // Fail closed: the brain is itself a launched CLI, so it must be allowed by
+      // the same allowlist as the workers — otherwise it bypasses the boundary.
+      if (!allow.providers.includes(brain)) {
+        process.stderr.write(
+          `--brain ${brain} is not in the allowlist providers (${allow.providers.join(", ")}); ` +
+            `add it to providers or pick an allowed brain\n`,
+        );
+        return 2;
+      }
+      const protocolPath = args.protocol ?? process.env.DEBATE_AGENT_PROTOCOL;
+      await watchLoop(allow, { brainProvider: brain, protocolPath }); // runs until killed
       return 0; // unreachable
     }
 

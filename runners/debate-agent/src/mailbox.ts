@@ -2,7 +2,7 @@
 // (writes responses). Lives under ~/.debate-router/ by default; override with
 // $DEBATE_AGENT_MAILBOX. Requests and responses correlate by id.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
@@ -49,6 +49,15 @@ export function requestIds(mb: Mailbox): string[] {
     .map((f) => f.slice(0, -".json".length));
 }
 
+/** Ids left in processing/ — i.e. claimed before a crash/restart and never
+ * finished. The daemon recovers these at startup. */
+export function processingIds(mb: Mailbox): string[] {
+  if (!existsSync(mb.processingDir)) return [];
+  return readdirSync(mb.processingDir)
+    .filter((f) => f.endsWith(".json"))
+    .map((f) => f.slice(0, -".json".length));
+}
+
 /** Atomically claim a request by renaming it into processing/. Returns the new
  * path, or null if it could not be claimed (already taken / gone). */
 export function claimRequest(mb: Mailbox, id: string): string | null {
@@ -62,6 +71,15 @@ export function claimRequest(mb: Mailbox, id: string): string | null {
   }
 }
 
+/** Remove a processing/ entry (after it has been finished or recovered). */
+export function clearProcessing(mb: Mailbox, id: string): void {
+  try {
+    unlinkSync(join(mb.processingDir, `${id}.json`));
+  } catch {
+    /* already gone */
+  }
+}
+
 /** Atomically write a response (temp file + rename) so readers never see a
  * half-written file. */
 export function writeResponse(mb: Mailbox, id: string, response: Record<string, unknown>): string {
@@ -70,6 +88,29 @@ export function writeResponse(mb: Mailbox, id: string, response: Record<string, 
   writeFileSync(tmpPath, JSON.stringify(response, null, 2));
   renameSync(tmpPath, finalPath);
   return finalPath;
+}
+
+/** Append-only progress log for one request, a sibling of `responses/<id>.json`
+ * so another agent can `tail -f` a debate while it runs. Lines are timestamped;
+ * logging never throws (a logging failure must not break the debate). */
+export function openResponseLog(mb: Mailbox, id: string): { log: (line: string) => void; close: () => void } {
+  const fd = openSync(join(mb.responsesDir, `${id}.log`), "a");
+  return {
+    log: (line: string) => {
+      try {
+        writeSync(fd, `[${new Date().toISOString()}] ${line}\n`);
+      } catch {
+        /* ignore */
+      }
+    },
+    close: () => {
+      try {
+        closeSync(fd);
+      } catch {
+        /* ignore */
+      }
+    },
+  };
 }
 
 // --- debate request (written by debate-router) -----------------------------
@@ -82,9 +123,20 @@ export interface DebateRequest {
   repo: string; // realpath-resolved, under an allowed root
   repoRoot: string;
   outputContract: Record<string, unknown> | null;
+  language: string | null; // the human's primary language; the debate answers in it
+  fast: boolean; // turbo mode: run a leaner/quicker debate
 }
 
-const ALLOWED_DEBATE_FIELDS = new Set(["schema_version", "id", "kind", "prompt", "repo", "output_contract"]);
+const ALLOWED_DEBATE_FIELDS = new Set([
+  "schema_version",
+  "id",
+  "kind",
+  "prompt",
+  "repo",
+  "output_contract",
+  "language",
+  "fast",
+]);
 
 export function loadDebateRequest(path: string): Record<string, unknown> {
   let raw: unknown;
@@ -104,6 +156,7 @@ export function validateDebateRequest(raw: Record<string, unknown>, allow: Allow
     if (!cond) throw new DebateRequestRejected(msg);
   };
   req(raw.schema_version === 1, "debate request schema_version must be 1");
+  req(raw.kind === "debate_request", 'kind must be "debate_request"');
   const unknown = Object.keys(raw).filter((k) => !ALLOWED_DEBATE_FIELDS.has(k));
   req(unknown.length === 0, `unknown debate request field(s): ${JSON.stringify(unknown.sort())}`);
 
@@ -130,5 +183,25 @@ export function validateDebateRequest(raw: Record<string, unknown>, allow: Allow
     outputContract = raw.output_contract as Record<string, unknown>;
   }
 
-  return { id: id as string, prompt: prompt as string, repo: resolved, repoRoot: root as string, outputContract };
+  let language: string | null = null;
+  if (raw.language !== undefined && raw.language !== null) {
+    req(typeof raw.language === "string", "language must be a string");
+    language = (raw.language as string).slice(0, 64);
+  }
+
+  let fast = false;
+  if (raw.fast !== undefined && raw.fast !== null) {
+    req(typeof raw.fast === "boolean", "fast must be a boolean");
+    fast = raw.fast as boolean;
+  }
+
+  return {
+    id: id as string,
+    prompt: prompt as string,
+    repo: resolved,
+    repoRoot: root as string,
+    outputContract,
+    language,
+    fast,
+  };
 }

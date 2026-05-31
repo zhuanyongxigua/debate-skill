@@ -94,24 +94,37 @@ export function buildChildEnv(
   return { env, stripped };
 }
 
-function buildClaudeArgv(capability: string): string[] {
-  // Mirrors cli-launch Claude Code defaults: print mode, prompt via stdin.
-  // Claude profiles are unsupported (caller fails closed before reaching here).
-  // read_only_review uses the default permission mode (won't edit in a
-  // non-interactive run); workspace_write auto-accepts edits.
+// Mutating tools the runner hard-denies for a read-only Claude child. Unlike
+// Codex (OS `--sandbox read-only`), Claude has no OS sandbox here, so this is a
+// harness-level deny, not a kernel guarantee — but it is explicit and
+// deterministic, far stronger than relying on "won't edit non-interactively".
+const CLAUDE_WRITE_TOOLS = "Edit Write MultiEdit NotebookEdit Bash";
+
+function buildClaudeArgv(capability: string, fast: boolean): string[] {
+  // Mirrors cli-launch Claude Code defaults: print mode, prompt via stdin,
+  // xhigh thinking. Claude profiles are unsupported (caller fails closed before
+  // reaching here). read_only_review additionally hard-denies edit/write/shell
+  // tools; workspace_write auto-accepts edits.
   const permissionMode = capability === "workspace_write" ? "acceptEdits" : "default";
-  return ["claude", "--print", "--permission-mode", permissionMode];
+  const argv = ["claude", "--print", "--permission-mode", permissionMode, "--effort", "xhigh"];
+  if (capability !== "workspace_write") argv.push("--disallowedTools", CLAUDE_WRITE_TOOLS);
+  // Fast/turbo mode via a per-invocation settings override (no global config change).
+  if (fast) argv.push("--settings", '{"fastMode":true}');
+  return argv;
 }
 
-function buildCodexArgv(cwd: string, profile: string | null, capability: string): string[] {
+function buildCodexArgv(cwd: string, profile: string | null, capability: string, fast: boolean): string[] {
   // Mirrors cli-launch Codex CLI defaults: exec mode, approvals never, prompt
-  // via stdin (the trailing "-"). read_only_review uses the read-only sandbox
-  // with no network; workspace_write uses the writable sandbox with network.
+  // via stdin (the trailing "-"), xhigh effort. read_only_review uses the
+  // read-only sandbox with no network; workspace_write uses the writable sandbox
+  // with network.
   const argv = ["codex"];
   if (profile) {
     argv.push("--profile", profile);
   }
   argv.push("--ask-for-approval", "never", "-c", 'model_reasoning_effort="xhigh"');
+  // Fast/turbo mode via per-invocation -c overrides (no global config change).
+  if (fast) argv.push("-c", 'service_tier="fast"', "-c", "features.fast_mode=true");
   if (capability === "workspace_write") {
     argv.push(
       "-c",
@@ -150,8 +163,9 @@ export function buildChildLaunch(args: {
   capability: string;
   prompt: string;
   baseEnv: Record<string, string | undefined>;
+  fast?: boolean;
 }): ChildLaunch {
-  const { provider, cwd, profile, capability, prompt, baseEnv } = args;
+  const { provider, cwd, profile, capability, prompt, baseEnv, fast = false } = args;
 
   let argv: string[];
   let promptTransport: "stdin" | "argv";
@@ -161,12 +175,13 @@ export function buildChildLaunch(args: {
     if (profile !== null) {
       throw new Error("claude profile is not supported by this runner");
     }
-    argv = buildClaudeArgv(capability);
+    argv = buildClaudeArgv(capability, fast);
     promptTransport = "stdin";
   } else if (provider === "codex") {
-    argv = buildCodexArgv(cwd, profile, capability);
+    argv = buildCodexArgv(cwd, profile, capability, fast);
     promptTransport = "stdin";
   } else if (provider === "copilot") {
+    // copilot is exempt from fast mode (no clean per-invocation fast flag).
     if (profile !== null) {
       throw new Error("copilot profile is not supported by this runner");
     }
