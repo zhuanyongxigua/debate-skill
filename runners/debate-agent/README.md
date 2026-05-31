@@ -115,12 +115,14 @@ listed here.
 | `repo` | string | absolute path; `realpath` must resolve under an allowed repo root and be an existing directory |
 | `profile` | string \| null | `null`, or in the profile allowlist for that provider. **Only Codex has profiles the runner can honor** — Claude profiles (strips `CLAUDE_CONFIG_DIR`) and Copilot profiles are rejected |
 | `capability` | string | `read_only_review` (default) or `workspace_write`; must be in the `capabilities` allowlist. Controls the child sandbox posture (see below) |
+| `effort` | string | optional thinking depth (`--effort` / `model_reasoning_effort`). claude: `low\|medium\|high\|xhigh\|max` (default `high`); codex: `low\|medium\|high\|xhigh` (default `xhigh`). The planner picks this per launch |
 | `fast` | bool | default `false`. When `true`, **codex** launches in turbo mode via per-invocation flags (`-c service_tier="fast" -c features.fast_mode=true`; no global config change). **claude and copilot are exempt** — claude's fast mode needs an API token, but the runner strips API keys and runs children on the logged-in account, so a fast flag could not take effect |
 | `prompt` | string | non-empty, length ≤ `max_prompt_chars`; transported to the child via **stdin only** |
 | `timeout_seconds` | int | a positive integer ≤ `86400` (fixed internal sanity cap, not configurable); if omitted, the phase-aware default is used |
 
-Thinking effort is always `xhigh` (codex `model_reasoning_effort="xhigh"`, claude
-`--effort xhigh`). `fast` is independent of effort.
+Thinking effort is **per-launch** (the planner picks it): codex generally `xhigh`,
+claude usually `high` (xhigh/max only when a launch needs deep reasoning). The
+planner itself always runs `xhigh`. `fast` is independent of effort.
 
 `provider` selects the binary. `mode` is only a coarse allowlisted intent label
 recorded in the audit — it never selects a different binary or alters argv.
@@ -150,16 +152,20 @@ operator **both** allowlists `workspace_write` **and** a request asks for it.
 
 | capability | codex | claude | copilot | use |
 | --- | --- | --- | --- | --- |
-| `read_only_review` (default) | `exec --sandbox read-only` (no network) | `--permission-mode default --disallowedTools "Edit Write MultiEdit NotebookEdit Bash"` | `--deny-tool=write --deny-tool=shell` | proposer / critic — reasons, cannot edit |
+| `read_only_review` (default) | `exec --sandbox read-only` (no network) | `--permission-mode default` + deny `Edit/Write/MultiEdit/NotebookEdit` + allow `Read/Grep/Glob` and read-only git (`Bash(git diff:*)` / `log` / `show` / `status` / `blame`) | `--deny-tool=write --deny-tool=shell` | proposer / critic / reviewer — reads + read-only git, cannot edit |
 | `workspace_write` | `--sandbox workspace-write` + network | `--permission-mode acceptEdits` | `--allow-tool=write --add-dir <repo>` (no shell) | implementation — may edit the repo |
 
 **Assurance differs by provider.** Codex read-only is an **OS-level** sandbox
-(`--sandbox read-only`) — a kernel guarantee. Claude has no OS sandbox here, so
-its read-only posture is a **harness-level deny**: `--disallowedTools` explicitly
-forbids the edit/write/shell tools (deterministic, far stronger than relying on
-"won't edit non-interactively", but not a kernel boundary). Copilot is similar
-(tool-permission flags, no OS sandbox). Treat codex as hard-isolated and
-claude/copilot as deny-listed when reasoning about blast radius.
+(`--sandbox read-only`) — a kernel guarantee — so it can run **any** read-only
+command (git, build, tests, broad inspection). Claude has no OS sandbox here, so
+its read-only posture is a **harness-level permission boundary**: writes are
+denied (`--disallowedTools Edit/Write/MultiEdit/NotebookEdit`) and only read tools
++ a small set of **read-only git** subcommands are allowed (`Read/Grep/Glob`,
+`Bash(git diff:*)`/`log`/`show`/`status`/`blame`) — verified that writes and
+arbitrary shell stay denied, but it is not a kernel boundary, and read-only git
+still trusts the repo's own git config (prefer codex for untrusted repos). Copilot
+is similar (tool-permission flags, no OS sandbox). Treat codex as hard-isolated and
+claude/copilot as permission-listed when reasoning about blast radius.
 
 The **default allowlist lists only `read_only_review`**, so no automated child
 can ever write — important once Codex Rules are set to `allow` (unattended).

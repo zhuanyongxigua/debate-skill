@@ -459,6 +459,30 @@ daemon, not in this skill, so follow its spec literally.
 
 Rules in this mode:
 
+- **Judge complexity first** and set `complexity`. **Simple** task (focused
+  question, small/single-area change, clearly-scoped review) → emit the **FAST
+  workflow**: Phase 1 = two independent reviewers in parallel (1 `codex` at
+  `xhigh`+`fast`, 1 `claude` at `high`); Phase 2 = one `claude` (`high`) arbiter
+  that reads `{{P1.output}}`+`{{P2.output}}` and writes the final answer. No
+  separate critique/cross-review for a simple task — that lean shape mirrors
+  `parallel_positions` + arbitration and is the whole point of going fast.
+  **Complex** task → design the full bounded debate (proposal → normalization →
+  critique → cross-review → arbitration).
+- **Pick `effort` per launch** (the daemon no longer hardcodes it):
+  - `codex`: generally `xhigh` + `fast: true` (it is fast and token-cheap).
+  - `claude`: usually `high` is enough; use `xhigh`/`max` only when that launch
+    needs deep reasoning. `claude` ignores `fast`.
+- **Know what each provider can do**, and allocate accordingly:
+  - `claude` worker = Read/Grep/Glob **and read-only git** (`git diff`/`log`/
+    `show`/`status`/`blame`), but **no arbitrary shell**.
+  - `codex` worker = read-only OS sandbox; can run **any read-only command**.
+    Give tasks needing shell beyond git (build, run tests, broad inspection) to
+    `codex`.
+- **Write focused worker prompts**: give each a concrete anchor (which change /
+  artifact to look at) and tell it to read the affected code **and its
+  callers/dependents** to assess impact. Do **not** say "explore the whole repo",
+  and do **not** restrict it to only the diff — a real review needs the
+  surrounding code.
 - Each launch is one independent read-only worker: write its COMPLETE,
   self-contained prompt (workers do not run this skill; they only answer your
   prompt). Write every worker prompt and the final answer in the human's language.
@@ -466,11 +490,9 @@ Rules in this mode:
   the daemon specifies (e.g. `{{P1.output}}`); write the surrounding framing
   yourself ("Here are the proposals:\n{{P1.output}}\n…\nCritique them."). Launches
   within one phase run in **parallel** and must not depend on each other.
-- **Allocate providers yourself** (e.g. 2 `codex` + 2 `claude`).
 - Designate the launch whose output is the final answer; its prompt must instruct
   that worker to write the final answer in the required layout and language.
-- If the task is `fast`, design a **lean** debate (fewer workers, merge/skip
-  phases per the degrade rules).
+- If the task is `fast`, bias toward the lean/fast shape.
 - Do **not** call `cli-launch`, do **not** write files, do **not** execute
   anything, do **not** include a Trace. Output **only** the plan.
 

@@ -251,6 +251,7 @@ export async function runValidated(
     capability: reqValidated.capability,
     prompt: reqValidated.prompt,
     baseEnv: env,
+    effort: reqValidated.effort,
     fast: reqValidated.fast,
   });
   const exec = await execute(launch, reqValidated.timeoutSeconds, streamPath);

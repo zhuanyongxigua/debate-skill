@@ -11,11 +11,13 @@ import { isAbsolute } from "node:path";
 import {
   Allowlist,
   DEFAULT_CAPABILITY,
+  DEFAULT_EFFORT,
   FALLBACK_DEFAULT_TIMEOUT,
   MAX_TIMEOUT_SECONDS,
   PHASE_DEFAULT_TIMEOUT,
   VALID_PHASES,
   repoRootMatch,
+  validEffortsFor,
 } from "./allowlist";
 import { expandUser, realpathLenient } from "./paths";
 import { REQUEST_SCHEMA_VERSION } from "./version";
@@ -31,6 +33,7 @@ const ALLOWED_REQUEST_FIELDS = new Set([
   "repo",
   "profile",
   "capability",
+  "effort",
   "fast",
   "prompt",
   "timeout_seconds",
@@ -62,6 +65,7 @@ export interface ValidatedRequest {
   repoRoot: string;
   profile: string | null;
   capability: string;
+  effort: string;
   fast: boolean;
   prompt: string;
   timeoutSeconds: number;
@@ -203,6 +207,21 @@ export function validateRequest(raw: Record<string, unknown>, allow: Allowlist):
     fast = raw.fast as boolean;
   }
 
+  // --- effort (per-launch thinking depth) ---------------------------------
+  // The planner picks this per worker; valid values depend on the provider.
+  let effort: string;
+  if (raw.effort !== undefined && raw.effort !== null) {
+    req(typeof raw.effort === "string", "effort must be a string");
+    const allowed = validEffortsFor(provider);
+    req(
+      allowed.includes(raw.effort as string),
+      `effort ${JSON.stringify(raw.effort)} not allowed for provider "${provider}"; allowed: ${JSON.stringify(allowed)}`,
+    );
+    effort = raw.effort as string;
+  } else {
+    effort = DEFAULT_EFFORT[provider] ?? "high";
+  }
+
   // --- prompt -------------------------------------------------------------
   const prompt = raw.prompt;
   req(typeof prompt === "string" && prompt.trim() !== "", "prompt must be a non-empty string");
@@ -234,6 +253,7 @@ export function validateRequest(raw: Record<string, unknown>, allow: Allowlist):
     repoRoot: matchedRoot,
     profile,
     capability,
+    effort,
     fast,
     prompt: prompt as string,
     timeoutSeconds: timeout,

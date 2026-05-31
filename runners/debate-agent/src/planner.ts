@@ -65,18 +65,30 @@ export async function planWithRetry(
 
 const PLAN_FORMAT = `Output ONLY one JSON object — no prose, no markdown, no code fences — with EXACTLY this shape:
 {
+  "complexity": "simple|complex",
   "phases": [
     { "name": "<label, e.g. proposal_generation|critique|cross_review|arbitration>",
-      "launches": [ { "id": "<unique slug, e.g. P1>", "provider": "claude|codex", "prompt": "<full self-contained instruction for this worker>" } ] }
+      "launches": [ { "id": "<unique slug, e.g. P1>", "provider": "claude|codex", "effort": "<see below>", "fast": <true|false>, "prompt": "<full self-contained instruction for this worker>" } ] }
   ],
   "answer_item": "<the id of the launch whose output IS the final answer>"
 }
 Rules you MUST follow:
-- Each launch is one independent read-only worker; its "prompt" must be a COMPLETE, self-contained instruction (the worker does NOT run any skill — it only answers the prompt you give).
-- Launches within the same phase run in PARALLEL and must NOT depend on each other.
-- A later phase's prompt may embed an EARLIER launch's output with the placeholder {{<id>.output}} (only reference ids from earlier phases). Write the surrounding framing yourself, e.g. "Here are the proposals:\\n{{P1.output}}\\n{{P2.output}}\\nCritique them.".
-- "id" values are unique slugs across the whole plan; "provider" is one of the allowlisted providers.
-- "answer_item" is the launch whose output is the final, human-facing answer — its prompt must instruct that worker to write the final answer in the required layout and language.
+- "complexity": FIRST judge the task. SIMPLE = a focused question, a small/single-area change, or a clearly-scoped review. COMPLEX = broad, contentious, large, or spanning multiple subsystems.
+  - If SIMPLE, emit the FAST workflow (keep it short, this is the whole point):
+      Phase 1 "proposal_generation": TWO independent reviewers in PARALLEL — P1 codex (effort xhigh, fast true) and P2 claude (effort high) — each independently does the task/review.
+      Phase 2 "arbitration": ONE claude (effort high) arbiter that reads {{P1.output}} and {{P2.output}} and writes the final answer, noting any disagreement. answer_item = that arbiter.
+      Do NOT add separate critique / cross-review phases for a simple task.
+  - If COMPLEX, design the full bounded debate (proposal_generation -> normalization -> critique -> cross_review -> arbitration), allocating providers and effort per the task.
+- "effort" (per launch, the planner's choice — DO set it):
+    codex: generally "xhigh" with "fast": true (codex is fast and token-cheap).
+    claude: usually "high" is enough; use "xhigh" or "max" ONLY when that launch needs deep reasoning. claude ignores "fast".
+    valid values — claude: low|medium|high|xhigh|max ; codex: low|medium|high|xhigh.
+- Provider capabilities (allocate accordingly):
+    claude worker = can Read/Grep/Glob and run READ-ONLY git (git diff/log/show/status/blame), but NOT arbitrary shell.
+    codex worker = read-only OS sandbox; can run any read-only command. Give tasks needing shell beyond git (build, tests, broad inspection) to codex.
+- Each launch is one independent read-only worker; its "prompt" must be a COMPLETE, self-contained instruction (the worker does NOT run any skill — it only answers the prompt you give). Give it a concrete anchor (what artifact / which change to look at) and tell it to read the affected code AND its callers/dependents to judge impact — do NOT write "explore the whole repo", and do NOT artificially restrict it to only the diff.
+- Launches within the same phase run in PARALLEL and must NOT depend on each other. A later phase's prompt may embed an EARLIER launch's output with {{<id>.output}} (only earlier phases). Write the surrounding framing yourself.
+- "id" values are unique slugs across the whole plan. "answer_item" is the launch whose output is the final, human-facing answer — its prompt must instruct that worker to write the final answer in the required layout and language.
 - Do NOT call cli-launch, do NOT write files, do NOT execute anything, do NOT include a Trace. Output ONLY the JSON plan object.`;
 
 function buildPlannerPrompt(req: DebateRequest, lastError: string | null): string {
@@ -154,6 +166,7 @@ export function makeCliPlanner(
           capability: "read_only_review", // the planner only reasons + reads; never writes
           prompt,
           baseEnv,
+          effort: "xhigh", // the planner's job is heavy — always xhigh
           fast: req.fast,
           codexSchemaFile: schemaFile,
           codexOutputFile: outFile,
@@ -184,6 +197,7 @@ export function makeCliPlanner(
       capability: "read_only_review",
       prompt,
       baseEnv,
+      effort: "xhigh", // the planner's job is heavy — always xhigh
       jsonSchema: SCHEMA_STR,
     });
     const exec = await execute(launch, PLANNER_TIMEOUT_SECONDS, streamPath);

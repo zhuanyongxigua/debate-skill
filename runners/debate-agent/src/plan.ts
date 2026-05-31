@@ -9,7 +9,7 @@
 // lives in the debate-router skill, which the planner loads); this file owns only
 // the plan FORMAT and its validation.
 
-import { Allowlist } from "./allowlist";
+import { Allowlist, validEffortsFor } from "./allowlist";
 
 export class PlanInvalid extends Error {}
 
@@ -17,6 +17,8 @@ export interface PlanLaunch {
   id: string;
   provider: string;
   prompt: string; // a template; may contain `{{<id>.output}}` referencing earlier launches
+  effort?: string; // thinking depth the planner picked (per provider's valid set)
+  fast?: boolean; // codex turbo (claude/copilot ignore it)
 }
 
 export interface PlanPhase {
@@ -27,6 +29,7 @@ export interface PlanPhase {
 export interface Plan {
   phases: PlanPhase[];
   answerItem: string; // the launch id whose output is the final answer
+  complexity?: string; // the planner's "simple" | "complex" judgment (audit metadata)
 }
 
 // The plan's JSON Schema — the SHAPE only. Passed to the planner CLI's native
@@ -60,6 +63,8 @@ export const PLAN_JSON_SCHEMA = {
                 id: { type: "string" },
                 provider: { type: "string" },
                 prompt: { type: "string" },
+                effort: { type: "string" },
+                fast: { type: "boolean" },
               },
             },
           },
@@ -67,6 +72,7 @@ export const PLAN_JSON_SCHEMA = {
       },
     },
     answer_item: { type: "string" },
+    complexity: { type: "string" },
   },
 } as const;
 
@@ -74,9 +80,9 @@ const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const PLACEHOLDER_RE = /\{\{\s*([A-Za-z0-9._-]+)\.output\s*\}\}/g;
 const MAX_PHASES = 8;
 
-const ALLOWED_PLAN_FIELDS = new Set(["phases", "answer_item"]);
+const ALLOWED_PLAN_FIELDS = new Set(["phases", "answer_item", "complexity"]);
 const ALLOWED_PHASE_FIELDS = new Set(["name", "launches"]);
-const ALLOWED_LAUNCH_FIELDS = new Set(["id", "provider", "prompt"]);
+const ALLOWED_LAUNCH_FIELDS = new Set(["id", "provider", "prompt", "effort", "fast"]);
 
 /** Item ids a prompt references via `{{id.output}}` (deduplicated, in order). */
 export function placeholderRefs(prompt: string): string[] {
@@ -181,7 +187,21 @@ export function validatePlan(raw: unknown, allow: Allowlist): Plan {
         bad(`phases[${pi}].launches[${li}].prompt exceeds max_prompt_chars (${allow.maxPromptChars})`);
       }
 
-      return { id: id as string, provider: provider as string, prompt: prompt as string };
+      let effort: string | undefined;
+      if (launch.effort !== undefined && launch.effort !== null) {
+        const allowed = validEffortsFor(provider as string);
+        if (typeof launch.effort !== "string" || !allowed.includes(launch.effort)) {
+          bad(`launch ${id} effort ${JSON.stringify(launch.effort)} not allowed for provider "${provider}"; allowed: ${JSON.stringify(allowed)}`);
+        }
+        effort = launch.effort as string;
+      }
+      let fast: boolean | undefined;
+      if (launch.fast !== undefined && launch.fast !== null) {
+        if (typeof launch.fast !== "boolean") bad(`launch ${id} fast must be a boolean`);
+        fast = launch.fast as boolean;
+      }
+
+      return { id: id as string, provider: provider as string, prompt: prompt as string, effort, fast };
     });
     phases.push({ name: phase.name as string, launches });
   });
@@ -204,5 +224,11 @@ export function validatePlan(raw: unknown, allow: Allowlist): Plan {
     bad(`answer_item ${JSON.stringify(answerItem)} must be one of the launch ids`);
   }
 
-  return { phases, answerItem: answerItem as string };
+  let complexity: string | undefined;
+  if (obj.complexity !== undefined && obj.complexity !== null) {
+    if (typeof obj.complexity !== "string") bad("complexity must be a string");
+    complexity = obj.complexity as string;
+  }
+
+  return { phases, answerItem: answerItem as string, complexity };
 }

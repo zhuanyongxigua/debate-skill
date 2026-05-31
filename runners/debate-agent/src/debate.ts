@@ -135,7 +135,8 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
           repo: req.repo,
           prompt: substitute(launch.prompt, outputs), // mechanical text fill-in; no LLM here
           capability: "read_only_review", // FORCED read-only; the plan cannot request writes
-          fast: req.fast,
+          effort: launch.effort, // planner's per-launch choice (undefined => provider default)
+          fast: launch.fast ?? req.fast, // per-launch (codex turbo); fall back to the request flag
         };
         const streamPath = deps.streamDir ? join(deps.streamDir, `${launch.id}.log`) : undefined;
         return { itemId: launch.id, req: validateRequest(reqObj, allow), streamPath };

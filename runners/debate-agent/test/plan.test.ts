@@ -108,6 +108,28 @@ test("validatePlan rejects unknown reference and bad answer_item", () => {
   assert.throws(() => validatePlan({ phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "a" }] }], answer_item: "nope" }, allow), /answer_item/);
 });
 
+test("validatePlan accepts per-launch effort/fast + complexity, rejects bad effort", () => {
+  const ok = {
+    complexity: "simple",
+    phases: [{ name: "p", launches: [
+      { id: "P1", provider: "codex", prompt: "x", effort: "xhigh", fast: true },
+      { id: "P2", provider: "claude", prompt: "y", effort: "max" },
+    ] }],
+    answer_item: "P1",
+  };
+  const plan = validatePlan(ok, allow);
+  assert.equal(plan.complexity, "simple");
+  assert.equal(plan.phases[0]!.launches[0]!.effort, "xhigh");
+  assert.equal(plan.phases[0]!.launches[0]!.fast, true);
+  assert.equal(plan.phases[0]!.launches[1]!.effort, "max"); // max valid for claude
+  // 'max' is NOT valid for codex
+  const badCodex = { phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "x", effort: "max" }] }], answer_item: "P1" };
+  assert.throws(() => validatePlan(badCodex, allow), /effort .* not allowed for provider "codex"/);
+  // non-boolean fast
+  const badFast = { phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "x", fast: "yes" }] }], answer_item: "P1" };
+  assert.throws(() => validatePlan(badFast, allow), /fast must be a boolean/);
+});
+
 test("validatePlan enforces per-phase launch cap (max_batch_items)", () => {
   const launches = Array.from({ length: allow.maxBatchItems + 1 }, (_v, i) => ({ id: `P${i}`, provider: "codex", prompt: "x" }));
   assert.throws(() => validatePlan({ phases: [{ name: "p", launches }], answer_item: "P0" }, allow), /exceeds max_batch_items/);

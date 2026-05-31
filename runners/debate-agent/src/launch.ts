@@ -94,25 +94,46 @@ export function buildChildEnv(
   return { env, stripped };
 }
 
-// Mutating tools the runner hard-denies for a read-only Claude child. Unlike
-// Codex (OS `--sandbox read-only`), Claude has no OS sandbox here, so this is a
-// harness-level deny, not a kernel guarantee — but it is explicit and
-// deterministic, far stronger than relying on "won't edit non-interactively".
-const CLAUDE_WRITE_TOOLS = "Edit Write MultiEdit NotebookEdit Bash";
+// Read-only Claude posture (Claude has no OS sandbox, so this is a harness-level
+// permission boundary, not a kernel guarantee). We DENY the mutating tools, and
+// ALLOW only read tools plus a small set of read-only `git` subcommands so a
+// review worker can actually see what changed (Read/Grep/Glob alone cannot run
+// `git diff`). Each entry MUST be its own argv element — the `Bash(git diff:*)`
+// patterns contain a space, so a single space-joined string would split them.
+//   Verified safe: with these flags + `--permission-mode default`, claude runs
+//   `git diff` but writes (Write/Edit) and arbitrary Bash (e.g. `echo > file`,
+//   `tee`) are denied (no approval in --print) — neither /tmp nor cwd is writable.
+// Residual: read-only git still trusts the repo's own git config/attributes
+// (e.g. a malicious `diff.external`); prefer codex (OS sandbox) for untrusted repos.
+const CLAUDE_DENY_WRITE_TOOLS = ["Edit", "Write", "MultiEdit", "NotebookEdit"];
+const CLAUDE_READONLY_TOOLS = [
+  "Read",
+  "Grep",
+  "Glob",
+  "Bash(git diff:*)",
+  "Bash(git log:*)",
+  "Bash(git show:*)",
+  "Bash(git status:*)",
+  "Bash(git blame:*)",
+];
 
-function buildClaudeArgv(capability: string, jsonSchema?: string): string[] {
-  // Mirrors cli-launch Claude Code defaults: print mode, prompt via stdin,
-  // xhigh thinking. Claude profiles are unsupported (caller fails closed before
-  // reaching here). read_only_review additionally hard-denies edit/write/shell
-  // tools; workspace_write auto-accepts edits.
+function buildClaudeArgv(capability: string, effort: string, jsonSchema?: string): string[] {
+  // Mirrors cli-launch Claude Code defaults: print mode, prompt via stdin. Thinking
+  // `effort` is per-launch (the planner picks it; the planner itself runs xhigh).
+  // Claude profiles are unsupported (caller fails closed before reaching here).
+  // read_only_review denies writes and allows only read tools + read-only git;
+  // workspace_write auto-accepts edits.
   //
-  // Claude is EXEMPT from fast/turbo mode (like copilot): Claude's fast mode
-  // needs an API token, but the runner strips API keys and runs the child on the
-  // default logged-in account config, so a fast flag could not take effect. Only
-  // codex honors `fast`.
+  // Claude is EXEMPT from fast/turbo mode (like copilot): Claude's fast mode needs
+  // an API token, but the runner strips API keys and runs the child on the default
+  // logged-in account config, so a fast flag could not take effect. Only codex
+  // honors `fast`.
   const permissionMode = capability === "workspace_write" ? "acceptEdits" : "default";
-  const argv = ["claude", "--print", "--permission-mode", permissionMode, "--effort", "xhigh"];
-  if (capability !== "workspace_write") argv.push("--disallowedTools", CLAUDE_WRITE_TOOLS);
+  const argv = ["claude", "--print", "--permission-mode", permissionMode, "--effort", effort];
+  if (capability !== "workspace_write") {
+    argv.push("--disallowedTools", ...CLAUDE_DENY_WRITE_TOOLS);
+    argv.push("--allowedTools", ...CLAUDE_READONLY_TOOLS);
+  }
   if (jsonSchema) {
     // Planner: constrain the final result to a JSON Schema. `--json-schema` needs
     // `--output-format json`; the validated object arrives in the envelope's
@@ -130,19 +151,21 @@ function buildCodexArgv(
   cwd: string,
   profile: string | null,
   capability: string,
+  effort: string,
   fast: boolean,
   schemaFile?: string,
   outputFile?: string,
 ): string[] {
   // Mirrors cli-launch Codex CLI defaults: exec mode, approvals never, prompt
-  // via stdin (the trailing "-"), xhigh effort. read_only_review uses the
-  // read-only sandbox with no network; workspace_write uses the writable sandbox
-  // with network.
+  // via stdin (the trailing "-"). Thinking `effort` is per-launch (the planner
+  // picks it; codex is fast/cheap so it generally uses xhigh). read_only_review
+  // uses the read-only sandbox with no network; workspace_write uses the writable
+  // sandbox with network.
   const argv = ["codex"];
   if (profile) {
     argv.push("--profile", profile);
   }
-  argv.push("--ask-for-approval", "never", "-c", 'model_reasoning_effort="xhigh"');
+  argv.push("--ask-for-approval", "never", "-c", `model_reasoning_effort="${effort}"`);
   // Fast/turbo mode via per-invocation -c overrides (no global config change).
   if (fast) argv.push("-c", 'service_tier="fast"', "-c", "features.fast_mode=true");
   if (capability === "workspace_write") {
@@ -187,13 +210,14 @@ export function buildChildLaunch(args: {
   capability: string;
   prompt: string;
   baseEnv: Record<string, string | undefined>;
+  effort?: string; // thinking effort (per-launch; default "high"). copilot has none.
   fast?: boolean;
   // Planner-only structured-output (the runner reads the validated plan back):
   jsonSchema?: string; // claude: inline `--json-schema` (with `--output-format json`)
   codexSchemaFile?: string; // codex: `--output-schema <file>`
   codexOutputFile?: string; // codex: `-o <file>` (final message written here)
 }): ChildLaunch {
-  const { provider, cwd, profile, capability, prompt, baseEnv, fast = false, jsonSchema, codexSchemaFile, codexOutputFile } = args;
+  const { provider, cwd, profile, capability, prompt, baseEnv, effort = "high", fast = false, jsonSchema, codexSchemaFile, codexOutputFile } = args;
 
   let argv: string[];
   let promptTransport: "stdin" | "argv";
@@ -203,10 +227,10 @@ export function buildChildLaunch(args: {
     if (profile !== null) {
       throw new Error("claude profile is not supported by this runner");
     }
-    argv = buildClaudeArgv(capability, jsonSchema); // claude is fast-exempt (needs an API token)
+    argv = buildClaudeArgv(capability, effort, jsonSchema); // claude is fast-exempt (needs an API token)
     promptTransport = "stdin";
   } else if (provider === "codex") {
-    argv = buildCodexArgv(cwd, profile, capability, fast, codexSchemaFile, codexOutputFile);
+    argv = buildCodexArgv(cwd, profile, capability, effort, fast, codexSchemaFile, codexOutputFile);
     promptTransport = "stdin";
   } else if (provider === "copilot") {
     // copilot is exempt from fast mode (no clean per-invocation fast flag).

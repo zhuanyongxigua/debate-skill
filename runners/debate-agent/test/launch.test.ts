@@ -117,21 +117,34 @@ test("claude permission-mode follows capability", () => {
   assert.equal(rw.argv[rw.argv.indexOf("--permission-mode") + 1], "acceptEdits");
 });
 
-test("claude read_only_review hard-denies edit/write/shell tools", () => {
+test("claude read_only_review denies writes, allows read tools + read-only git", () => {
   const ro = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {} });
-  const denied = ro.argv[ro.argv.indexOf("--disallowedTools") + 1];
-  for (const tool of ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"]) {
-    assert.ok(denied!.includes(tool), `${tool} should be denied`);
+  // write tools denied (each its own argv element); Bash NOT broadly denied
+  const di = ro.argv.indexOf("--disallowedTools");
+  const ai = ro.argv.indexOf("--allowedTools");
+  const denied = ro.argv.slice(di + 1, ai);
+  assert.deepEqual(denied, ["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+  assert.ok(!denied.includes("Bash"), "Bash must not be broadly denied (we allow read-only git patterns)");
+  // read tools + scoped read-only git allowed; the git patterns are intact (own elements)
+  const allowed = ro.argv.slice(ai + 1).filter((a) => !a.startsWith("--"));
+  for (const t of ["Read", "Grep", "Glob", "Bash(git diff:*)", "Bash(git log:*)"]) {
+    assert.ok(allowed.includes(t), `${t} should be allowed`);
   }
+  // no write/exec patterns leak into the allow list
+  assert.ok(!allowed.some((a) => /Bash\((?!git )/.test(a)), "only read-only git Bash patterns are allowed");
   // workspace_write must NOT deny edits (it is allowed to write)
   const rw = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "workspace_write", prompt: "P", baseEnv: {} });
-  assert.ok(!rw.argv.includes("--disallowedTools"));
+  assert.ok(!rw.argv.includes("--disallowedTools") && !rw.argv.includes("--allowedTools"));
 });
 
-test("xhigh thinking is the default for claude and codex", () => {
+test("thinking effort is per-launch (default high; planner picks the value)", () => {
+  // default effort is high (the planner overrides per launch; codex defaults to xhigh at the schema layer)
   const c = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {} });
-  assert.equal(c.argv[c.argv.indexOf("--effort") + 1], "xhigh");
-  const x = buildChildLaunch({ provider: "codex", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {} });
+  assert.equal(c.argv[c.argv.indexOf("--effort") + 1], "high");
+  // an explicit effort is honored
+  const cx = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {}, effort: "xhigh" });
+  assert.equal(cx.argv[cx.argv.indexOf("--effort") + 1], "xhigh");
+  const x = buildChildLaunch({ provider: "codex", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {}, effort: "xhigh" });
   assert.ok(x.argv.some((a) => a === 'model_reasoning_effort="xhigh"'));
 });
 
