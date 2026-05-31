@@ -1,36 +1,34 @@
-// Mailbox primitives + the daemon's request→response loop, deterministic via an
-// injected worker executor (stub runItems). No real LLM/CLI.
+// Mailbox primitives + the daemon's request→response loop, deterministic via a
+// scripted planner and stub workers (injected makeDeps). No real LLM/CLI.
 
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 
+import { DebateDeps } from "../src/debate";
 import {
   MailboxRequestRejected,
   claimRequest,
   loadRequestObject,
   openMailbox,
   snapshotRequestIds,
-  validateRunBatchRequest,
+  validateDebateRequest,
   writeResponse,
 } from "../src/mailbox";
-import { BatchDeps } from "../src/mailbox-batch";
-import { BatchItemResult, PreparedItem } from "../src/runner";
-import { processNewRequests, recoverOrphans } from "../src/watch";
+import { PlannerFn } from "../src/planner";
+import { BatchItemResult } from "../src/runner";
+import { processNewRequests, recoverOrphans, watchLoop } from "../src/watch";
 import { cleanup, makeAllowlist, makeTempDir } from "./helpers";
 
 let root: string;
 let repo: string;
-let outDir: string;
 let allow: ReturnType<typeof makeAllowlist>;
 
 beforeEach(() => {
   root = makeTempDir();
   repo = join(root, "repo");
   mkdirSync(repo);
-  outDir = join(root, "out");
-  mkdirSync(outDir);
   process.env.DEBATE_AGENT_MAILBOX = join(root, "mailbox");
   allow = makeAllowlist(repo, { modes: ["debate-proposal", "debate-critique", "debate-cross-review"] });
 });
@@ -44,100 +42,52 @@ function writeRequestFile(id: string, overrides: Record<string, unknown> = {}): 
   const mb = openMailbox();
   writeFileSync(
     join(mb.requestsDir, `${id}.json`),
-    JSON.stringify({
-      schema_version: 1,
-      id,
-      kind: "run_batch_request",
-      repo: realpathSync(repo),
-      items: [{ item_id: "P1", provider: "codex", prompt: "go", phase: "proposal_generation" }],
-      ...overrides,
-    }),
+    JSON.stringify({ schema_version: 1, id, kind: "debate_request", prompt: "debate this", repo: realpathSync(repo), ...overrides }),
   );
 }
 
-/** A stub worker executor that records what it was asked to run and writes a fake
- * stdout file per item (so the embedded-output path is exercised). */
-function stubDeps(): { opts: BatchDeps; calls: PreparedItem[][] } {
-  const calls: PreparedItem[][] = [];
-  const runItems: BatchDeps["runItems"] = async (items) => {
-    calls.push(items);
-    return items.map((it): BatchItemResult => {
-      if (it.rejected !== undefined) return { item_id: it.itemId, status: "rejected", reject_reason: it.rejected };
-      const p = join(outDir, `${it.itemId}-${calls.length}.txt`);
-      writeFileSync(p, `out-${it.itemId}`);
-      return { item_id: it.itemId, status: "completed", provider: it.req!.provider, stdout_path: p };
-    });
+const onePhasePlan = JSON.stringify({
+  phases: [{ name: "proposal_generation", launches: [{ id: "P1", provider: "codex", prompt: "go" }] }],
+  answer_item: "P1",
+});
+
+/** Scripted planner + stub workers (with embedded output). */
+function stubDeps(): { makeDeps: () => DebateDeps; planTexts: string[] } {
+  const planTexts: string[] = [];
+  const planner: PlannerFn = async () => {
+    planTexts.push(onePhasePlan);
+    return onePhasePlan;
   };
-  return { opts: { runItems }, calls };
+  const runItems: DebateDeps["runItems"] = async (items) =>
+    items.map((it): BatchItemResult =>
+      it.rejected !== undefined
+        ? { item_id: it.itemId, status: "rejected", reject_reason: it.rejected }
+        : { item_id: it.itemId, status: "completed", provider: it.req!.provider },
+    );
+  const readOutput = (r: BatchItemResult): string => `ANSWER-${r.item_id}`;
+  return { makeDeps: () => ({ planner, runItems, readOutput }), planTexts };
 }
 
 // --- mailbox primitives ----------------------------------------------------
 
-test("validateRunBatchRequest accepts a good request", () => {
-  const req = validateRunBatchRequest(
-    {
-      schema_version: 1,
-      id: "r1",
-      kind: "run_batch_request",
-      repo: realpathSync(repo),
-      items: [{ item_id: "P1", provider: "codex", prompt: "x" }],
-    },
-    allow,
-  );
-  assert.equal(req.id, "r1");
-  assert.equal(req.repo, realpathSync(repo));
-  assert.equal(req.fast, false); // defaults
-  assert.equal(req.maxParallel, null);
-  assert.equal(req.items[0]!.phase, "other"); // default
+test("validateDebateRequest accepts a good request and defaults", () => {
+  const r = validateDebateRequest({ schema_version: 1, id: "r1", kind: "debate_request", prompt: "x", repo: realpathSync(repo) }, allow);
+  assert.equal(r.id, "r1");
+  assert.equal(r.repo, realpathSync(repo));
+  assert.equal(r.language, null);
+  assert.equal(r.fast, false);
 });
 
-test("validateRunBatchRequest accepts fast + phase + timeout", () => {
-  const req = validateRunBatchRequest(
-    {
-      schema_version: 1,
-      id: "r1",
-      kind: "run_batch_request",
-      repo: realpathSync(repo),
-      fast: true,
-      items: [{ item_id: "P1", provider: "codex", prompt: "x", phase: "critique", timeout_seconds: 120 }],
-    },
-    allow,
-  );
-  assert.equal(req.fast, true);
-  assert.equal(req.items[0]!.phase, "critique");
-  assert.equal(req.items[0]!.timeoutSeconds, 120);
-});
-
-test("validateRunBatchRequest rejects a non-boolean fast", () => {
-  assert.throws(
-    () =>
-      validateRunBatchRequest(
-        { schema_version: 1, id: "r1", kind: "run_batch_request", repo: realpathSync(repo), fast: "yes", items: [{ item_id: "P1", provider: "codex", prompt: "x" }] },
-        allow,
-      ),
-    /fast must be a boolean/,
-  );
-});
-
-test("validateRunBatchRequest rejects bad kind / unknown field / outside repo / bad id", () => {
-  const base = { schema_version: 1, id: "r1", kind: "run_batch_request", repo: realpathSync(repo), items: [{ item_id: "P1", provider: "codex", prompt: "x" }] };
-  assert.throws(() => validateRunBatchRequest({ ...base, kind: "debate_request" }, allow), /kind must be/);
-  assert.throws(() => validateRunBatchRequest({ ...base, oops: 1 }, allow), MailboxRequestRejected);
-  assert.throws(() => validateRunBatchRequest({ ...base, repo: "/etc" }, allow), MailboxRequestRejected);
-  assert.throws(() => validateRunBatchRequest({ ...base, id: "../escape" }, allow), MailboxRequestRejected);
-});
-
-test("validateRunBatchRequest rejects bad items: empty, dup id, unknown provider, blank prompt, unknown field", () => {
-  const base = { schema_version: 1, id: "r1", kind: "run_batch_request", repo: realpathSync(repo) };
-  assert.throws(() => validateRunBatchRequest({ ...base, items: [] }, allow), /at least one launch/);
-  assert.throws(
-    () => validateRunBatchRequest({ ...base, items: [{ item_id: "P1", provider: "codex", prompt: "x" }, { item_id: "P1", provider: "codex", prompt: "y" }] }, allow),
-    /duplicate item_id/,
-  );
-  assert.throws(() => validateRunBatchRequest({ ...base, items: [{ item_id: "P1", provider: "gemini", prompt: "x" }] }, allow), /not in allowlist providers/);
-  assert.throws(() => validateRunBatchRequest({ ...base, items: [{ item_id: "P1", provider: "codex", prompt: "  " }] }, allow), /non-empty string/);
-  assert.throws(() => validateRunBatchRequest({ ...base, items: [{ item_id: "P1", provider: "codex", prompt: "x", oops: 1 }] }, allow), /unknown field/);
-  assert.throws(() => validateRunBatchRequest({ ...base, items: [{ item_id: "P1", provider: "codex", prompt: "x", phase: "nope" }] }, allow), /phase .* invalid/);
+test("validateDebateRequest accepts language + fast, rejects bad shapes", () => {
+  const r = validateDebateRequest({ schema_version: 1, id: "r1", kind: "debate_request", prompt: "x", repo: realpathSync(repo), language: "中文", fast: true }, allow);
+  assert.equal(r.language, "中文");
+  assert.equal(r.fast, true);
+  const base = { schema_version: 1, id: "r1", kind: "debate_request", prompt: "x", repo: realpathSync(repo) };
+  assert.throws(() => validateDebateRequest({ ...base, fast: "yes" }, allow), /fast must be a boolean/);
+  assert.throws(() => validateDebateRequest({ ...base, kind: "run_batch_request" }, allow), /kind must be/);
+  assert.throws(() => validateDebateRequest({ ...base, oops: 1 }, allow), MailboxRequestRejected);
+  assert.throws(() => validateDebateRequest({ ...base, repo: "/etc" }, allow), MailboxRequestRejected);
+  assert.throws(() => validateDebateRequest({ ...base, id: "../escape" }, allow), MailboxRequestRejected);
 });
 
 test("payload id mismatching the file name becomes an error response", async () => {
@@ -145,13 +95,18 @@ test("payload id mismatching the file name becomes an error response", async () 
   const ignore = snapshotRequestIds(mb);
   writeFileSync(
     join(mb.requestsDir, "fileid.json"),
-    JSON.stringify({ schema_version: 1, id: "otherid", kind: "run_batch_request", repo: realpathSync(repo), items: [{ item_id: "P1", provider: "codex", prompt: "x" }] }),
+    JSON.stringify({ schema_version: 1, id: "otherid", kind: "debate_request", prompt: "x", repo: realpathSync(repo) }),
   );
-  const { opts } = stubDeps();
-  await processNewRequests(mb, ignore, allow, opts);
+  const { makeDeps } = stubDeps();
+  await processNewRequests(mb, ignore, allow, { makeDeps });
   const resp = JSON.parse(readFileSync(join(mb.responsesDir, "fileid.json"), "utf8"));
   assert.equal(resp.status, "error");
   assert.match(resp.status_reason, /does not match file name/);
+});
+
+test("watchLoop fails closed when the planner provider is not allowlisted", async () => {
+  const onlyCodex = makeAllowlist(repo, { providers: ["codex"] });
+  await assert.rejects(() => watchLoop(onlyCodex, { plannerProvider: "claude" }), /planner provider claude is not in the allowlist/);
 });
 
 test("claim is atomic: second claim returns null", () => {
@@ -163,95 +118,52 @@ test("claim is atomic: second claim returns null", () => {
 
 test("snapshot ignores pre-existing requests", async () => {
   const mb = openMailbox();
-  writeRequestFile("old"); // exists before snapshot
+  writeRequestFile("old");
   const ignore = snapshotRequestIds(mb);
-  const { opts } = stubDeps();
-  const processed = await processNewRequests(mb, ignore, allow, opts);
-  assert.deepEqual(processed, []); // pre-existing request is not processed
+  const { makeDeps } = stubDeps();
+  const processed = await processNewRequests(mb, ignore, allow, { makeDeps });
+  assert.deepEqual(processed, []);
   assert.ok(!existsSync(join(mb.responsesDir, "old.json")));
 });
 
 // --- end-to-end loop -------------------------------------------------------
 
-test("processes a new request: writes a matching response with embedded output, read-only", async () => {
+test("processes a new request: plans, executes, writes a matching response", async () => {
   const mb = openMailbox();
-  const ignore = snapshotRequestIds(mb); // empty
+  const ignore = snapshotRequestIds(mb);
   writeRequestFile("20260531-e2e");
-  const { opts, calls } = stubDeps();
+  const { makeDeps, planTexts } = stubDeps();
 
-  const processed = await processNewRequests(mb, ignore, allow, opts);
+  const processed = await processNewRequests(mb, ignore, allow, { makeDeps });
 
   assert.deepEqual(processed, ["20260531-e2e"]);
-  const respPath = join(mb.responsesDir, "20260531-e2e.json");
-  assert.ok(existsSync(respPath), "response file written");
-  const resp = JSON.parse(readFileSync(respPath, "utf8"));
+  const resp = JSON.parse(readFileSync(join(mb.responsesDir, "20260531-e2e.json"), "utf8"));
   assert.equal(resp.request_id, "20260531-e2e");
-  assert.equal(resp.kind, "run_batch_result");
+  assert.equal(resp.kind, "debate_result");
   assert.equal(resp.status, "completed");
-  assert.equal(resp.items.length, 1);
-  assert.equal(resp.items[0].provider, "codex");
-  assert.match(resp.items[0].output, /out-P1/); // worker stdout embedded
-  // request was claimed out of the inbox + cleared from processing/
+  assert.equal(resp.answer_markdown, "ANSWER-P1");
+  assert.ok(Array.isArray(resp.trace) && resp.trace.length === 1);
+  assert.equal(planTexts.length, 1); // the planner was consulted
   assert.ok(!existsSync(join(mb.requestsDir, "20260531-e2e.json")));
   assert.ok(!existsSync(join(mb.processingDir, "20260531-e2e.json")), "processing entry cleared");
-  // the worker request was forced read-only and got the requested provider
-  assert.equal(calls[0]![0]!.req!.capability, "read_only_review");
-  assert.equal(calls[0]![0]!.req!.provider, "codex");
 });
 
 test("a malformed request becomes an error response (never hangs)", async () => {
   const mb = openMailbox();
   const ignore = snapshotRequestIds(mb);
-  writeFileSync(
-    join(mb.requestsDir, "bad.json"),
-    JSON.stringify({ schema_version: 1, id: "bad", kind: "run_batch_request", repo: "/not/allowed", items: [{ item_id: "P1", provider: "codex", prompt: "x" }] }),
-  );
-  const { opts } = stubDeps();
-  await processNewRequests(mb, ignore, allow, opts);
+  writeFileSync(join(mb.requestsDir, "bad.json"), JSON.stringify({ schema_version: 1, id: "bad", kind: "debate_request", prompt: "x", repo: "/not/allowed" }));
+  const { makeDeps } = stubDeps();
+  await processNewRequests(mb, ignore, allow, { makeDeps });
   const resp = JSON.parse(readFileSync(join(mb.responsesDir, "bad.json"), "utf8"));
   assert.equal(resp.status, "error");
   assert.equal(resp.request_id, "bad");
 });
 
-test("a per-item rejection degrades the batch but still completes the others", async () => {
-  const mb = openMailbox();
-  const ignore = snapshotRequestIds(mb);
-  // P2 uses a provider not in the allowlist → rejected item; P1 still runs.
-  writeFileSync(
-    join(mb.requestsDir, "mix.json"),
-    JSON.stringify({
-      schema_version: 1,
-      id: "mix",
-      kind: "run_batch_request",
-      repo: realpathSync(repo),
-      items: [
-        { item_id: "P1", provider: "codex", prompt: "x" },
-        { item_id: "P2", provider: "codex", prompt: "x" },
-      ],
-    }),
-  );
-  // Stub that completes P1 and fails P2 to prove "one bad item degrades, not fails".
-  const runItems: BatchDeps["runItems"] = async (items) =>
-    items.map((it): BatchItemResult =>
-      it.itemId === "P2"
-        ? { item_id: it.itemId, status: "error", provider: "codex", error_category: "nonzero_exit" }
-        : { item_id: it.itemId, status: "completed", provider: "codex", stdout_path: join(outDir, "p1.txt") },
-    );
-  writeFileSync(join(outDir, "p1.txt"), "ok-P1");
-  await processNewRequests(mb, ignore, allow, { runItems });
-  const resp = JSON.parse(readFileSync(join(mb.responsesDir, "mix.json"), "utf8"));
-  assert.equal(resp.status, "degraded");
-  assert.equal(resp.items.length, 2);
-  assert.equal(resp.items[0].status, "completed");
-  assert.equal(resp.items[1].status, "error");
-});
-
 test("orphaned processing/ request is recovered as an error response on startup", () => {
   const mb = openMailbox();
-  // simulate a crash mid-flight: a claimed request sits in processing/ with no response
   writeFileSync(
     join(mb.processingDir, "orphan.json"),
-    JSON.stringify({ schema_version: 1, id: "orphan", kind: "run_batch_request", repo: realpathSync(repo), items: [{ item_id: "P1", provider: "codex", prompt: "x" }] }),
+    JSON.stringify({ schema_version: 1, id: "orphan", kind: "debate_request", prompt: "x", repo: realpathSync(repo) }),
   );
   const recovered = recoverOrphans(mb);
   assert.deepEqual(recovered, ["orphan"]);
@@ -265,34 +177,28 @@ test("orphaned processing/ request is recovered as an error response on startup"
 test("processNewRequests re-reads the allowlist per request via reloadAllow", async () => {
   const mb = openMailbox();
   const ignore = snapshotRequestIds(mb);
-  // A second repo the base `allow` does NOT permit, but the reloaded one does.
   const repo2 = join(root, "repo2");
   mkdirSync(repo2);
   const expanded = makeAllowlist(repo2, { modes: ["debate-proposal", "debate-critique", "debate-cross-review"] });
   writeFileSync(
     join(mb.requestsDir, "r2.json"),
-    JSON.stringify({ schema_version: 1, id: "r2", kind: "run_batch_request", repo: realpathSync(repo2), items: [{ item_id: "P1", provider: "codex", prompt: "x" }] }),
+    JSON.stringify({ schema_version: 1, id: "r2", kind: "debate_request", prompt: "x", repo: realpathSync(repo2) }),
   );
-  const { opts } = stubDeps();
-  // base `allow` (repoRoots=[repo]) would reject repo2; reloadAllow returns the
-  // expanded allowlist (repoRoots=[repo2]) so the request is accepted.
-  const processed = await processNewRequests(mb, ignore, allow, { ...opts, reloadAllow: () => expanded });
+  // the plan runs a worker in repo2, which only the expanded allowlist permits
+  const planner: PlannerFn = async () => onePhasePlan;
+  const runItems: DebateDeps["runItems"] = async (items) => items.map((it): BatchItemResult => ({ item_id: it.itemId, status: "completed", provider: it.req!.provider }));
+  const makeDeps = (): DebateDeps => ({ planner, runItems, readOutput: () => "OK" });
+  const processed = await processNewRequests(mb, ignore, allow, { makeDeps, reloadAllow: () => expanded });
   assert.deepEqual(processed, ["r2"]);
   const resp = JSON.parse(readFileSync(join(mb.responsesDir, "r2.json"), "utf8"));
   assert.equal(resp.status, "completed");
 });
 
-test("loadRequestObject round-trips a written request", () => {
+test("loadRequestObject round-trips; writeResponse is atomic and id-named", () => {
   const mb = openMailbox();
   writeRequestFile("r1");
-  const raw = loadRequestObject(join(mb.requestsDir, "r1.json"));
-  assert.equal(raw.id, "r1");
-  assert.equal(raw.kind, "run_batch_request");
-});
-
-test("writeResponse is atomic and id-named", () => {
-  const mb = openMailbox();
-  const p = writeResponse(mb, "r1", { status: "completed" });
-  assert.ok(p.endsWith("/r1.json"));
+  assert.equal(loadRequestObject(join(mb.requestsDir, "r1.json")).kind, "debate_request");
+  const p = writeResponse(mb, "r9", { status: "completed" });
+  assert.ok(p.endsWith("/r9.json"));
   assert.equal(JSON.parse(readFileSync(p, "utf8")).status, "completed");
 });

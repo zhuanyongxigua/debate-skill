@@ -286,14 +286,32 @@ test("run-batch executes items in parallel and returns ordered results", () => {
   }
 });
 
-test("watch daemon: real bin subprocess runs a run_batch_request end-to-end", async () => {
+test("watch daemon: real bin subprocess — planner retry + multi-phase templated execution", async () => {
   const ctx = setup();
-  // worker stub records the argv it was launched with and returns text on stdout.
-  const argsFile = join(ctx.root, "worker_args");
+  // One stub serves as BOTH planner and worker. As the planner it returns an
+  // INVALID plan the first time (forcing the daemon's validate→retry) then a
+  // valid TWO-phase plan whose phase-2 prompt embeds phase-1's output via
+  // {{P1.output}}. As a worker it echoes the prompt it received, so we can prove
+  // the daemon substituted P1's real stdout into A1's prompt across the boundary.
+  const argsFile = join(ctx.root, "claude_args");
+  const planCounter = join(ctx.root, "plan_calls");
   makeStub(
     ctx.binDir,
     "claude",
-    "#!/usr/bin/env bash\n" + `echo "$@" >> ${JSON.stringify(argsFile)}\n` + "cat >/dev/null\n" + "printf 'BATCH-PROPOSAL\\n'\n",
+    "#!/usr/bin/env bash\n" +
+      "input=$(cat)\n" +
+      `echo "$@" >> ${JSON.stringify(argsFile)}\n` +
+      'if printf "%s" "$input" | grep -q "You are the PLANNER"; then\n' +
+      `  n=$(cat ${JSON.stringify(planCounter)} 2>/dev/null || echo 0)\n` +
+      `  echo $((n+1)) > ${JSON.stringify(planCounter)}\n` +
+      '  if [ "$n" -eq 0 ]; then\n' +
+      "    printf 'this is not a valid plan\\n'\n" +
+      "  else\n" +
+      `    printf '%s\\n' '{"phases":[{"name":"proposal_generation","launches":[{"id":"P1","provider":"claude","prompt":"propose"}]},{"name":"arbitration","launches":[{"id":"A1","provider":"claude","prompt":"context {{P1.output}} decide"}]}],"answer_item":"A1"}'\n` +
+      "  fi\n" +
+      "else\n" +
+      `  printf '%s\\n' "WORKER_GOT[$input]"\n` +
+      "fi\n",
   );
   const mailbox = join(ctx.root, "mailbox");
   const env = cliEnv(ctx, { DEBATE_AGENT_MAILBOX: mailbox });
@@ -308,34 +326,33 @@ test("watch daemon: real bin subprocess runs a run_batch_request end-to-end", as
     // AFTER it is polling (the banner is printed once it is up).
     await waitFor(() => stderr.includes("polling every"), 8000, `daemon banner (stderr so far: ${stderr})`);
 
-    const id = "20260531-itest-batch";
+    const id = "20260531-itest-debate";
     writeFileSync(
       join(mailbox, "requests", `${id}.json`),
-      JSON.stringify({
-        schema_version: 1,
-        id,
-        kind: "run_batch_request",
-        repo: realpathSync(ctx.repo),
-        items: [{ item_id: "P1", provider: "claude", prompt: "propose", phase: "proposal_generation" }],
-      }),
+      JSON.stringify({ schema_version: 1, id, kind: "debate_request", prompt: "should we X or Y?", repo: realpathSync(ctx.repo) }),
     );
 
     const respPath = join(mailbox, "responses", `${id}.json`);
-    await waitFor(() => existsSync(respPath), 12000, `response ${id}.json (stderr: ${stderr})`);
+    await waitFor(() => existsSync(respPath), 15000, `response ${id}.json (stderr: ${stderr})`);
 
     const resp = JSON.parse(readFileSync(respPath, "utf8"));
-    assert.equal(resp.kind, "run_batch_result");
+    assert.equal(resp.kind, "debate_result");
     assert.equal(resp.status, "completed", JSON.stringify(resp));
-    assert.equal(resp.items.length, 1);
-    assert.equal(resp.items[0].item_id, "P1");
-    assert.equal(resp.items[0].status, "completed");
-    assert.match(resp.items[0].output, /BATCH-PROPOSAL/); // worker stdout embedded for the skill
+    // planner retried: first plan invalid, second valid => the planner ran twice
+    assert.equal(readFileSync(planCounter, "utf8").trim(), "2", "planner should have been retried once");
+    // mechanical {{P1.output}} substitution across the boundary: A1's prompt
+    // embedded P1's actual stdout ("WORKER_GOT[propose]") inside its framing
+    assert.match(resp.answer_markdown, /context WORKER_GOT\[propose\]/);
+    assert.deepEqual(
+      resp.trace.map((t: { item: string; status: string }) => `${t.item}:${t.status}`),
+      ["P1:completed", "A1:completed"],
+    );
 
-    // the read-only argv reached the spawned worker; the prompt went on stdin
-    const workerArgs = readFileSync(argsFile, "utf8");
-    assert.match(workerArgs, /--permission-mode default/);
-    assert.match(workerArgs, /--disallowedTools/);
-    assert.ok(!workerArgs.includes("propose"), "prompt must go on stdin, not argv");
+    // the read-only argv reached the planner + worker spawns; prompts went on stdin
+    const argv = readFileSync(argsFile, "utf8");
+    assert.match(argv, /--permission-mode default/);
+    assert.match(argv, /--disallowedTools/);
+    assert.ok(!argv.includes("propose"), "prompt must go on stdin, not argv");
 
     // the daemon cleared its in-flight marker
     assert.ok(!existsSync(join(mailbox, "processing", `${id}.json`)), "processing entry cleared");

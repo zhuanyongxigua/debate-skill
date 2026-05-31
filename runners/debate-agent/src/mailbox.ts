@@ -6,7 +6,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, 
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
-import { Allowlist, VALID_PHASES, repoRootMatch } from "./allowlist";
+import { Allowlist, repoRootMatch } from "./allowlist";
 import { expandUser, realpathLenient } from "./paths";
 
 const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,128}$/;
@@ -113,45 +113,26 @@ export function openResponseLog(mb: Mailbox, id: string): { log: (line: string) 
   };
 }
 
-// --- run-batch request (written by debate-router) --------------------------
+// --- debate request (written by debate-router, Mode 2) ---------------------
 //
-// The skill plans the whole debate in its OWN context and sends the daemon one
-// batch of independent read-only worker launches per phase (proposers, critics,
-// an arbiter run, …). This is the generic execution primitive over the mailbox:
-// the runner does NOT know these are proposers/critics/arbiters — it just runs N
-// prompts in a repo, read-only, and returns each worker's output for the skill
-// to compose. No debate semantics live here (invariant: the runner owns
-// execution, never debate semantics).
+// The sandboxed skill emits ONE high-level request: the task to debate plus the
+// repo (and the human's language). The daemon does everything else — plan, then
+// execute. This file is deliberately tiny and low-strictness; the strict
+// structured artifact is the PLAN, which the daemon produces and validates
+// internally (see plan.ts), where retry on invalid output is cheap.
 
 export class MailboxRequestRejected extends Error {}
 
-export interface RunBatchItem {
-  itemId: string;
-  provider: string;
-  prompt: string;
-  phase: string; // audit label; maps to a mode + a default timeout internally
-  timeoutSeconds: number | null;
-}
-
-export interface RunBatchRequest {
+export interface DebateRequest {
   id: string;
+  prompt: string; // the task / question / candidates to debate
   repo: string; // realpath-resolved, under an allowed root
   repoRoot: string;
-  fast: boolean; // turbo mode: launch every worker CLI in its fast mode
-  maxParallel: number | null; // null => allowlist default
-  items: RunBatchItem[];
+  language: string | null; // the human's primary language; the debate answers in it
+  fast: boolean; // turbo mode: launch every CLI (planner + workers) in its fast mode
 }
 
-const ALLOWED_BATCH_REQUEST_FIELDS = new Set([
-  "schema_version",
-  "id",
-  "kind",
-  "repo",
-  "fast",
-  "max_parallel",
-  "items",
-]);
-const ALLOWED_BATCH_ITEM_FIELDS = new Set(["item_id", "provider", "prompt", "phase", "timeout_seconds"]);
+const ALLOWED_DEBATE_FIELDS = new Set(["schema_version", "id", "kind", "prompt", "repo", "language", "fast"]);
 
 /** Parse any mailbox request file into a raw object (kind-agnostic). */
 export function loadRequestObject(path: string): Record<string, unknown> {
@@ -167,17 +148,21 @@ export function loadRequestObject(path: string): Record<string, unknown> {
   return raw as Record<string, unknown>;
 }
 
-export function validateRunBatchRequest(raw: Record<string, unknown>, allow: Allowlist): RunBatchRequest {
+export function validateDebateRequest(raw: Record<string, unknown>, allow: Allowlist): DebateRequest {
   const req = (cond: boolean, msg: string): void => {
     if (!cond) throw new MailboxRequestRejected(msg);
   };
   req(raw.schema_version === 1, "request schema_version must be 1");
-  req(raw.kind === "run_batch_request", 'kind must be "run_batch_request"');
-  const unknown = Object.keys(raw).filter((k) => !ALLOWED_BATCH_REQUEST_FIELDS.has(k));
+  req(raw.kind === "debate_request", 'kind must be "debate_request"');
+  const unknown = Object.keys(raw).filter((k) => !ALLOWED_DEBATE_FIELDS.has(k));
   req(unknown.length === 0, `unknown request field(s): ${JSON.stringify(unknown.sort())}`);
 
   const id = raw.id;
   req(typeof id === "string" && SLUG_RE.test(id) && !id.includes(".."), "id must be a safe slug");
+
+  const prompt = raw.prompt;
+  req(typeof prompt === "string" && prompt.trim() !== "", "prompt must be a non-empty string");
+  req((prompt as string).length <= allow.maxPromptChars, `prompt exceeds max_prompt_chars (${allow.maxPromptChars})`);
 
   const repo = raw.repo;
   req(typeof repo === "string" && isAbsolute(repo), "repo must be an absolute path");
@@ -186,78 +171,17 @@ export function validateRunBatchRequest(raw: Record<string, unknown>, allow: All
   const root = repoRootMatch(allow, resolved);
   req(root !== null, `repo ${resolved} is not under any allowed repo root`);
 
+  let language: string | null = null;
+  if (raw.language !== undefined && raw.language !== null) {
+    req(typeof raw.language === "string", "language must be a string");
+    language = (raw.language as string).slice(0, 64);
+  }
+
   let fast = false;
   if (raw.fast !== undefined && raw.fast !== null) {
     req(typeof raw.fast === "boolean", "fast must be a boolean");
     fast = raw.fast as boolean;
   }
 
-  let maxParallel: number | null = null;
-  if (raw.max_parallel !== undefined && raw.max_parallel !== null) {
-    req(
-      typeof raw.max_parallel === "number" && Number.isInteger(raw.max_parallel) && raw.max_parallel >= 1,
-      "max_parallel must be a positive integer",
-    );
-    maxParallel = raw.max_parallel as number;
-  }
-
-  req(Array.isArray(raw.items), "items must be an array");
-  const rawItems = raw.items as unknown[];
-  req(rawItems.length >= 1, "items must contain at least one launch");
-  req(
-    rawItems.length <= allow.maxBatchItems,
-    `items has ${rawItems.length}, exceeds max_batch_items (${allow.maxBatchItems})`,
-  );
-
-  const seen = new Set<string>();
-  const items: RunBatchItem[] = rawItems.map((it, idx) => {
-    req(typeof it === "object" && it !== null && !Array.isArray(it), `items[${idx}] must be an object`);
-    const obj = it as Record<string, unknown>;
-    const extra = Object.keys(obj).filter((k) => !ALLOWED_BATCH_ITEM_FIELDS.has(k));
-    req(extra.length === 0, `items[${idx}] has unknown field(s): ${JSON.stringify(extra.sort())}`);
-
-    const itemId = obj.item_id;
-    req(
-      typeof itemId === "string" && SLUG_RE.test(itemId) && !(itemId as string).includes(".."),
-      `items[${idx}].item_id must be a safe slug`,
-    );
-    req(!seen.has(itemId as string), `duplicate item_id ${JSON.stringify(itemId)}`);
-    seen.add(itemId as string);
-
-    const provider = obj.provider;
-    req(
-      typeof provider === "string" && allow.providers.includes(provider),
-      `items[${idx}].provider ${JSON.stringify(provider)} not in allowlist providers ${JSON.stringify(allow.providers)}`,
-    );
-
-    const prompt = obj.prompt;
-    req(typeof prompt === "string" && (prompt as string).trim() !== "", `items[${idx}].prompt must be a non-empty string`);
-    req(
-      (prompt as string).length <= allow.maxPromptChars,
-      `items[${idx}].prompt exceeds max_prompt_chars (${allow.maxPromptChars})`,
-    );
-
-    let phase = "other";
-    if (obj.phase !== undefined && obj.phase !== null) {
-      req(typeof obj.phase === "string", `items[${idx}].phase must be a string`);
-      req(
-        (VALID_PHASES as readonly string[]).includes(obj.phase as string),
-        `items[${idx}].phase ${JSON.stringify(obj.phase)} invalid; allowed: ${VALID_PHASES.join(", ")}`,
-      );
-      phase = obj.phase as string;
-    }
-
-    let timeoutSeconds: number | null = null;
-    if (obj.timeout_seconds !== undefined && obj.timeout_seconds !== null) {
-      req(
-        typeof obj.timeout_seconds === "number" && Number.isInteger(obj.timeout_seconds),
-        `items[${idx}].timeout_seconds must be an integer`,
-      );
-      timeoutSeconds = obj.timeout_seconds as number;
-    }
-
-    return { itemId: itemId as string, provider: provider as string, prompt: prompt as string, phase, timeoutSeconds };
-  });
-
-  return { id: id as string, repo: resolved, repoRoot: root as string, fast, maxParallel, items };
+  return { id: id as string, prompt: prompt as string, repo: resolved, repoRoot: root as string, language, fast };
 }

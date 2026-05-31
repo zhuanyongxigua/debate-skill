@@ -1,18 +1,20 @@
-// Watch path end-to-end with REAL subprocess spawns (no mocked workers).
+// Watch path with a scripted planner but REAL worker subprocess spawns.
 //
-// Closes the gap the other watch tests leave: here processNewRequests runs the
-// daemon's batch executor and the workers are really spawned via the runner's
-// execute(). A bash stub stands in for the CLI (records its argv, returns text),
-// so we assert the response (with the worker's stdout embedded), the
+// The planner is injected (returns a fixed plan), but the workers are really
+// spawned via the runner's execute() (runItems defaults to the real
+// runPreparedItems). A bash stub stands in for the worker CLI (records its argv,
+// returns text). We assert the response (answer = worker stdout), the
 // claimed→cleared processing entry, the live <id>.log, and that the read-only
-// argv actually reached the child.
+// argv reached the child.
 
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 
+import { DebateDeps } from "../src/debate";
 import { openMailbox, snapshotRequestIds } from "../src/mailbox";
+import { PlannerFn } from "../src/planner";
 import { processNewRequests } from "../src/watch";
 import { cleanup, makeAllowlist, makeStub, makeTempDir } from "./helpers";
 
@@ -36,58 +38,53 @@ afterEach(() => {
   cleanup(root);
 });
 
-test("watch e2e: real worker spawn, response items + embedded output + live log + read-only argv", async () => {
+test("watch e2e: scripted plan + real worker spawn, answer + live log + read-only argv", async () => {
   // worker = claude stub: records the argv it was launched with, returns text.
   const argsFile = join(root, "claude_args");
   makeStub(
     binDir,
     "claude",
-    "#!/usr/bin/env bash\n" + `echo "$@" >> ${JSON.stringify(argsFile)}\n` + "cat >/dev/null\n" + "printf 'PROPOSAL-TEXT\\n'\n",
+    "#!/usr/bin/env bash\n" + `echo "$@" >> ${JSON.stringify(argsFile)}\n` + "cat >/dev/null\n" + "printf 'FINAL-ANSWER\\n'\n",
   );
 
   const allow = makeAllowlist(repo, { modes: ["debate-proposal", "debate-critique", "debate-cross-review"] });
   const mb = openMailbox();
-  const ignore = snapshotRequestIds(mb); // empty
+  const ignore = snapshotRequestIds(mb);
   const id = "20260531-e2e-real";
   writeFileSync(
     join(mb.requestsDir, `${id}.json`),
-    JSON.stringify({
-      schema_version: 1,
-      id,
-      kind: "run_batch_request",
-      repo: realpathSync(repo),
-      items: [{ item_id: "P1", provider: "claude", prompt: "propose", phase: "proposal_generation" }],
-    }),
+    JSON.stringify({ schema_version: 1, id, kind: "debate_request", prompt: "debate this", repo: realpathSync(repo) }),
   );
 
   const baseEnv = { ...process.env, PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}`, HOME: root };
-  const processed = await processNewRequests(mb, ignore, allow, { baseEnv });
+  const plan = JSON.stringify({
+    phases: [{ name: "arbitration", launches: [{ id: "A1", provider: "claude", prompt: "decide and answer" }] }],
+    answer_item: "A1",
+  });
+  const planner: PlannerFn = async () => plan; // injected planner; workers are REAL
+  const makeDeps = (): DebateDeps => ({ planner, baseEnv }); // runItems defaults to real runPreparedItems
 
+  const processed = await processNewRequests(mb, ignore, allow, { makeDeps });
   assert.deepEqual(processed, [id]);
 
-  // 1) response written, completed, with the worker's stdout embedded
+  // 1) response: completed, answer is the real worker's stdout
   const resp = JSON.parse(readFileSync(join(mb.responsesDir, `${id}.json`), "utf8"));
-  assert.equal(resp.kind, "run_batch_result");
-  assert.equal(resp.status, "completed");
-  assert.equal(resp.items.length, 1);
-  assert.equal(resp.items[0].item_id, "P1");
-  assert.equal(resp.items[0].provider, "claude");
-  assert.equal(resp.items[0].status, "completed");
-  assert.match(resp.items[0].output, /PROPOSAL-TEXT/); // the skill reads this directly — no audit access needed
+  assert.equal(resp.kind, "debate_result");
+  assert.equal(resp.status, "completed", JSON.stringify(resp));
+  assert.match(resp.answer_markdown, /FINAL-ANSWER/);
+  assert.deepEqual(resp.trace.map((t: { item: string; provider: string; status: string }) => `${t.item}:${t.provider}:${t.status}`), ["A1:claude:completed"]);
 
-  // 2) the request was claimed then cleared from processing/
+  // 2) claimed then cleared from processing/
   assert.ok(!existsSync(join(mb.processingDir, `${id}.json`)), "processing entry cleared");
 
-  // 3) a live progress log sits next to the response and reflects real work
+  // 3) live progress log reflects the real execution
   const log = readFileSync(join(mb.responsesDir, `${id}.log`), "utf8");
-  assert.match(log, /run_batch 20260531-e2e-real/);
-  assert.match(log, /P1 claude completed/);
+  assert.match(log, /A1 claude completed/);
   assert.match(log, /done: completed/);
 
-  // 4) the read-only argv actually reached the spawned claude worker
+  // 4) the read-only argv actually reached the spawned worker
   const workerArgs = readFileSync(argsFile, "utf8");
   assert.match(workerArgs, /--permission-mode default/);
   assert.match(workerArgs, /--disallowedTools/);
-  // the prompt is NOT in argv (stdin transport)
-  assert.ok(!workerArgs.includes("propose"));
+  assert.ok(!workerArgs.includes("decide and answer")); // prompt on stdin, not argv
 });

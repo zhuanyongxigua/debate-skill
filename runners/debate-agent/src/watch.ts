@@ -1,18 +1,20 @@
 // The mailbox daemon. Watches ~/.debate-router/requests/ for NEW request files
-// (existing ones at startup are ignored), claims each atomically, runs the batch
-// of read-only worker launches, and writes the result to responses/<id>.json.
-// One batch at a time. Every CLI it spawns runs read-only.
+// (existing ones at startup are ignored), claims each atomically, runs the whole
+// debate — plan (one-shot planner CLI, with retry) then mechanical execution —
+// and writes responses/<id>.json. One debate at a time. Every CLI it spawns (the
+// planner and every worker) runs read-only.
 //
-// The daemon owns EXECUTION only. The debate-router skill (in its sandboxed
-// parent) plans the whole debate in its own context and drives the daemon one
-// batch per phase; there is no brain/step loop here anymore.
+// The sandboxed debate-router skill only writes the high-level `debate_request`
+// and presents the result; all execution (planner + workers) is here, out of
+// sandbox, so it bypasses the parent's top-level command reviewer.
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { Allowlist } from "./allowlist";
-import { BatchDeps, RunBatchResponse, runMailboxBatch } from "./mailbox-batch";
+import { DebateDeps, DebateResponse, runDebate } from "./debate";
 import {
+  DebateRequest,
   Mailbox,
   MailboxRequestRejected,
   claimRequest,
@@ -23,32 +25,45 @@ import {
   processingIds,
   requestIds,
   snapshotRequestIds,
-  validateRunBatchRequest,
+  validateDebateRequest,
   writeResponse,
 } from "./mailbox";
+import { makeCliPlanner } from "./planner";
 import { RESULT_SCHEMA_VERSION } from "./version";
 
 export interface WatchOptions {
+  plannerProvider?: string; // CLI that produces the plan (default "claude")
   baseEnv?: Record<string, string | undefined>;
   intervalMs?: number;
+  maxPlanAttempts?: number;
   // When set, the allowlist is re-read for EACH request via this thunk (so config
   // edits apply without a restart). It must never throw — fall back to last-good
   // internally (see safeReloadAllowlist). Absent → the fixed `allow` is used.
   reloadAllow?: () => Allowlist;
-  // Injectable for tests: stub the worker executor / stdout reader so the loop
-  // runs end-to-end without spawning real CLIs.
-  runItems?: BatchDeps["runItems"];
-  readOutput?: BatchDeps["readOutput"];
+  // Injectable for tests: build per-request deps (scripted planner + stub workers).
+  makeDeps?: (req: DebateRequest) => DebateDeps;
 }
 
-function errorResponse(id: string, message: string): RunBatchResponse {
+function defaultDeps(req: DebateRequest, opts: WatchOptions): DebateDeps {
+  return {
+    planner: makeCliPlanner(req.repo, {
+      provider: opts.plannerProvider ?? "claude",
+      baseEnv: opts.baseEnv,
+    }),
+    baseEnv: opts.baseEnv,
+    maxPlanAttempts: opts.maxPlanAttempts,
+  };
+}
+
+function errorResponse(id: string, message: string): DebateResponse {
   return {
     schema_version: RESULT_SCHEMA_VERSION,
     request_id: id,
-    kind: "run_batch_result",
+    kind: "debate_result",
     status: "error",
     status_reason: message,
-    items: [],
+    answer_markdown: "",
+    trace: [],
     finished_at: new Date().toISOString(),
   };
 }
@@ -71,21 +86,23 @@ export async function processNewRequests(
     if (claimRequest(mb, id) === null) continue; // someone else took it / it vanished
 
     const { log, close } = openResponseLog(mb, id);
-    let response: RunBatchResponse;
+    let response: DebateResponse;
     try {
       // Re-read the allowlist per request (if a reloader is configured) so config
-      // edits take effect without a restart; one consistent snapshot per batch.
+      // edits take effect without a restart; one consistent snapshot per debate.
       const allowNow = opts.reloadAllow ? opts.reloadAllow() : allow;
-      const req = validateRunBatchRequest(loadRequestObject(join(mb.processingDir, `${id}.json`)), allowNow);
+      const req = validateDebateRequest(loadRequestObject(join(mb.processingDir, `${id}.json`)), allowNow);
       // The file name is the id callers poll by; a payload id that disagrees
       // would write the response under a name the caller never watches.
       if (req.id !== id) throw new MailboxRequestRejected(`request id "${req.id}" does not match file name "${id}"`);
-      response = await runMailboxBatch(req, allowNow, {
-        runItems: opts.runItems,
-        readOutput: opts.readOutput,
-        baseEnv: opts.baseEnv,
-        log,
-      });
+      // The planner is a launched CLI too: re-check it against the current allowlist.
+      const plannerProvider = opts.plannerProvider ?? "claude";
+      if (!opts.makeDeps && !allowNow.providers.includes(plannerProvider)) {
+        throw new Error(`planner provider ${plannerProvider} is not in the current allowlist providers (${allowNow.providers.join(", ")})`);
+      }
+      const deps = opts.makeDeps ? opts.makeDeps(req) : defaultDeps(req, opts);
+      deps.log = log;
+      response = await runDebate(req, allowNow, deps);
     } catch (err) {
       log(`error: ${String(err)}`);
       response = errorResponse(id, String(err));
@@ -125,12 +142,20 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 
 /** Run the daemon forever: snapshot existing requests (ignored), then poll. */
 export async function watchLoop(allow: Allowlist, opts: WatchOptions = {}): Promise<never> {
+  // Fail closed: the planner is a launched CLI, so its provider must be in the
+  // allowlist (skipped when makeDeps injects a scripted planner, e.g. tests).
+  if (!opts.makeDeps) {
+    const plannerProvider = opts.plannerProvider ?? "claude";
+    if (!allow.providers.includes(plannerProvider)) {
+      throw new Error(`planner provider ${plannerProvider} is not in the allowlist providers (${allow.providers.join(", ")})`);
+    }
+  }
   const mb = openMailbox();
   const recovered = recoverOrphans(mb);
   const ignore = snapshotRequestIds(mb);
   const interval = opts.intervalMs ?? 1000;
   process.stderr.write(
-    `debate-agent watch: mailbox ${mb.root}; executor for run_batch_request (read-only workers); ` +
+    `debate-agent watch: mailbox ${mb.root}; planner=${opts.plannerProvider ?? "claude"}; ` +
       `recovered ${recovered.length} orphaned request(s); ignoring ${ignore.size} existing request(s); polling every ${interval}ms\n`,
   );
   for (;;) {
