@@ -4,7 +4,7 @@
 // it stays small and delegates policy to schema.ts / allowlist.ts / launch.ts.
 
 import { spawn } from "node:child_process";
-import { accessSync, constants, statSync } from "node:fs";
+import { accessSync, closeSync, constants, openSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 import { Allowlist } from "./allowlist";
@@ -96,8 +96,29 @@ function rejectedResult(runId: unknown, message: string): ResultEnvelope {
   };
 }
 
-/** Run the static child command in its own process group with a timeout. */
-export function execute(launch: ChildLaunch, timeoutSeconds: number): Promise<ExecResult> {
+/** Extract a claude worker's clean answer from its `--output-format stream-json`
+ * output: the last `{"type":"result",...}` line's `.result`. Falls back to the
+ * raw text when the output is not a stream (so plain stubs / non-stream output
+ * still work unchanged). */
+export function extractClaudeStreamResult(stdout: string): string {
+  const lines = stdout.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!.trim();
+    if (!line || line[0] !== "{") continue;
+    try {
+      const ev = JSON.parse(line) as Record<string, unknown>;
+      if (ev && ev.type === "result" && typeof ev.result === "string") return ev.result;
+    } catch {
+      /* not a JSON event line; keep scanning */
+    }
+  }
+  return stdout; // not a stream — return raw (fallback)
+}
+
+/** Run the static child command in its own process group with a timeout.
+ * When `streamPath` is set, the child's stdout is also appended there live (a
+ * debug stream you can `tail -f`); the buffered stdout is still returned. */
+export function execute(launch: ChildLaunch, timeoutSeconds: number, streamPath?: string): Promise<ExecResult> {
   // Resolve the binary against the CHILD env PATH (not the parent's) and exec
   // the absolute path, so the missing-CLI check matches what the child would
   // actually run.
@@ -131,12 +152,40 @@ export function execute(launch: ChildLaunch, timeoutSeconds: number): Promise<Ex
     let killTimer: NodeJS.Timeout | undefined;
     let graceTimer: NodeJS.Timeout | undefined;
 
+    // Optional live debug sink: append the child's stdout as it arrives so a slow
+    // worker can be tailed. Best-effort — a sink failure never affects execution.
+    let streamFd: number | undefined;
+    if (streamPath) {
+      try {
+        streamFd = openSync(streamPath, "a");
+      } catch {
+        streamFd = undefined;
+      }
+    }
+
     const clearTimers = () => {
       if (killTimer) clearTimeout(killTimer);
       if (graceTimer) clearTimeout(graceTimer);
+      if (streamFd !== undefined) {
+        try {
+          closeSync(streamFd);
+        } catch {
+          /* ignore */
+        }
+        streamFd = undefined;
+      }
     };
 
-    child.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
+    child.stdout.on("data", (d: Buffer) => {
+      stdout += d.toString();
+      if (streamFd !== undefined) {
+        try {
+          writeSync(streamFd, d);
+        } catch {
+          /* ignore sink errors */
+        }
+      }
+    });
     child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
 
     child.on("error", (err) => {
@@ -192,6 +241,7 @@ export function execute(launch: ChildLaunch, timeoutSeconds: number): Promise<Ex
 export async function runValidated(
   reqValidated: ValidatedRequest,
   baseEnv?: Record<string, string | undefined>,
+  streamPath?: string,
 ): Promise<ResultEnvelope> {
   const env = baseEnv ?? process.env;
   const launch = buildChildLaunch({
@@ -203,7 +253,14 @@ export async function runValidated(
     baseEnv: env,
     fast: reqValidated.fast,
   });
-  const exec = await execute(launch, reqValidated.timeoutSeconds);
+  const exec = await execute(launch, reqValidated.timeoutSeconds, streamPath);
+
+  // claude workers run with --output-format stream-json (for the live debug
+  // stream); the clean answer is the stream's final result. Everything downstream
+  // (the audit stdout file + {{id.output}} substitution) sees the clean text, not
+  // the raw JSONL. The fallback in extractClaudeStreamResult keeps non-stream
+  // output (e.g. stubs) verbatim.
+  const cleanStdout = reqValidated.provider === "claude" ? extractClaudeStreamResult(exec.stdout) : exec.stdout;
 
   const auditRecord = {
     run_id: reqValidated.runId,
@@ -227,7 +284,7 @@ export async function runValidated(
   const paths = writeExecutionAudit({
     runId: reqValidated.runId,
     record: auditRecord,
-    stdout: exec.stdout,
+    stdout: cleanStdout,
     stderr: exec.stderr,
     phase: reqValidated.phase,
     provider: reqValidated.provider,
@@ -291,11 +348,13 @@ export interface BatchItemResult {
   [k: string]: unknown;
 }
 
-/** A batch slot: either a validated request to run, or a pre-rejected reason. */
+/** A batch slot: either a validated request to run, or a pre-rejected reason.
+ * `streamPath`, when set, is where this item's live CLI debug stream is written. */
 export interface PreparedItem {
   itemId: string;
   req?: ValidatedRequest;
   rejected?: string;
+  streamPath?: string;
 }
 
 interface Job<T> {
@@ -358,7 +417,7 @@ export async function runPreparedItems(
       jobIndexBySlot.set(idx, jobs.length);
       jobs.push({
         key: slot.req.provider,
-        run: async () => ({ item_id: slot.itemId, ...(await runValidated(slot.req!, baseEnv)) }) as BatchItemResult,
+        run: async () => ({ item_id: slot.itemId, ...(await runValidated(slot.req!, baseEnv, slot.streamPath)) }) as BatchItemResult,
       });
     }
   });

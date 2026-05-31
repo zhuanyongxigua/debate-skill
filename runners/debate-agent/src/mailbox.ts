@@ -96,6 +96,16 @@ export function writeResponse(mb: Mailbox, id: string, response: Record<string, 
   return finalPath;
 }
 
+/** Per-request folder for live, streamed CLI debug output (one file per launch).
+ * A sibling of `responses/<id>.json`, created lazily. Each worker/planner streams
+ * its raw output here so you can `tail -f` a running CLI to debug a slow/hung
+ * worker — separate from the answer path. Can grow large; it is debug-only. */
+export function requestStreamDir(mb: Mailbox, id: string): string {
+  const dir = join(mb.responsesDir, `${id}.streams`);
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 /** Append-only progress log for one request, a sibling of `responses/<id>.json`
  * so another agent can `tail -f` a debate while it runs. Lines are timestamped;
  * logging never throws (a logging failure must not break the debate). */

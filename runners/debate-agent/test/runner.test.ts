@@ -5,8 +5,21 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 
-import { runRequestFile } from "../src/runner";
+import { extractClaudeStreamResult, runRequestFile } from "../src/runner";
 import { CLAUDE_STUB, cleanup, makeAllowlist, makeMarkerStub, makeStub, makeTempDir, writeRequest } from "./helpers";
+
+test("extractClaudeStreamResult: final result event, else raw fallback", () => {
+  // a stream-json transcript: assistant events + a final result event
+  const stream = [
+    '{"type":"system","subtype":"init"}',
+    '{"type":"assistant","message":{"content":[{"type":"text","text":"Red"}]}}',
+    '{"type":"result","subtype":"success","result":"Red\\nYellow\\nBlue"}',
+  ].join("\n");
+  assert.equal(extractClaudeStreamResult(stream), "Red\nYellow\nBlue");
+  // not a stream (e.g. a plain stub) — returned verbatim
+  assert.equal(extractClaudeStreamResult("PROPOSAL-TEXT"), "PROPOSAL-TEXT");
+  assert.equal(extractClaudeStreamResult("CWD=/r\nARGS=x\nSTDIN=y"), "CWD=/r\nARGS=x\nSTDIN=y");
+});
 
 let root: string;
 let repo: string;

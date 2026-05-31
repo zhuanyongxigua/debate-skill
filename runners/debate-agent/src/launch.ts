@@ -113,10 +113,16 @@ function buildClaudeArgv(capability: string, jsonSchema?: string): string[] {
   const permissionMode = capability === "workspace_write" ? "acceptEdits" : "default";
   const argv = ["claude", "--print", "--permission-mode", permissionMode, "--effort", "xhigh"];
   if (capability !== "workspace_write") argv.push("--disallowedTools", CLAUDE_WRITE_TOOLS);
-  // Planner only: constrain the final result to a JSON Schema. `--json-schema`
-  // needs `--output-format json`; the validated object then arrives in the
-  // envelope's `structured_output` field (the runner reads it back).
-  if (jsonSchema) argv.push("--output-format", "json", "--json-schema", jsonSchema);
+  if (jsonSchema) {
+    // Planner: constrain the final result to a JSON Schema. `--json-schema` needs
+    // `--output-format json`; the validated object arrives in the envelope's
+    // `structured_output` field (the runner reads it back).
+    argv.push("--output-format", "json", "--json-schema", jsonSchema);
+  } else {
+    // Worker: stream JSON events so a slow/long worker can be tailed live (the
+    // runner appends the stream to a debug file and extracts the final `result`).
+    argv.push("--output-format", "stream-json", "--verbose");
+  }
   return argv;
 }
 

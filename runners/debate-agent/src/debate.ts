@@ -17,6 +17,7 @@ import { BatchItemResult, PreparedItem, runPreparedItems } from "./runner";
 import { RequestRejected, validateRequest } from "./schema";
 import { RESULT_SCHEMA_VERSION } from "./version";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 export interface DebateDeps {
   planner: PlannerFn;
@@ -33,6 +34,8 @@ export interface DebateDeps {
   maxPlanAttempts?: number;
   // Optional progress sink (the daemon points it at responses/<id>.log).
   log?: (line: string) => void;
+  // Optional folder for per-launch live CLI debug streams (responses/<id>.streams/).
+  streamDir?: string;
 }
 
 export interface TraceRow {
@@ -134,7 +137,8 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
           capability: "read_only_review", // FORCED read-only; the plan cannot request writes
           fast: req.fast,
         };
-        return { itemId: launch.id, req: validateRequest(reqObj, allow) };
+        const streamPath = deps.streamDir ? join(deps.streamDir, `${launch.id}.log`) : undefined;
+        return { itemId: launch.id, req: validateRequest(reqObj, allow), streamPath };
       } catch (err) {
         if (err instanceof RequestRejected) return { itemId: launch.id, rejected: err.message };
         throw err;

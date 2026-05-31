@@ -173,9 +173,10 @@ test("planner structured-output flags: claude inline --json-schema, codex --outp
   assert.ok(oi >= 0 && x.argv[oi + 1] === "/tmp/o.json");
   assert.equal(x.argv[x.argv.length - 1], "-"); // prompt still on stdin
   assert.ok(si > x.argv.indexOf("exec") && oi > x.argv.indexOf("exec"));
-  // no schema flags for a normal worker launch
+  // a normal claude worker streams (for the live debug file) but has no schema
   const w = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {} });
-  assert.ok(!w.argv.includes("--json-schema") && !w.argv.includes("--output-format"));
+  assert.ok(!w.argv.includes("--json-schema"));
+  assert.ok(w.argv.includes("--output-format") && w.argv.includes("stream-json") && w.argv.includes("--verbose"));
 });
 
 test("claude profile is a hard error", () => {

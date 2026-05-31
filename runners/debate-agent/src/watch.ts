@@ -24,6 +24,7 @@ import {
   openResponseLog,
   processingIds,
   requestIds,
+  requestStreamDir,
   snapshotRequestIds,
   validateDebateRequest,
   writeResponse,
@@ -44,14 +45,16 @@ export interface WatchOptions {
   makeDeps?: (req: DebateRequest) => DebateDeps;
 }
 
-function defaultDeps(req: DebateRequest, opts: WatchOptions): DebateDeps {
+function defaultDeps(req: DebateRequest, opts: WatchOptions, streamDir: string): DebateDeps {
   return {
     planner: makeCliPlanner(req.repo, {
       provider: opts.plannerProvider ?? "claude",
       baseEnv: opts.baseEnv,
+      streamDir,
     }),
     baseEnv: opts.baseEnv,
     maxPlanAttempts: opts.maxPlanAttempts,
+    streamDir,
   };
 }
 
@@ -100,8 +103,10 @@ export async function processNewRequests(
       if (!opts.makeDeps && !allowNow.providers.includes(plannerProvider)) {
         throw new Error(`planner provider ${plannerProvider} is not in the current allowlist providers (${allowNow.providers.join(", ")})`);
       }
-      const deps = opts.makeDeps ? opts.makeDeps(req) : defaultDeps(req, opts);
+      const streamDir = requestStreamDir(mb, id);
+      const deps = opts.makeDeps ? opts.makeDeps(req) : defaultDeps(req, opts, streamDir);
       deps.log = log;
+      deps.streamDir = streamDir;
       response = await runDebate(req, allowNow, deps);
     } catch (err) {
       log(`error: ${String(err)}`);

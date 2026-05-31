@@ -133,11 +133,12 @@ export function extractClaudeStructuredOutput(stdout: string): string {
  */
 export function makeCliPlanner(
   repo: string,
-  opts: { provider: string; baseEnv?: Record<string, string | undefined> },
+  opts: { provider: string; baseEnv?: Record<string, string | undefined>; streamDir?: string },
 ): PlannerFn {
-  return async (req, _attempt, lastError) => {
+  return async (req, attempt, lastError) => {
     const baseEnv = opts.baseEnv ?? process.env;
     const prompt = buildPlannerPrompt(req, lastError);
+    const streamPath = opts.streamDir ? join(opts.streamDir, `planner-${attempt + 1}.log`) : undefined;
 
     if (opts.provider === "codex") {
       // codex takes the schema as a file and writes the final message to `-o`.
@@ -157,7 +158,7 @@ export function makeCliPlanner(
           codexSchemaFile: schemaFile,
           codexOutputFile: outFile,
         });
-        const exec = await execute(launch, PLANNER_TIMEOUT_SECONDS);
+        const exec = await execute(launch, PLANNER_TIMEOUT_SECONDS, streamPath);
         if (exec.status !== "completed") {
           throw new Error(`planner CLI ${exec.status} (${exec.errorCategory ?? "?"}): ${(exec.stderr || "").slice(0, 300)}`);
         }
@@ -185,7 +186,7 @@ export function makeCliPlanner(
       baseEnv,
       jsonSchema: SCHEMA_STR,
     });
-    const exec = await execute(launch, PLANNER_TIMEOUT_SECONDS);
+    const exec = await execute(launch, PLANNER_TIMEOUT_SECONDS, streamPath);
     if (exec.status !== "completed") {
       throw new Error(`planner CLI ${exec.status} (${exec.errorCategory ?? "?"}): ${(exec.stderr || "").slice(0, 300)}`);
     }

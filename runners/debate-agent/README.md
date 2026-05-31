@@ -275,8 +275,15 @@ top-level reviewer would kill that (see AGENTS.md invariant #2).
   requests/    debate-router writes <id>.json (a debate_request) here
   processing/  daemon claims a request by atomic rename (in-flight marker)
   responses/   daemon writes <id>.json result + <id>.log progress here
+    <id>.streams/  per-launch live CLI debug streams (tail -f a slow worker)
   archive/     finished requests are MOVED here (durable record), never deleted
 ```
+
+Each worker (and each planner attempt) streams its raw CLI output **live** to
+`responses/<id>.streams/<launch>.log`, so you can `tail -f` a slow or hung worker
+to see what it is doing. claude workers run with `--output-format stream-json`
+for this (the runner extracts the clean final answer from the stream; the answer
+path is unchanged). These files are **debug-only** and can grow large.
 
 On start it **recovers any orphaned `processing/` entries** (a request claimed
 before a previous crash/restart gets an `error` response so the caller stops
