@@ -435,8 +435,11 @@ Stop polling only when one of these happens:
 - the human interrupts, redirects, or asks for status only
 - the parent environment forces the turn/session to end
 
-If polling must stop for any non-response reason, report the `<id>`, request
-path, expected response path, and the fact that the request is still pending.
+If polling must stop for any non-response reason — or the human asks for status
+only — read the progress log `~/.debate-router/responses/<id>.log` (if present)
+and report the latest step/phase from it, plus the `<id>`, request path, expected
+response path, and the fact that the request is still pending. The log is the
+authoritative live view of how far the `debate-agent` daemon has gotten.
 
 **Step 3 — Present the result.** When the response appears, read it and present
 the answer:
