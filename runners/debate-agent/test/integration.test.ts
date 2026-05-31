@@ -288,13 +288,16 @@ test("run-batch executes items in parallel and returns ordered results", () => {
 
 test("watch daemon: real bin subprocess — planner retry + multi-phase templated execution", async () => {
   const ctx = setup();
-  // One stub serves as BOTH planner and worker. As the planner it returns an
-  // INVALID plan the first time (forcing the daemon's validate→retry) then a
-  // valid TWO-phase plan whose phase-2 prompt embeds phase-1's output via
-  // {{P1.output}}. As a worker it echoes the prompt it received, so we can prove
-  // the daemon substituted P1's real stdout into A1's prompt across the boundary.
+  // One stub serves as BOTH planner and worker. As the planner (claude
+  // `--output-format json --json-schema`) it returns an INVALID envelope the first
+  // time (forcing the daemon's validate→retry), then a valid one whose
+  // `structured_output` is a TWO-phase plan with a {{P1.output}} placeholder. As a
+  // worker it echoes the prompt it received, so we can prove the daemon
+  // substituted P1's real stdout into A1's prompt across the boundary.
   const argsFile = join(ctx.root, "claude_args");
   const planCounter = join(ctx.root, "plan_calls");
+  const plan =
+    '{"phases":[{"name":"proposal_generation","launches":[{"id":"P1","provider":"claude","prompt":"propose"}]},{"name":"arbitration","launches":[{"id":"A1","provider":"claude","prompt":"context {{P1.output}} decide"}]}],"answer_item":"A1"}';
   makeStub(
     ctx.binDir,
     "claude",
@@ -307,7 +310,7 @@ test("watch daemon: real bin subprocess — planner retry + multi-phase template
       '  if [ "$n" -eq 0 ]; then\n' +
       "    printf 'this is not a valid plan\\n'\n" +
       "  else\n" +
-      `    printf '%s\\n' '{"phases":[{"name":"proposal_generation","launches":[{"id":"P1","provider":"claude","prompt":"propose"}]},{"name":"arbitration","launches":[{"id":"A1","provider":"claude","prompt":"context {{P1.output}} decide"}]}],"answer_item":"A1"}'\n` +
+      `    printf '%s\\n' ${JSON.stringify(`{"type":"result","subtype":"success","structured_output":${plan}}`)}\n` +
       "  fi\n" +
       "else\n" +
       `  printf '%s\\n' "WORKER_GOT[$input]"\n` +

@@ -100,7 +100,7 @@ export function buildChildEnv(
 // deterministic, far stronger than relying on "won't edit non-interactively".
 const CLAUDE_WRITE_TOOLS = "Edit Write MultiEdit NotebookEdit Bash";
 
-function buildClaudeArgv(capability: string): string[] {
+function buildClaudeArgv(capability: string, jsonSchema?: string): string[] {
   // Mirrors cli-launch Claude Code defaults: print mode, prompt via stdin,
   // xhigh thinking. Claude profiles are unsupported (caller fails closed before
   // reaching here). read_only_review additionally hard-denies edit/write/shell
@@ -113,10 +113,21 @@ function buildClaudeArgv(capability: string): string[] {
   const permissionMode = capability === "workspace_write" ? "acceptEdits" : "default";
   const argv = ["claude", "--print", "--permission-mode", permissionMode, "--effort", "xhigh"];
   if (capability !== "workspace_write") argv.push("--disallowedTools", CLAUDE_WRITE_TOOLS);
+  // Planner only: constrain the final result to a JSON Schema. `--json-schema`
+  // needs `--output-format json`; the validated object then arrives in the
+  // envelope's `structured_output` field (the runner reads it back).
+  if (jsonSchema) argv.push("--output-format", "json", "--json-schema", jsonSchema);
   return argv;
 }
 
-function buildCodexArgv(cwd: string, profile: string | null, capability: string, fast: boolean): string[] {
+function buildCodexArgv(
+  cwd: string,
+  profile: string | null,
+  capability: string,
+  fast: boolean,
+  schemaFile?: string,
+  outputFile?: string,
+): string[] {
   // Mirrors cli-launch Codex CLI defaults: exec mode, approvals never, prompt
   // via stdin (the trailing "-"), xhigh effort. read_only_review uses the
   // read-only sandbox with no network; workspace_write uses the writable sandbox
@@ -139,6 +150,10 @@ function buildCodexArgv(cwd: string, profile: string | null, capability: string,
   } else {
     argv.push("exec", "--sandbox", "read-only");
   }
+  // Planner only: constrain the final message to a JSON Schema file and capture
+  // it to an output file (the runner reads that file back as the plan).
+  if (schemaFile) argv.push("--output-schema", schemaFile);
+  if (outputFile) argv.push("-o", outputFile);
   argv.push("--color", "never", "-C", cwd, "-");
   return argv;
 }
@@ -167,8 +182,12 @@ export function buildChildLaunch(args: {
   prompt: string;
   baseEnv: Record<string, string | undefined>;
   fast?: boolean;
+  // Planner-only structured-output (the runner reads the validated plan back):
+  jsonSchema?: string; // claude: inline `--json-schema` (with `--output-format json`)
+  codexSchemaFile?: string; // codex: `--output-schema <file>`
+  codexOutputFile?: string; // codex: `-o <file>` (final message written here)
 }): ChildLaunch {
-  const { provider, cwd, profile, capability, prompt, baseEnv, fast = false } = args;
+  const { provider, cwd, profile, capability, prompt, baseEnv, fast = false, jsonSchema, codexSchemaFile, codexOutputFile } = args;
 
   let argv: string[];
   let promptTransport: "stdin" | "argv";
@@ -178,10 +197,10 @@ export function buildChildLaunch(args: {
     if (profile !== null) {
       throw new Error("claude profile is not supported by this runner");
     }
-    argv = buildClaudeArgv(capability); // claude is fast-exempt (needs an API token)
+    argv = buildClaudeArgv(capability, jsonSchema); // claude is fast-exempt (needs an API token)
     promptTransport = "stdin";
   } else if (provider === "codex") {
-    argv = buildCodexArgv(cwd, profile, capability, fast);
+    argv = buildCodexArgv(cwd, profile, capability, fast, codexSchemaFile, codexOutputFile);
     promptTransport = "stdin";
   } else if (provider === "copilot") {
     // copilot is exempt from fast mode (no clean per-invocation fast flag).

@@ -29,6 +29,47 @@ export interface Plan {
   answerItem: string; // the launch id whose output is the final answer
 }
 
+// The plan's JSON Schema — the SHAPE only. Passed to the planner CLI's native
+// structured-output flag (claude `--json-schema`, codex `--output-schema`) as the
+// first line of defense, so the CLI itself emits well-formed JSON. It deliberately
+// does NOT encode the policy/semantic checks (provider allowlist, unique ids
+// across phases, `{{id.output}}` referencing an earlier phase, answer_item
+// validity) — a JSON Schema can't express those; validatePlan does, with retry.
+export const PLAN_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["phases", "answer_item"],
+  properties: {
+    phases: {
+      type: "array",
+      minItems: 1,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "launches"],
+        properties: {
+          name: { type: "string" },
+          launches: {
+            type: "array",
+            minItems: 1,
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["id", "provider", "prompt"],
+              properties: {
+                id: { type: "string" },
+                provider: { type: "string" },
+                prompt: { type: "string" },
+              },
+            },
+          },
+        },
+      },
+    },
+    answer_item: { type: "string" },
+  },
+} as const;
+
 const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const PLACEHOLDER_RE = /\{\{\s*([A-Za-z0-9._-]+)\.output\s*\}\}/g;
 const MAX_PHASES = 8;

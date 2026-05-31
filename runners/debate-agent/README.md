@@ -331,11 +331,16 @@ CLI it spawns (the planner and every worker) is **read-only**.
 
 1. **Plan (one-shot, with retry).** The daemon spawns a **planner** CLI
    (`--planner claude|codex`, default `claude`) that loads the `debate-router`
-   skill's STRATEGY and designs this debate. The daemon injects the strict plan
-   FORMAT (the skill never records it) and **validates** the returned plan
-   (`src/plan.ts`); on invalid output it **retries**, feeding the error back. The
-   plan is the ONE strict-format artifact — and the only place retry is needed.
-   A plan is a static DAG of phases:
+   skill's STRATEGY and designs this debate. The daemon constrains the output with
+   the CLI's **native JSON-Schema** structured output as a first line (claude
+   `--output-format json --json-schema`, reading the result from the envelope's
+   `structured_output`; codex `--output-schema <file> -o <file>`, reading the
+   result file), then **validates** the returned plan (`src/plan.ts`) and, on
+   invalid output, **retries** feeding the error back. The native schema enforces
+   the SHAPE; `validatePlan` enforces what a JSON Schema can't — provider
+   allowlist, unique ids, `answer_item` validity, and that every `{{id.output}}`
+   references a STRICTLY earlier phase. The plan is the ONE strict-format artifact
+   — and the only place retry is needed. A plan is a static DAG of phases:
 
    ```json
    {

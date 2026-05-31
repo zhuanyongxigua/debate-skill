@@ -7,11 +7,17 @@
 // validation error fed back, which is why strict-format generation is reliable
 // here (code-driven retry) in a way it is not in the sandboxed parent.
 
-import { ChildLaunch, buildChildLaunch } from "./launch";
-import { DebateRequest } from "./mailbox";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { Allowlist } from "./allowlist";
-import { Plan, PlanInvalid, parsePlan, validatePlan } from "./plan";
+import { buildChildLaunch } from "./launch";
+import { DebateRequest } from "./mailbox";
+import { PLAN_JSON_SCHEMA, Plan, PlanInvalid, parsePlan, validatePlan } from "./plan";
 import { execute } from "./runner";
+
+const SCHEMA_STR = JSON.stringify(PLAN_JSON_SCHEMA);
 
 // Planning is one reasoning-heavy call; mirror the proposal-generation budget.
 const PLANNER_TIMEOUT_SECONDS = 1800;
@@ -99,25 +105,90 @@ function buildPlannerPrompt(req: DebateRequest, lastError: string | null): strin
     .join("\n");
 }
 
-/** A real planner that spawns a CLI (read-only) and returns its stdout. */
+/** Extract the plan text from claude's `--output-format json` envelope: the
+ * schema-validated object lives in `structured_output`. Falls back to the
+ * envelope's text `result`, then to the raw stdout, so parse/validate + retry
+ * still run if the shape is unexpected. */
+export function extractClaudeStructuredOutput(stdout: string): string {
+  try {
+    const env = JSON.parse(stdout.trim()) as Record<string, unknown>;
+    if (env && typeof env === "object") {
+      if (env.structured_output !== undefined && env.structured_output !== null) {
+        return JSON.stringify(env.structured_output);
+      }
+      if (typeof env.result === "string") return env.result;
+    }
+  } catch {
+    /* not an envelope — return raw stdout, parsePlan will try */
+  }
+  return stdout;
+}
+
+/**
+ * A real planner that spawns a CLI (read-only) and returns the plan text, using
+ * the CLI's NATIVE JSON-Schema structured output as the first line of defense:
+ * claude `--json-schema` (result in the `--output-format json` envelope's
+ * `structured_output`); codex `--output-schema <file>` with the final message
+ * captured to `-o <file>`. validatePlan + retry remain the semantic second line.
+ */
 export function makeCliPlanner(
   repo: string,
   opts: { provider: string; baseEnv?: Record<string, string | undefined> },
 ): PlannerFn {
   return async (req, _attempt, lastError) => {
-    const launch: ChildLaunch = buildChildLaunch({
-      provider: opts.provider,
+    const baseEnv = opts.baseEnv ?? process.env;
+    const prompt = buildPlannerPrompt(req, lastError);
+
+    if (opts.provider === "codex") {
+      // codex takes the schema as a file and writes the final message to `-o`.
+      const dir = mkdtempSync(join(tmpdir(), "debate-plan-"));
+      const schemaFile = join(dir, "schema.json");
+      const outFile = join(dir, "plan.json");
+      try {
+        writeFileSync(schemaFile, SCHEMA_STR);
+        const launch = buildChildLaunch({
+          provider: "codex",
+          cwd: repo,
+          profile: null,
+          capability: "read_only_review", // the planner only reasons + reads; never writes
+          prompt,
+          baseEnv,
+          fast: req.fast,
+          codexSchemaFile: schemaFile,
+          codexOutputFile: outFile,
+        });
+        const exec = await execute(launch, PLANNER_TIMEOUT_SECONDS);
+        if (exec.status !== "completed") {
+          throw new Error(`planner CLI ${exec.status} (${exec.errorCategory ?? "?"}): ${(exec.stderr || "").slice(0, 300)}`);
+        }
+        try {
+          return readFileSync(outFile, "utf8");
+        } catch {
+          return exec.stdout; // codex echoes the final message to stdout too
+        }
+      } finally {
+        try {
+          rmSync(dir, { recursive: true, force: true });
+        } catch {
+          /* best effort */
+        }
+      }
+    }
+
+    // claude (default): inline schema; the result is in the envelope's structured_output.
+    const launch = buildChildLaunch({
+      provider: "claude",
       cwd: repo,
       profile: null,
-      capability: "read_only_review", // the planner only reasons + reads; never writes
-      prompt: buildPlannerPrompt(req, lastError),
-      baseEnv: opts.baseEnv ?? process.env,
-      fast: req.fast,
+      capability: "read_only_review",
+      prompt,
+      baseEnv,
+      jsonSchema: SCHEMA_STR,
     });
     const exec = await execute(launch, PLANNER_TIMEOUT_SECONDS);
     if (exec.status !== "completed") {
       throw new Error(`planner CLI ${exec.status} (${exec.errorCategory ?? "?"}): ${(exec.stderr || "").slice(0, 300)}`);
     }
-    return exec.stdout;
+    return extractClaudeStructuredOutput(exec.stdout);
   };
 }

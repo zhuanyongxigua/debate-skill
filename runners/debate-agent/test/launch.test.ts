@@ -159,6 +159,25 @@ test("copilot is exempt from fast mode", () => {
   assert.ok(!cp.argv.some((a) => a.includes("fast") || a.includes("--settings") || a.includes("service_tier")));
 });
 
+test("planner structured-output flags: claude inline --json-schema, codex --output-schema/-o", () => {
+  // claude: inline --json-schema (with --output-format json)
+  const c = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {}, jsonSchema: '{"type":"object"}' });
+  assert.ok(c.argv.includes("--output-format") && c.argv.includes("json"));
+  const ji = c.argv.indexOf("--json-schema");
+  assert.ok(ji >= 0 && c.argv[ji + 1] === '{"type":"object"}');
+  // codex: --output-schema <file> and -o <file>, inside the exec options (before the trailing "-")
+  const x = buildChildLaunch({ provider: "codex", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {}, codexSchemaFile: "/tmp/s.json", codexOutputFile: "/tmp/o.json" });
+  const si = x.argv.indexOf("--output-schema");
+  assert.ok(si >= 0 && x.argv[si + 1] === "/tmp/s.json");
+  const oi = x.argv.indexOf("-o");
+  assert.ok(oi >= 0 && x.argv[oi + 1] === "/tmp/o.json");
+  assert.equal(x.argv[x.argv.length - 1], "-"); // prompt still on stdin
+  assert.ok(si > x.argv.indexOf("exec") && oi > x.argv.indexOf("exec"));
+  // no schema flags for a normal worker launch
+  const w = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {} });
+  assert.ok(!w.argv.includes("--json-schema") && !w.argv.includes("--output-format"));
+});
+
 test("claude profile is a hard error", () => {
   assert.throws(
     () =>

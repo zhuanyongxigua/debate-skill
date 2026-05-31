@@ -39,8 +39,9 @@ plus one optional execution adapter:
    validate the plan and execute it. But: (a) the daemon never hardcodes debate
    strategy (entry cases, when to cross-review, arbitration/degrade rules); that
    stays in the skill, loaded by the planner. (b) The daemon owns the plan
-   **format/schema**, its validator, and the strict-format prompt it injects into
-   the planner — the skill never records the plan format. (c) **One** planning call
+   **format/schema**, its validator, and the planner's strict-format prompt + the
+   CLI's native JSON-Schema flag (claude `--json-schema`, codex `--output-schema`)
+   — the skill never records the plan format. (c) **One** planning call
    (plus bounded retries), then **mechanical** execution: the daemon substitutes an
    earlier phase's output into a later prompt as text (`{{id.output}}`) and
    branches only on execution **status**, never by parsing a worker's text content.
