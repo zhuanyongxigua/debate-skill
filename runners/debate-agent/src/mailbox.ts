@@ -2,7 +2,7 @@
 // (writes responses). Lives under ~/.debate-router/ by default; override with
 // $DEBATE_AGENT_MAILBOX. Requests and responses correlate by id.
 
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
@@ -16,6 +16,7 @@ export interface Mailbox {
   requestsDir: string;
   processingDir: string;
   responsesDir: string;
+  archiveDir: string;
 }
 
 export function mailboxRoot(): string {
@@ -30,8 +31,9 @@ export function openMailbox(): Mailbox {
     requestsDir: join(root, "requests"),
     processingDir: join(root, "processing"),
     responsesDir: join(root, "responses"),
+    archiveDir: join(root, "archive"),
   };
-  for (const d of [mb.requestsDir, mb.processingDir, mb.responsesDir]) {
+  for (const d of [mb.requestsDir, mb.processingDir, mb.responsesDir, mb.archiveDir]) {
     mkdirSync(d, { recursive: true });
   }
   return mb;
@@ -71,10 +73,14 @@ export function claimRequest(mb: Mailbox, id: string): string | null {
   }
 }
 
-/** Remove a processing/ entry (after it has been finished or recovered). */
-export function clearProcessing(mb: Mailbox, id: string): void {
+/** Move a finished processing/ entry into archive/ — a durable record of the
+ * original request (prompt and all), kept after the debate completes (or is
+ * recovered). The claim-rename keeps requests/ a clean work queue; archiving on
+ * completion preserves the request without bloating that queue. Best-effort: a
+ * missing entry is fine. A re-used id overwrites the prior archive entry. */
+export function archiveProcessing(mb: Mailbox, id: string): void {
   try {
-    unlinkSync(join(mb.processingDir, `${id}.json`));
+    renameSync(join(mb.processingDir, `${id}.json`), join(mb.archiveDir, `${id}.json`));
   } catch {
     /* already gone */
   }

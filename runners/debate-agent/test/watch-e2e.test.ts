@@ -74,8 +74,9 @@ test("watch e2e: scripted plan + real worker spawn, answer + live log + read-onl
   assert.match(resp.answer_markdown, /FINAL-ANSWER/);
   assert.deepEqual(resp.trace.map((t: { item: string; provider: string; status: string }) => `${t.item}:${t.provider}:${t.status}`), ["A1:claude:completed"]);
 
-  // 2) claimed then cleared from processing/
+  // 2) claimed, then moved out of processing/ and preserved in archive/
   assert.ok(!existsSync(join(mb.processingDir, `${id}.json`)), "processing entry cleared");
+  assert.ok(existsSync(join(mb.archiveDir, `${id}.json`)), "request archived");
 
   // 3) live progress log reflects the real execution
   const log = readFileSync(join(mb.responsesDir, `${id}.log`), "utf8");

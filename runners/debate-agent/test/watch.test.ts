@@ -146,6 +146,8 @@ test("processes a new request: plans, executes, writes a matching response", asy
   assert.equal(planTexts.length, 1); // the planner was consulted
   assert.ok(!existsSync(join(mb.requestsDir, "20260531-e2e.json")));
   assert.ok(!existsSync(join(mb.processingDir, "20260531-e2e.json")), "processing entry cleared");
+  // the request is preserved in archive/ (durable record), not deleted
+  assert.ok(existsSync(join(mb.archiveDir, "20260531-e2e.json")), "request archived");
 });
 
 test("a malformed request becomes an error response (never hangs)", async () => {
@@ -171,6 +173,7 @@ test("orphaned processing/ request is recovered as an error response on startup"
   assert.equal(resp.status, "error");
   assert.match(resp.status_reason, /in flight/);
   assert.ok(!existsSync(join(mb.processingDir, "orphan.json")), "processing entry cleared");
+  assert.ok(existsSync(join(mb.archiveDir, "orphan.json")), "orphan request archived");
   assert.ok(existsSync(join(mb.responsesDir, "orphan.log")), "progress log written");
 });
 

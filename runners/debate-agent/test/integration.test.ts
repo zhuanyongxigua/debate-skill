@@ -354,8 +354,11 @@ test("watch daemon: real bin subprocess — planner retry + multi-phase template
     assert.match(argv, /--disallowedTools/);
     assert.ok(!argv.includes("propose"), "prompt must go on stdin, not argv");
 
-    // the daemon cleared its in-flight marker
+    // the daemon moved the request out of processing/ and preserved it in
+    // archive/ with its original prompt intact (durable record, not deleted)
     assert.ok(!existsSync(join(mailbox, "processing", `${id}.json`)), "processing entry cleared");
+    const archived = JSON.parse(readFileSync(join(mailbox, "archive", `${id}.json`), "utf8"));
+    assert.equal(archived.prompt, "should we X or Y?", "original request preserved in archive/");
   } finally {
     if (daemon?.pid !== undefined) {
       try {

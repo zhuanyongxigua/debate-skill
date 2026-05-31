@@ -17,8 +17,8 @@ import {
   DebateRequest,
   Mailbox,
   MailboxRequestRejected,
+  archiveProcessing,
   claimRequest,
-  clearProcessing,
   loadRequestObject,
   openMailbox,
   openResponseLog,
@@ -110,7 +110,7 @@ export async function processNewRequests(
       close();
     }
     writeResponse(mb, id, response as unknown as Record<string, unknown>);
-    clearProcessing(mb, id); // finished: drop the in-flight marker so processing/ only holds live requests
+    archiveProcessing(mb, id); // finished: move the request into archive/ (durable record); processing/ holds only live requests
     processed.push(id);
   }
   return processed;
@@ -133,7 +133,7 @@ export function recoverOrphans(mb: Mailbox): string[] {
       );
       recovered.push(id);
     }
-    clearProcessing(mb, id);
+    archiveProcessing(mb, id); // keep the request in archive/ either way
   }
   return recovered;
 }

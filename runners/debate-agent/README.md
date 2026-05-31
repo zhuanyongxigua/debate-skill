@@ -115,7 +115,7 @@ listed here.
 | `repo` | string | absolute path; `realpath` must resolve under an allowed repo root and be an existing directory |
 | `profile` | string \| null | `null`, or in the profile allowlist for that provider. **Only Codex has profiles the runner can honor** — Claude profiles (strips `CLAUDE_CONFIG_DIR`) and Copilot profiles are rejected |
 | `capability` | string | `read_only_review` (default) or `workspace_write`; must be in the `capabilities` allowlist. Controls the child sandbox posture (see below) |
-| `fast` | bool | default `false`. When `true`, the child CLI launches in turbo mode via per-invocation flags (no global config change): codex `-c service_tier="fast" -c features.fast_mode=true`, claude `--settings '{"fastMode":true}'`. Copilot is exempt |
+| `fast` | bool | default `false`. When `true`, **codex** launches in turbo mode via per-invocation flags (`-c service_tier="fast" -c features.fast_mode=true`; no global config change). **claude and copilot are exempt** — claude's fast mode needs an API token, but the runner strips API keys and runs children on the logged-in account, so a fast flag could not take effect |
 | `prompt` | string | non-empty, length ≤ `max_prompt_chars`; transported to the child via **stdin only** |
 | `timeout_seconds` | int | a positive integer ≤ `86400` (fixed internal sanity cap, not configurable); if omitted, the phase-aware default is used |
 
@@ -273,16 +273,20 @@ top-level reviewer would kill that (see AGENTS.md invariant #2).
 ```
 ~/.debate-router/
   requests/    debate-router writes <id>.json (a debate_request) here
-  processing/  daemon claims a request by atomic rename
+  processing/  daemon claims a request by atomic rename (in-flight marker)
   responses/   daemon writes <id>.json result + <id>.log progress here
+  archive/     finished requests are MOVED here (durable record), never deleted
 ```
 
 On start it **recovers any orphaned `processing/` entries** (a request claimed
 before a previous crash/restart gets an `error` response so the caller stops
 waiting), then **snapshots existing requests and ignores them** (submit after the
 daemon is up). It then polls `requests/`, and for each NEW request: claims it
-(atomic rename), runs the whole debate, and atomically writes
-`responses/<id>.json`. One debate at a time.
+(atomic rename into `processing/`), runs the whole debate, atomically writes
+`responses/<id>.json`, and **moves the request into `archive/`** — `requests/`
+stays a clean work queue, but every request is preserved (prompt and all). One
+debate at a time. The claim-rename is also the exactly-once guard (a second claim
+of the same id fails) and the crash-recovery marker.
 
 The allowlist is **re-read for each new request**, so config edits (e.g. adding a
 `repo_root`) apply to the next debate without restarting the daemon. A
@@ -318,7 +322,7 @@ prompts; the daemon produces those.
 | `prompt` | string | non-empty, ≤ `max_prompt_chars` — the task to debate |
 | `repo` | string | absolute; `realpath` must resolve under an allowed repo root |
 | `language` | string | optional; the human's language (workers + answer use it) |
-| `fast` | bool | optional; turbo mode for every CLI plus a leaner debate |
+| `fast` | bool | optional; turbo mode for codex CLIs (claude/copilot exempt) plus a leaner debate |
 
 ### How the daemon runs a debate
 
@@ -354,9 +358,9 @@ CLI it spawns (the planner and every worker) is **read-only**.
    only on execution **status**, never by parsing a worker's text content. The
    `answer_item` launch's output is the final answer.
 
-When `fast` is true every CLI launches in turbo mode (codex
-`service_tier`/`fast_mode`, claude `--settings fastMode`; copilot exempt) and the
-planner is asked for a leaner debate.
+When `fast` is true, **codex** launches in turbo mode (`service_tier`/`fast_mode`)
+and the planner is asked for a leaner debate. **claude and copilot are exempt**
+(claude's fast mode needs an API token the runner does not provide).
 
 ### Response format
 
