@@ -148,7 +148,12 @@ export interface DebateRequest {
   fast: boolean; // turbo mode: launch every CLI (planner + workers) in its fast mode
 }
 
-const ALLOWED_DEBATE_FIELDS = new Set(["schema_version", "id", "kind", "prompt", "repo", "language", "fast"]);
+// The exact accepted fields. Exported so the debate-router skill's request-file
+// checker (skills/debate-router/scripts/check-request.mjs) can be pinned to this
+// set by a test — if this changes, that test fails until the skill checker +
+// SKILL.md example are updated too (see AGENTS.md).
+export const ALLOWED_DEBATE_FIELDS = ["schema_version", "id", "kind", "prompt", "repo", "language", "fast"] as const;
+const ALLOWED_DEBATE_FIELD_SET = new Set<string>(ALLOWED_DEBATE_FIELDS);
 
 /** Parse any mailbox request file into a raw object (kind-agnostic). */
 export function loadRequestObject(path: string): Record<string, unknown> {
@@ -170,7 +175,7 @@ export function validateDebateRequest(raw: Record<string, unknown>, allow: Allow
   };
   req(raw.schema_version === 1, "request schema_version must be 1");
   req(raw.kind === "debate_request", 'kind must be "debate_request"');
-  const unknown = Object.keys(raw).filter((k) => !ALLOWED_DEBATE_FIELDS.has(k));
+  const unknown = Object.keys(raw).filter((k) => !ALLOWED_DEBATE_FIELD_SET.has(k));
   req(unknown.length === 0, `unknown request field(s): ${JSON.stringify(unknown.sort())}`);
 
   const id = raw.id;

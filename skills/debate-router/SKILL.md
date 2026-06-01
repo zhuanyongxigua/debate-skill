@@ -422,6 +422,23 @@ Pick a unique `<id>` (`YYYYMMDD-HHMMSS-slug`).
   runs a leaner debate and launches **codex** CLIs in turbo mode (claude/copilot
   are exempt — claude's fast mode needs an API token the runner does not provide).
 
+> **Exactly these fields, nothing else.** The request has ONLY
+> `schema_version, id, kind, prompt, repo, language, fast`. Do **not** add any
+> other field — a common mistake is a stale `output_contract`; the daemon rejects
+> unknown fields. Put any required **output format / template** inside `prompt`.
+
+**Step 1b — Check the request file.** After writing it, validate the format with
+this skill's bundled checker (it catches the field mistake above before the daemon
+round-trip):
+
+```bash
+node <this-skill-dir>/scripts/check-request.mjs ~/.debate-router/requests/<id>.json
+```
+
+Exit 0 = good; exit 1 prints the problem — fix and re-check. If your environment
+cannot run `node` here, re-read the file and confirm it has only the seven fields
+above; the daemon also rejects a bad request with a clear `error` response.
+
 **Step 2 — Watch for the response.** Poll `~/.debate-router/responses/` for
 **`<id>.json`** (a human may instead drop a plain `<id>.md`). The companion
 **`<id>.log`** is a live progress log (plan attempts, each phase, each worker) —

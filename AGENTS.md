@@ -122,5 +122,12 @@ debate STRATEGY lives in the `debate-router` skill, not here.
 - When behavior changes, update the relevant `SKILL.md`, the runner `README.md`,
   any directly referenced files, and at least one eval or test that protects the
   new boundary.
+- **The `debate_request` format has one source of truth: `validateDebateRequest`
+  (`ALLOWED_DEBATE_FIELDS` in `src/mailbox.ts`). If you change it, you MUST also
+  update the debate-router skill's request-file checker
+  (`skills/debate-router/scripts/check-request.mjs`) and SKILL.md's Mode 2
+  example.** The pinning test `test/check-request.test.ts` fails until the skill
+  checker's field set matches the daemon's — that is the mechanical guard against
+  forgetting, so do not delete or weaken it.
 - Match the surrounding code's style; do not introduce a formatter/linter config
   or reorganize files without reason.
