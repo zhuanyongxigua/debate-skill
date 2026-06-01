@@ -1,6 +1,6 @@
 # Evals
 
-Starter evals for the `debate-router` and `agent-launch` boundary.
+Starter evals for the `debate-router` and `cli-launch` boundary.
 
 These evals test whether an agent:
 
@@ -32,8 +32,8 @@ These evals test whether an agent:
 - classifies the input as requirement, single proposal, multiple candidates, or
   conflicting judgments,
 - preserves selected external CLI agents and routes concrete startup details
-  through `agent-launch`,
-- avoids treating `agent-launch` as a debate or topology decision maker.
+  through `cli-launch`,
+- avoids treating `cli-launch` as a debate or topology decision maker.
 
 ## Conditions
 

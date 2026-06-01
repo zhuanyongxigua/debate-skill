@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Scorer for debate-router and agent-launch evals.
+Scorer for debate-router and cli-launch evals.
 
 Usage:
     python scorer.py
@@ -19,7 +19,7 @@ DEFAULT_TASKS_FILE = EVALS_DIR / "routing-tasks.jsonl"
 RESULTS_DIR = EVALS_DIR / "results"
 
 METHOD_TO_ARTIFACT = {
-    "agent-launch": "AgentLaunchPlan",
+    "cli-launch": "AgentLaunchPlan",
     "debate-router": "DebateRecord",
 }
 

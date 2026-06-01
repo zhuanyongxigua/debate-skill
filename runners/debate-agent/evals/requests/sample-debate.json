@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "id": "sample-auth-debate",
+  "kind": "debate_request",
+  "prompt": "A 3-person startup has a 3-month deadline. Debate whether they should build authentication in-house or adopt a managed provider (e.g. Auth0 or Clerk), then recommend one — with the key tradeoffs and the conditions that would flip the decision.",
+  "repo": "__FIXTURE_REPO__",
+  "language": "English",
+  "fast": false
+}

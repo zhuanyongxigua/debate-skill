@@ -1,0 +1,26 @@
+#!/usr/bin/env node
+// Fixed entry point for the debate-agent thin execution adapter.
+// Installed to ~/.local/bin/debate-agent so Codex Rules can allow a stable
+// path. This file resolves its own real location and loads the compiled CLI
+// from dist/. It must stay tiny: the privileged logic lives in the audited,
+// compiled lib (dist/src/), not here.
+//
+// CommonJS on purpose: an extensionless entry point is unambiguous as CJS, so
+// `require` works regardless of any package "type" field.
+"use strict";
+
+const path = require("node:path");
+const fs = require("node:fs");
+
+// realpath() follows a dev symlink back to the repo so dist/ is importable.
+const real = fs.realpathSync(__filename);
+const pkgDir = path.dirname(path.dirname(real)); // .../debate-agent
+const cli = require(path.join(pkgDir, "dist", "src", "cli.js"));
+
+cli
+  .main(process.argv.slice(2))
+  .then((code) => process.exit(code))
+  .catch((err) => {
+    console.error(err);
+    process.exit(2);
+  });

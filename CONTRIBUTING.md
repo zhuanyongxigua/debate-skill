@@ -9,7 +9,7 @@ turning the skills into a broad prompt pack.
 
 - `debate-router`: explicit debate entry classification plus bounded debate
   execution.
-- `agent-launch`: shared launch specs and defaults for selected local agent
+- `cli-launch`: shared launch specs and defaults for selected local agent
   CLIs.
 
 ## Updating A Skill
@@ -27,7 +27,7 @@ turning the skills into a broad prompt pack.
 - It does not provide non-debate workflow modes.
 - It classifies the debate input shape and produces `DebateRecord`.
 
-`agent-launch` should stay narrow:
+`cli-launch` should stay narrow:
 
 - It does not decide whether external CLIs should be used.
 - It does not own debate turns, transcripts, arbitration, supervisor loops, PID
@@ -52,7 +52,7 @@ Use lowercase kebab-case names for installable skills:
 
 ```text
 debate-router
-agent-launch
+cli-launch
 ```
 
 Prefer literal names over marketing names. The name should tell an agent what

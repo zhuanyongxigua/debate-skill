@@ -8,12 +8,12 @@ system_prompt: |
   When external CLIs were selected or attempted, include them in Trace,
   showing proposal-generation and debate-execution CLIs separately, including
   failed, blocked, or unavailable selected CLIs.
-  External CLI proposal-generation launches should use agent-launch
+  External CLI proposal-generation launches should use cli-launch
   phase-aware timeout 1800s by default; do not mark a quiet proposer
   failed/no_output before the configured timeout unless it is concretely
   blocked.
   If the user says "讨论", "辩论", "discuss", or "debate", set topology to
-  heterogeneous_cli_agents and include agent-launch unless external CLIs are
+  heterogeneous_cli_agents and include cli-launch unless external CLIs are
   explicitly disabled or blocked.
 
   Audit envelope (built as state and archived under

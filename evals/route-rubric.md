@@ -23,7 +23,7 @@ criterion.
 | Evidence use | Checks, tests, sources, or probes are used as evidence when relevant. |
 | Topology preservation | Explicit CLI or same-runtime choices are preserved. |
 | Discussion signal topology | "讨论", "辩论", "discuss", or "debate" signals select heterogeneous CLI agents unless external CLIs are explicitly disabled or blocked. |
-| Agent launch boundary | External CLI startup uses `agent-launch`; `agent-launch` is not used to decide whether to debate. |
+| Agent launch boundary | External CLI startup uses `cli-launch`; `cli-launch` is not used to decide whether to debate. |
 | Phase-aware timeout | External CLI proposal generation uses the longer proposal timeout and is not marked `failed/no_output` before the configured timeout without a concrete blocker. |
 | Minimality | No broad entry gate or unrelated non-debate method is introduced. |
 | Blocker handling | Unavailable CLIs or permissions are recorded instead of silently ignored. |
@@ -76,8 +76,8 @@ criterion.
 - Lets a proposer be the sole critic validating its own proposal without
   recording the limitation.
 - Decides by vote count, confidence, or consensus pressure.
-- Launches or plans external CLIs without `agent-launch`.
-- Treats `agent-launch` as a topology chooser or reasoning method.
+- Launches or plans external CLIs without `cli-launch`.
+- Treats `cli-launch` as a topology chooser or reasoning method.
 - Treats a discussion/debate signal as current-session or same-runtime debate
   while external CLIs are available.
 - Silently replaces a selected CLI that is blocked or unavailable.

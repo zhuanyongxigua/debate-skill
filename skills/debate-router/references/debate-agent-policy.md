@@ -27,9 +27,11 @@ Ask only:
 workflow.
 
 - If the caller says "discuss", "debate", "argue about", "讨论", "辩论", or a
-  close equivalent, treat that as selected `heterogeneous_cli_agents`. Use
-  multiple external CLI agents via `agent-launch` for both proposal generation
-  and debate execution. Do not ask whether CLIs are worth using.
+  close equivalent, treat that as selected `heterogeneous_cli_agents`. By default
+  `debate-router` emits a request file and stops (see SKILL.md `Execution Path`);
+  the multiple external CLI agents are launched downstream. Only spawn them
+  in-session via `cli-launch` when the human explicitly asks. Either way, do not
+  ask whether CLIs are worth using.
 - If no external CLI agents were selected, use current-session or same-runtime
   critic roles.
 - If one external CLI was selected, use `single_external_cli_agent`.
@@ -57,8 +59,10 @@ harness and model confounds the result because system prompts, tool
 permissions, context management, edit strategy, and test execution all change.
 
 Use different CLI harnesses when the user or parent workflow explicitly wants
-full-stack agent behavior or robust independent review, then use `agent-launch`
-for the concrete startup plan:
+full-stack agent behavior or robust independent review. By default a sandboxed
+parent emits a request file (the standalone processor runs the harnesses); on
+the explicit in-session path, spawn them via `cli-launch` for the concrete
+startup plan:
 
 - "Claude Code + model A versus Codex + model B"
 - cross-agent review of a risky architecture plan
@@ -77,8 +81,11 @@ capability instead of treating the failure as a model-quality result.
 
 ## CLI Agent Invocation Rules
 
-Use `agent-launch` whenever `debate-router` has selected or inherited
-`single_external_cli_agent` or `heterogeneous_cli_agents`.
+When `debate-router` has selected or inherited `single_external_cli_agent` or
+`heterogeneous_cli_agents`, follow the Execution Path: by default emit a request
+file (the standalone `debate-agent` processor runs the CLIs); spawn them
+in-session via `cli-launch` only when the human explicitly asks. See
+`debate-router` SKILL.md "Execution Path".
 
 - Do not invoke Gemini or other CLIs unless the user explicitly asks or approves
   fallback.
@@ -143,9 +150,9 @@ separate from critique:
 - Generate and normalize 2-4 distinct proposals before debate.
 - When the trigger was a discussion/debate signal, proposal generation should
   use the selected external CLI agents as independent proposers before
-  normalization. Use `agent-launch` with `phase: "proposal_generation"` so the
-  default wait budget is 1800 seconds unless the caller explicitly chose
-  another timeout.
+  normalization. Use `phase: "proposal_generation"` (via `cli-launch`) so the
+  default wait budget is 1800 seconds unless the caller explicitly chose another
+  timeout.
 - Debate execution may not mutate the frozen proposals.
 - If normalization leaves fewer than two distinct usable proposals, return a
   degraded debate record rather than pretending a single proposal is a normal

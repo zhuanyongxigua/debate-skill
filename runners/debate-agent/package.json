@@ -1,0 +1,25 @@
+{
+  "name": "debate-agent",
+  "version": "0.1.0",
+  "description": "Thin execution adapter for already-decided CLI launch requests.",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "debate-agent": "bin/debate-agent"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "test:unit": "npm run build && node --test dist/test/schema.test.js dist/test/allowlist.test.js dist/test/launch.test.js dist/test/audit.test.js dist/test/runner.test.js",
+    "test:integration": "npm run build && node --test dist/test/integration.test.js",
+    "eval": "npm run build && node dist/evals/run-eval.js",
+    "eval:mock": "npm run build && node dist/evals/run-eval.js --mock"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5"
+  }
+}

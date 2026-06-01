@@ -22,14 +22,31 @@ expensive. If the debate cannot run, record the concrete blocker in the
 `DebateRecord`.
 
 If the caller uses explicit discussion or debate signals such as "discuss",
-"debate", "argue about", "讨论", or "辩论", treat that as an instruction to use
-multiple external CLI agents. This is not a model judgment about whether CLIs
-are worthwhile; the caller has selected the multi-CLI path. Use the multi-CLI
-path for both proposal generation and debate execution unless the caller
-explicitly disables external CLIs or the selected CLIs are blocked or
-unavailable.
+"debate", "argue about", "讨论", or "辩论", that selects a multi-CLI debate. This
+skill runs in one of **three modes** (see `Execution Path`):
+
+- **Mode 2 — emit a request file (DEFAULT).** You are sandboxed and cannot spawn
+  a CLI, so you only write ONE high-level `debate_request` to
+  `~/.debate-router/requests/`, watch for the response, and present it. The
+  out-of-sandbox `debate-agent` daemon does everything in between — it plans the
+  debate (calling you back in Mode 3) and executes it. You do not run the debate.
+- **Mode 3 — planner.** The daemon's planner step invokes you (read-only, out of
+  sandbox) to design the debate as a structured **plan**. You apply the debate
+  STRATEGY below; the daemon supplies the exact output format and validates it.
+- **Mode 1 — cli-launch in-session.** Only when the human explicitly asks to run
+  the debate via local CLIs in a non-sandboxed parent: you run the whole bounded
+  debate yourself, spawning CLIs through `cli-launch`.
 
 ## Required Output
+
+> **Scope.** This section and everything below about *running* the debate
+> (`DebateRoute` / `DebateRecord` / `DebateSummary`, proposal generation,
+> critique, arbitration) applies only when you actually **run** the debate
+> in-session — i.e. **Mode 1** (`cli-launch`). In **Mode 2** you only write the
+> request file and later *present* the daemon's `answer_markdown` (re-rendering to
+> a caller-required format here); you do not run the debate or produce a
+> `DebateRecord` / `Trace`. In **Mode 3** you output a structured plan in the
+> format the daemon gives you (no `DebateRecord`).
 
 Caller output format outranks the debate-router visible layout. This is a
 mandatory final-output gate, not a style preference.
@@ -302,10 +319,10 @@ four cases impossible.
 - `proposal_generation` produces raw proposals from selected external CLI
   proposers when provided; otherwise use same-runtime or current-session
   proposers. External CLI proposal generation is usually slower than a critic
-  pass; use `agent-launch` with `phase: "proposal_generation"` and a default
-  `timeout_seconds: 1800` unless the caller explicitly chose another budget.
-  Do not mark a proposer `failed/no_output` merely because a short poll has no
-  readable output.
+  pass; spawn it via `cli-launch` with `phase: "proposal_generation"` and a
+  default `timeout_seconds: 1800` unless the caller explicitly chose another
+  budget. Do not mark a proposer `failed/no_output` merely because a short poll
+  has no readable output.
 - `proposal_normalization` validates proposals, removes near-duplicates,
   trims or supplements to 2-4 distinct proposals, assigns stable IDs, and
   records proposer source and fallback reasons. It may normalize; it must not
@@ -366,21 +383,164 @@ Proposal state terms:
   example `[from P3]`, so valid fragments from weak proposals are not laundered
   into the result without attribution.
 
+## Execution Path
+
+This skill runs in three modes. **Default to Mode 2 (emit a request file).**
+
+### Mode 2 (default): emit a debate_request, watch, present
+
+You are sandboxed: you can read/write files but cannot spawn a CLI (the parent's
+top-level reviewer would kill that). So you do **not** run the debate — you write
+ONE high-level request and let the out-of-sandbox `debate-agent` daemon plan and
+run it. Do not invoke any other skill or spawn anything.
+
+**Step 1 — Write the request file.** Create `~/.debate-router/requests/` if needed
+and write ONE request with the task, the target repo, and the human's language.
+Pick a unique `<id>` (`YYYYMMDD-HHMMSS-slug`).
+
+`~/.debate-router/requests/<id>.json`:
+
+```json
+{
+  "schema_version": 1,
+  "id": "<YYYYMMDD-HHMMSS-slug>",
+  "kind": "debate_request",
+  "prompt": "<the requirement / candidates / question to debate>",
+  "repo": "<absolute repo path>",
+  "language": "<the human's primary language, e.g. 中文 / English>",
+  "fast": false
+}
+```
+
+- `prompt`: the whole task to debate — do **not** pre-plan phases or write worker
+  prompts; the daemon's planner does that (it calls you back in Mode 3).
+- `repo`: an **absolute** path under an allowlisted root — resolve it yourself
+  (e.g. from the cwd); a relative path or one outside the roots comes back rejected.
+- `language`: the language the human is using; the debate answers in it. Omit if
+  unsure.
+- `fast`: set `true` on urgency signals ("快一点", "尽快", "hurry", "fast"); it
+  runs a leaner debate and launches **codex** CLIs in turbo mode (claude/copilot
+  are exempt — claude's fast mode needs an API token the runner does not provide).
+
+> **Exactly these fields, nothing else.** The request has ONLY
+> `schema_version, id, kind, prompt, repo, language, fast`. Do **not** add any
+> other field — a common mistake is a stale `output_contract`; the daemon rejects
+> unknown fields. Put any required **output format / template** inside `prompt`.
+
+**Step 1b — Check the request file.** After writing it, validate the format with
+this skill's bundled checker (it catches the field mistake above before the daemon
+round-trip):
+
+```bash
+node <this-skill-dir>/scripts/check-request.mjs ~/.debate-router/requests/<id>.json
+```
+
+Exit 0 = good; exit 1 prints the problem — fix and re-check. If your environment
+cannot run `node` here, re-read the file and confirm it has only the seven fields
+above; the daemon also rejects a bad request with a clear `error` response.
+
+**Step 2 — Watch for the response.** Poll `~/.debate-router/responses/` for
+**`<id>.json`** (a human may instead drop a plain `<id>.md`). The companion
+**`<id>.log`** is a live progress log (plan attempts, each phase, each worker) —
+you, or any other agent, can tail it for status, but it is **not** the response.
+Open-ended listening: do **not** stop merely because a few polls produced no
+response, and do **not** treat `<id>.log` as the response. Reading the same path
+repeatedly is fine; do **not** spawn anything to wait.
+
+Stop polling only when: `<id>.json` (or `<id>.md`) appears; the human gives a wait
+limit that expires; the human interrupts / redirects / asks for status only; or
+the parent forces the turn to end. If you stop for a non-response reason, read
+`~/.debate-router/responses/<id>.log` and report the latest progress plus the
+`<id>`, request path, expected response path, and that it is still pending.
+
+**Step 3 — Present the result.** `responses/<id>.json` is a `debate_result`:
+render `answer_markdown`; if `status` is not `completed`, say so briefly with
+`status_reason`. `trace` is a faithful per-launch record (phase, item, provider,
+status) you may surface if useful. If the original task had a required output
+format, render the answer in that format here (this is where Mode 2 still owns
+caller-format preservation). Do **not** run the debate yourself or fabricate a
+result.
+
+### Mode 3: planner (invoked by the daemon's planner step)
+
+The daemon runs the debate by first asking YOU (read-only, out of sandbox) to
+design it as a structured **plan**, then executing that plan as read-only worker
+CLIs. You enter this mode when the prompt says you are the planner and gives the
+exact output format. You **never spawn or write files**; you only output the plan.
+
+Apply the debate STRATEGY in this skill (Entry Cases, Debate Styles, Debate Rules,
+Final Synthesis) to design THIS task's debate: which phases, how many
+proposers/critics, which providers, and each worker's full prompt. Then output the
+plan in **exactly the format the daemon gave you** — the plan FORMAT lives in the
+daemon, not in this skill, so follow its spec literally.
+
+Rules in this mode:
+
+- **Judge complexity first** and set `complexity`. **Simple** task (focused
+  question, small/single-area change, clearly-scoped review) → emit the **FAST
+  workflow**: Phase 1 = two independent reviewers in parallel (1 `codex` at
+  `xhigh`+`fast`, 1 `claude` at `high`); Phase 2 = one `claude` (`high`) arbiter
+  that reads `{{P1.output}}`+`{{P2.output}}` and writes the final answer. No
+  separate critique/cross-review for a simple task — that lean shape mirrors
+  `parallel_positions` + arbitration and is the whole point of going fast.
+  **Complex** task → design the full bounded debate (proposal → normalization →
+  critique → cross-review → arbitration).
+- **Pick `effort` per launch** (the daemon no longer hardcodes it):
+  - `codex`: generally `xhigh` + `fast: true` (it is fast and token-cheap).
+  - `claude`: usually `high` is enough; use `xhigh`/`max` only when that launch
+    needs deep reasoning. `claude` ignores `fast`.
+- **Know what each provider can do**, and allocate accordingly:
+  - `claude` worker = Read/Grep/Glob **and read-only git** (`git diff`/`log`/
+    `show`/`status`/`blame`), but **no arbitrary shell**.
+  - `codex` worker = read-only OS sandbox; can run **any read-only command**.
+    Give tasks needing shell beyond git (build, run tests, broad inspection) to
+    `codex`.
+- **Write focused worker prompts**: give each a concrete anchor (which change /
+  artifact to look at) and tell it to read the affected code **and its
+  callers/dependents** to assess impact. Do **not** say "explore the whole repo",
+  and do **not** restrict it to only the diff — a real review needs the
+  surrounding code.
+- Each launch is one independent read-only worker: write its COMPLETE,
+  self-contained prompt (workers do not run this skill; they only answer your
+  prompt). Write every worker prompt and the final answer in the human's language.
+- A later phase's prompt may embed an EARLIER launch's output via the placeholder
+  the daemon specifies (e.g. `{{P1.output}}`); write the surrounding framing
+  yourself ("Here are the proposals:\n{{P1.output}}\n…\nCritique them."). Launches
+  within one phase run in **parallel** and must not depend on each other.
+- Designate the launch whose output is the final answer; its prompt must instruct
+  that worker to write the final answer in the required layout and language.
+- If the task is `fast`, bias toward the lean/fast shape.
+- Do **not** call `cli-launch`, do **not** write files, do **not** execute
+  anything, do **not** include a Trace. Output **only** the plan.
+
+### Mode 1 (only on explicit request): cli-launch in-session
+
+If — and only if — the human explicitly asks to run the debate via local CLIs
+(e.g. "use the CLI debate", "spawn the CLIs directly") in a non-sandboxed parent,
+run the whole bounded debate yourself and spawn the selected CLIs directly through
+`cli-launch`. Here `debate-router` owns the full flow — entry case, candidate
+freeze, roles, provider allocation, proposal generation, critique, cross-review,
+and arbitration — and the `CLI Topology`, `Phase Concurrency`, and workflow
+sections below apply. **Allocate providers yourself** (e.g. four agents = two
+`codex` + two `claude`); `cli-launch` only launches what this skill decides and
+never balances providers.
+
 ## CLI Topology
+
+> Applies only to **Mode 1** (running the debate in-session via `cli-launch`). In
+> Mode 2 you only write the request file; in Mode 3 you output a plan (its
+> per-launch `provider` choices follow the same allocation rules).
 
 `debate-router` does not decide whether external CLI agents are worth using.
 
-Use the user or parent workflow's selected topology:
+When the human has explicitly asked to run the debate in-session:
 
-- Discussion/debate signals such as "discuss", "debate", "argue about", "讨论",
-  or "辩论" count as selected `heterogeneous_cli_agents`. Plan two or more
-  external CLI agents through `agent-launch`. Prefer the locally configured
-  debate CLIs, and record any unavailable selected CLI as blocked instead of
-  silently falling back to current-session debate.
+- Discussion/debate signals select `heterogeneous_cli_agents`. Plan two or more
+  external CLI agents and spawn them through `cli-launch`. Prefer the locally
+  configured debate CLIs, and record any unavailable selected CLI as blocked
+  instead of silently falling back to current-session debate.
 - If no external CLI agents are selected, run the bounded debate in the current
   session or same runtime.
-- If one or more external CLI agents are selected, use `agent-launch` for the
-  concrete non-interactive startup plan.
 - Record each selected or attempted CLI in `DebateRecord.cli_participation`.
   Separate `proposal_generation` from `debate_execution`; include failed,
   blocked, or unavailable CLIs instead of dropping them from the visible output.
@@ -398,10 +558,15 @@ Use the user or parent workflow's selected topology:
 
 ## Phase Concurrency
 
+> Applies only to **Mode 1** (`cli-launch` in-session). In Mode 3 the same
+> independence rule shapes the plan: put a phase's independent workers in the same
+> plan phase (the daemon runs one phase's launches in parallel); never make one
+> launch depend on another in the same phase.
+
 When a phase has multiple selected CLIs whose outputs do not depend on each
-other, fan them out in parallel via `agent-launch.run_specs_parallel`.
-Parallel is the default for any independent phase; running independent CLIs
-serially is a deviation and must be justified in `DebateRecord`.
+other, fan them out in parallel via `cli-launch.run_specs_parallel`. Parallel is
+the default for any independent phase; running independent CLIs serially is a
+deviation and must be justified in `DebateRecord`.
 
 The rule that decides parallel vs serial is one line: each child's output
 must not read or depend on any other child's output within the same phase.
@@ -430,10 +595,10 @@ When fanning out, attach the per-call debate identifier through
 `ParallelSpec.caller_metadata` (for example `{"phase": "proposal_generation",
 "role": "proposer", "id": "P2"}`) so the returned `ParallelResult` can be
 correlated back to the frozen-candidate ID without leaking debate semantics
-into `agent-launch`. Results come back in input order, not completion order.
+into `cli-launch`. Results come back in input order, not completion order.
 
 Per-spec failures, timeouts, retries, and "is this enough surviving evidence
-to continue" decisions belong to this skill, not to `agent-launch`. The
+to continue" decisions belong to this skill, not to `cli-launch`. The
 parallel helper only guarantees mechanical fan-out (process group, SIGTERM
 then SIGKILL after a 10s grace period) and per-spec status (`completed`,
 `timed_out`, `error`). Translate those into `DebateRecord.cli_participation`
@@ -447,6 +612,11 @@ would make concurrent calls counterproductive. Record the reason in
 `DebateRecord` whenever the default fan-out is not used.
 
 ## Workflow
+
+> This full workflow runs only in **Mode 1** (`cli-launch` in-session). In Mode 2
+> you write a `debate_request` and present the result; in Mode 3 you express this
+> same strategy as a plan for the daemon (the planner uses the steps below to
+> decide phases/launches, but does not run them). See `Execution Path`.
 
 1. Classify the final output contract as `caller_format` or
    `default_debate_layout`. If the task is a document/wiki/diary/review/archive
@@ -463,13 +633,13 @@ would make concurrent calls counterproductive. Record the reason in
    If the trigger was a discussion/debate signal, use the selected external CLI
    agents as proposers before normalization.
    When two or more external CLI proposers are selected, fan them out in
-   parallel via `agent-launch.run_specs_parallel`. See `Phase Concurrency`.
+   parallel via `cli-launch.run_specs_parallel`. See `Phase Concurrency`.
 5. For the other entry cases, freeze the user-provided proposal, candidates, or
    judgments before critique.
 6. Run one independent critique round. If the trigger was a discussion/debate
    signal, run this round through the selected external CLI agents. When two
    or more external critics are selected, fan them out in parallel via
-   `agent-launch.run_specs_parallel`. See `Phase Concurrency`.
+   `cli-launch.run_specs_parallel`. See `Phase Concurrency`.
 7. Run one cross-review round. This round must remain serial across critics —
    each cross-reviewer reads the completed independent critique findings
    before producing their cross-review.
@@ -530,9 +700,9 @@ would make concurrent calls counterproductive. Record the reason in
   candidates.
 - Letting critics edit the candidates they are critiquing.
 - Using model votes, confidence, or consensus as the arbiter's evidence.
-- Calling `agent-launch` to decide whether CLI agents should be used.
+- Calling `cli-launch` to decide whether CLI agents should be used.
 - Running independent CLI proposers or independent critics serially when
-  `agent-launch.run_specs_parallel` could fan them out — parallel is the
+  `cli-launch.run_specs_parallel` could fan them out — parallel is the
   default for any phase that does not read prior child output.
 - Fanning out `cross_review`, `arbitration`, `proposal_normalization`, final
   rendering, or any shared-state mutation through `run_specs_parallel` —

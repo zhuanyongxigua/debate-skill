@@ -34,7 +34,7 @@ DebateRecord:
   debate_style: "parallel_positions|proposal_attack|frozen_candidates"
   execution_topology:
     mode: "current_session|same_runtime_multi_agent|single_external_cli_agent|heterogeneous_cli_agents|sequential_isolated"
-    launch_skill: "none|agent-launch"
+    launch_skill: "none|request_file|cli-launch" # request_file = emitted to ~/.debate-router/requests (a processor runs it); cli-launch = direct in-session spawn
     permission_needed: false
     permission_status: "not_needed|requested|approved|blocked"
     cli_agents:
@@ -291,17 +291,20 @@ Rules:
   If they diverge during synthesis, fix the visible output to match the audit
   state before completing the run.
 - Explicit discussion or debate signals such as "discuss", "debate",
-  "argue about", "讨论", or "辩论" select the multi-CLI path. Set
-  `DebateRoute.topology: heterogeneous_cli_agents`, include two or more
-  external CLIs in `selected_cli_agents`, and use `agent-launch` for the
-  launch plan unless the caller explicitly disabled external CLIs or the CLIs
-  are blocked or unavailable.
+  "argue about", "讨论", or "辩论" select the multi-CLI path. **By default this
+  is not run in-session**: `debate-router` emits a request file to
+  `~/.debate-router/requests/` and stops (see SKILL.md `Execution Path`); a
+  human/processor runs it. The rest of this protocol describes that run, which
+  also happens in-session only when the human explicitly asks for the
+  `cli-launch` debate. When running it, set
+  `DebateRoute.topology: heterogeneous_cli_agents`, include two or more external
+  CLIs in `selected_cli_agents`, and spawn them via `cli-launch`.
 - For a `requirement_debate` entered through a discussion/debate signal, use
   the selected external CLI agents for `proposal_generation` before
   normalization, then use external CLI critics for `debate_execution`.
-  `proposal_generation` launches should use the `agent-launch` phase-aware
-  default timeout of 1800 seconds unless the caller explicitly chose another
-  budget.
+  `proposal_generation` launches use the phase-aware default timeout of 1800
+  seconds (set it in the request file, or via `cli-launch` when
+  spawning directly) unless the caller explicitly chose another budget.
 - Record phase-level CLI participation for every selected or attempted
   external CLI. If both proposal generation and debate execution used external
   CLIs, show both phases separately in the human-first `Trace` table and in
@@ -343,8 +346,9 @@ Rules:
   protocol. It is not a separate multi-path analysis method and should produce
   only the candidates needed for the debate.
 - Freeze candidates before critique.
-- Use `agent-launch` before launching selected external CLI child agents. Do
-  not use `agent-launch` to decide whether external agents should be selected.
+- When actually running the debate in-session (the explicit `cli-launch` path),
+  spawn selected external CLI child agents via `cli-launch`. Do not use it to
+  decide whether external agents should be selected.
 - Cap to one independent critique round, one cross-review round, and
   arbitration unless the user explicitly asks otherwise.
 - Ask critics for evidence, risk, assumptions, and probes.
@@ -398,11 +402,12 @@ Rules:
 - Use non-interactive CLI modes:
   - Claude Code: `claude -p` or `claude --print`
   - Codex CLI: `codex exec`
-- For Codex CLI, the `agent-launch` default is a network-capable sandbox:
-  `workspace-write` with `sandbox_workspace_write.network_access=true`. Record
-  sandbox/profile and network status before launch. Mark the Codex critic
-  `blocked` if a parent explicitly disabled network or the needed access is
-  broader than this sandbox allows.
+- Sandbox posture (in-session `cli-launch` path): the Codex default is a
+  network-capable `workspace-write` sandbox. Record sandbox/profile and network
+  status before launch, and mark a Codex critic `blocked` if a parent disabled
+  network or the needed access is broader than the sandbox allows. (When the
+  debate is instead run by the standalone `debate-agent` processor, it defaults
+  to a read-only posture — see `runners/debate-agent/README.md`.)
 - Do not launch interactive TUI sessions for child agents.
 - Use read-only, plan, or no-edit modes when available. Do not let child agents
   edit files unless implementation was explicitly requested.
