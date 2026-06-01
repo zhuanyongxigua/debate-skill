@@ -192,6 +192,43 @@ test("when every provider is rate-limited the launch degrades (bounded, no infin
   assert.equal(resp.trace[0]!.error_category, "rate_limited");
 });
 
+// --- fast path: skip the planner, run a fixed lean 2-phase shape -----------
+
+test("a fast request skips the planner and runs the fixed lean 2-phase shape", async () => {
+  // a planner that throws would turn the debate into an `error` response if it were
+  // ever called — so a `completed` result proves the planner was skipped.
+  const planner: PlannerFn = async () => {
+    throw new Error("planner must NOT be called for a fast request");
+  };
+  const { runItems, calls } = stubRun();
+  const resp = await runDebate(req({ fast: true, prompt: "REVIEW THIS TASK" }), allow, { planner, runItems, readOutput });
+
+  assert.equal(resp.status, "completed");
+  // fixed shape: phase 1 = P1 codex + P2 claude in parallel; phase 2 = A1 claude
+  assert.deepEqual(resp.trace.map((t) => `${t.item}:${t.provider}`), ["P1:codex", "P2:claude", "A1:claude"]);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0]!.map((it) => it.req!.provider), ["codex", "claude"]);
+  assert.deepEqual(calls[1]!.map((it) => it.req!.provider), ["claude"]);
+  // the generic reviewer prompt embeds the human's task verbatim
+  assert.match(calls[0]![0]!.req!.prompt, /REVIEW THIS TASK/);
+  // the arbiter prompt embeds both reviewers' outputs (mechanical {{id.output}})
+  assert.match(calls[1]![0]!.req!.prompt, /OUT\[P1\][\s\S]*OUT\[P2\]/);
+  assert.equal(resp.answer_markdown, "OUT[A1]");
+});
+
+test("the fast path still swaps engines on a rate limit", async () => {
+  const planner: PlannerFn = async () => {
+    throw new Error("planner must NOT be called for a fast request");
+  };
+  const { runItems } = rateLimitRun(new Set(["codex"])); // P1 codex limited → fall back
+  const resp = await runDebate(req({ fast: true }), allow, { planner, runItems, readOutput });
+  assert.equal(resp.status, "completed");
+  // P1 was planned codex but ran on claude after the swap
+  const p1 = resp.trace.find((t) => t.item === "P1")!;
+  assert.equal(p1.provider, "claude");
+  assert.equal(p1.planned_provider, "codex");
+});
+
 test("fallback disabled leaves a rate_limited worker to degrade (no retry)", async () => {
   const allowNoFb = makeAllowlist(repo, {
     modes: ["debate-proposal", "debate-critique", "debate-cross-review"],

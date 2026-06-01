@@ -83,20 +83,20 @@ const PLAN_FORMAT = `Output ONLY one JSON object — no prose, no markdown, no c
   "complexity": "simple|complex",
   "phases": [
     { "name": "<label, e.g. proposal_generation|critique|cross_review|arbitration>",
-      "launches": [ { "id": "<unique slug, e.g. P1>", "provider": "claude|codex", "effort": "<see below>", "fast": <true|false>, "prompt": "<full self-contained instruction for this worker>" } ] }
+      "launches": [ { "id": "<unique slug, e.g. P1>", "provider": "claude|codex", "effort": "<see below>", "prompt": "<full self-contained instruction for this worker>" } ] }
   ],
   "answer_item": "<the id of the launch whose output IS the final answer>"
 }
 Rules you MUST follow:
 - "complexity": FIRST judge the task. SIMPLE = a focused question, a small/single-area change, or a clearly-scoped review. COMPLEX = broad, contentious, large, or spanning multiple subsystems.
   - If SIMPLE, emit the FAST workflow (keep it short, this is the whole point):
-      Phase 1 "proposal_generation": TWO independent reviewers in PARALLEL — P1 codex (effort xhigh, fast true) and P2 claude (effort high) — each independently does the task/review.
+      Phase 1 "proposal_generation": TWO independent reviewers in PARALLEL — P1 codex (effort xhigh) and P2 claude (effort high) — each independently does the task/review.
       Phase 2 "arbitration": ONE claude (effort high) arbiter that reads {{P1.output}} and {{P2.output}} and writes the final answer, noting any disagreement. answer_item = that arbiter.
       Do NOT add separate critique / cross-review phases for a simple task.
   - If COMPLEX, design the full bounded debate (proposal_generation -> normalization -> critique -> cross_review -> arbitration), allocating providers and effort per the task.
 - "effort" (per launch, the planner's choice — DO set it):
-    codex: generally "xhigh" with "fast": true (codex is fast and token-cheap).
-    claude: usually "high" is enough; use "xhigh" or "max" ONLY when that launch needs deep reasoning. claude ignores "fast".
+    codex: generally "xhigh" (codex is fast/cheap and always runs in turbo mode).
+    claude: usually "high" is enough; use "xhigh" or "max" ONLY when that launch needs deep reasoning.
     valid values — claude: low|medium|high|xhigh|max ; codex: low|medium|high|xhigh.
 - Provider capabilities (allocate accordingly):
     claude worker = can Read/Grep/Glob and run READ-ONLY git (git diff/log/show/status/blame), but NOT arbitrary shell.
@@ -108,9 +108,9 @@ Rules you MUST follow:
 
 function buildPlannerPrompt(req: DebateRequest, lastError: string | null): string {
   const lang = req.language ? `Write every worker prompt AND the final answer in this language: ${req.language}.` : "";
-  const fast = req.fast
-    ? "FAST mode: design a LEAN debate — fewer workers, merge or skip phases where the protocol allows — and keep it short."
-    : "";
+  // The planner only runs for NON-fast (full) debates — a fast request skips it for
+  // a hardcoded lean shape (see debate.ts buildFastPlan) — so there is no "fast"
+  // leanness hint here.
   const retry = lastError
     ? `\n\nYour previous attempt was REJECTED for this reason:\n${lastError}\nFix it and output only the corrected JSON plan.`
     : "";
@@ -123,7 +123,6 @@ function buildPlannerPrompt(req: DebateRequest, lastError: string | null): strin
     "",
     `Target repository (workers run read-only here): ${req.repo}`,
     lang,
-    fast,
     "",
     PLAN_FORMAT,
     retry,
@@ -238,8 +237,7 @@ export function makeCliPlanner(
           capability: "read_only_review", // the planner only reasons + reads; never writes
           prompt,
           baseEnv,
-          effort: "xhigh", // the planner's job is heavy — always xhigh
-          fast: req.fast,
+          effort: "xhigh", // the planner's job is heavy — always xhigh (codex also always turbo)
           codexSchemaFile: schemaFile,
           codexOutputFile: outFile,
         });

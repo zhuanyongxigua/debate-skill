@@ -408,19 +408,28 @@ Pick a unique `<id>` (`YYYYMMDD-HHMMSS-slug`).
   "prompt": "<the requirement / candidates / question to debate>",
   "repo": "<absolute repo path>",
   "language": "<the human's primary language, e.g. 中文 / English>",
-  "fast": false
+  "fast": true
 }
 ```
 
 - `prompt`: the whole task to debate — do **not** pre-plan phases or write worker
-  prompts; the daemon's planner does that (it calls you back in Mode 3).
+  prompts. In the full (`fast: false`) flow the daemon's planner does that (it calls
+  you back in Mode 3); in the default `fast` flow there is no planner — the daemon
+  wraps your `prompt` into the fixed 2-phase shape directly.
 - `repo`: an **absolute** path under an allowlisted root — resolve it yourself
   (e.g. from the cwd); a relative path or one outside the roots comes back rejected.
 - `language`: the language the human is using; the debate answers in it. Omit if
   unsure.
-- `fast`: set `true` on urgency signals ("快一点", "尽快", "hurry", "fast"); it
-  runs a leaner debate and launches **codex** CLIs in turbo mode (claude/copilot
-  are exempt — claude's fast mode needs an API token the runner does not provide).
+- `fast`: **default `true`** — controls whether the flow is lean. When `true`, the
+  daemon **skips the planner entirely** and runs a fixed lean 2-phase shape (two
+  independent reviewers in parallel, then one arbiter), which is much faster and
+  cheaper but **shallower** (generic worker prompts, no planner-designed debate).
+  Set **`fast: false`** ONLY when the human explicitly asks for a serious / heavy /
+  thorough debate — signals like "认真", "重度", "彻底", "深入", "详尽", "严谨",
+  "全面", "thorough", "comprehensive", "rigorous", "in-depth", "deep dive",
+  "exhaustive" or equivalent — which runs the full planner-designed debate
+  (proposal → critique → cross-review → arbitration). `fast` is purely about flow
+  leanness; it does **not** control codex/claude turbo (codex always runs turbo).
 
 > **Exactly these fields, nothing else.** The request has ONLY
 > `schema_version, id, kind, prompt, repo, language, fast`. Do **not** add any
@@ -469,6 +478,11 @@ The daemon runs the debate by first asking YOU (read-only, out of sandbox) to
 design it as a structured **plan**, then executing that plan as read-only worker
 CLIs. You enter this mode when the prompt says you are the planner and gives the
 exact output format. You **never spawn or write files**; you only output the plan.
+
+> **Only the full (`fast: false`) flow reaches this mode.** A `fast` request (the
+> default) skips the planner entirely — the daemon runs a fixed lean 2-phase shape
+> without calling you back — so Mode 3 is exercised only when the human explicitly
+> asked for a serious/thorough debate.
 
 Apply the debate STRATEGY in this skill (Entry Cases, Debate Styles, Debate Rules,
 Final Synthesis) to design THIS task's debate: which phases, how many

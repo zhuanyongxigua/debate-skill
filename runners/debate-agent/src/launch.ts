@@ -165,7 +165,6 @@ function buildCodexArgv(
   profile: string | null,
   capability: string,
   effort: string,
-  fast: boolean,
   schemaFile?: string,
   outputFile?: string,
 ): string[] {
@@ -179,8 +178,11 @@ function buildCodexArgv(
     argv.push("--profile", profile);
   }
   argv.push("--ask-for-approval", "never", "-c", `model_reasoning_effort="${effort}"`);
-  // Fast/turbo mode via per-invocation -c overrides (no global config change).
-  if (fast) argv.push("-c", 'service_tier="fast"', "-c", "features.fast_mode=true");
+  // Codex always runs in turbo mode (per-invocation -c overrides, no global config
+  // change): codex is fast and token-cheap, so xhigh+turbo is its default posture.
+  // This is unconditional and DECOUPLED from any request `fast` field — that field
+  // now only controls debate flow leanness, never a child's turbo mode.
+  argv.push("-c", 'service_tier="fast"', "-c", "features.fast_mode=true");
   if (capability === "workspace_write") {
     argv.push(
       "-c",
@@ -224,7 +226,6 @@ export function buildChildLaunch(args: {
   prompt: string;
   baseEnv: Record<string, string | undefined>;
   effort?: string; // thinking effort (per-launch; default "high"). copilot has none.
-  fast?: boolean;
   // Planner-only structured-output (the runner reads the validated plan back):
   jsonSchema?: string; // claude: inline `--json-schema` (with `--output-format json`)
   codexSchemaFile?: string; // codex: `--output-schema <file>`
@@ -233,7 +234,7 @@ export function buildChildLaunch(args: {
   // sets `--session-id`; an invalid-plan retry sets `--resume` to fix in-context.
   claudeSession?: { id: string; resume: boolean };
 }): ChildLaunch {
-  const { provider, cwd, profile, capability, prompt, baseEnv, effort = "high", fast = false, jsonSchema, codexSchemaFile, codexOutputFile, claudeSession } = args;
+  const { provider, cwd, profile, capability, prompt, baseEnv, effort = "high", jsonSchema, codexSchemaFile, codexOutputFile, claudeSession } = args;
 
   let argv: string[];
   let promptTransport: "stdin" | "argv";
@@ -246,7 +247,7 @@ export function buildChildLaunch(args: {
     argv = buildClaudeArgv(capability, effort, jsonSchema, claudeSession); // claude is fast-exempt (needs an API token)
     promptTransport = "stdin";
   } else if (provider === "codex") {
-    argv = buildCodexArgv(cwd, profile, capability, effort, fast, codexSchemaFile, codexOutputFile);
+    argv = buildCodexArgv(cwd, profile, capability, effort, codexSchemaFile, codexOutputFile);
     promptTransport = "stdin";
   } else if (provider === "copilot") {
     // copilot is exempt from fast mode (no clean per-invocation fast flag).

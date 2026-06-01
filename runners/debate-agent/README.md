@@ -116,13 +116,18 @@ listed here.
 | `profile` | string \| null | `null`, or in the profile allowlist for that provider. **Only Codex has profiles the runner can honor** — Claude profiles (strips `CLAUDE_CONFIG_DIR`) and Copilot profiles are rejected |
 | `capability` | string | `read_only_review` (default) or `workspace_write`; must be in the `capabilities` allowlist. Controls the child sandbox posture (see below) |
 | `effort` | string | optional thinking depth (`--effort` / `model_reasoning_effort`). claude: `low\|medium\|high\|xhigh\|max` (default `high`); codex: `low\|medium\|high\|xhigh` (default `xhigh`). The planner picks this per launch |
-| `fast` | bool | default `false`. When `true`, **codex** launches in turbo mode via per-invocation flags (`-c service_tier="fast" -c features.fast_mode=true`; no global config change). **claude and copilot are exempt** — claude's fast mode needs an API token, but the runner strips API keys and runs children on the logged-in account, so a fast flag could not take effect |
 | `prompt` | string | non-empty, length ≤ `max_prompt_chars`; transported to the child via **stdin only** |
 | `timeout_seconds` | int | a positive integer ≤ `86400` (fixed internal sanity cap, not configurable); if omitted, the phase-aware default is used |
 
+There is no `fast` request field: **codex always runs in turbo mode**
+(`-c service_tier="fast" -c features.fast_mode=true`) at `xhigh` as its default
+posture — claude and copilot have no turbo (their fast mode needs an API token the
+runner strips). Turbo is decoupled from the high-level `debate_request.fast`, which
+only controls debate-flow leanness (see [watch](#watch-the-plan--execute-daemon)).
+
 Thinking effort is **per-launch** (the planner picks it): codex generally `xhigh`,
 claude usually `high` (xhigh/max only when a launch needs deep reasoning). The
-planner itself always runs `xhigh`. `fast` is independent of effort.
+planner itself always runs `xhigh`.
 
 `provider` selects the binary. `mode` is only a coarse allowlisted intent label
 recorded in the audit — it never selects a different binary or alters argv.
@@ -338,7 +343,7 @@ prompts; the daemon produces those.
   "prompt": "<the task / question / candidates to debate>",
   "repo": "/Users/you/Code/app",
   "language": "中文",
-  "fast": false
+  "fast": true
 }
 ```
 
@@ -348,12 +353,19 @@ prompts; the daemon produces those.
 | `prompt` | string | non-empty, ≤ `max_prompt_chars` — the task to debate |
 | `repo` | string | absolute; `realpath` must resolve under an allowed repo root |
 | `language` | string | optional; the human's language (workers + answer use it) |
-| `fast` | bool | optional; turbo mode for codex CLIs (claude/copilot exempt) plus a leaner debate |
+| `fast` | bool | **default `true`** — lean flow: skip the planner and run a fixed lean 2-phase shape (2 parallel reviewers → 1 arbiter). `false` runs the full planner debate (use only on an explicit serious/thorough request). Does NOT control turbo (codex always turbo) |
 
 ### How the daemon runs a debate
 
 **No agent ever spawns another agent** — only the daemon (code) spawns, and every
 CLI it spawns (the planner and every worker) is **read-only**.
+
+> **Fast path (the default) skips step 1 entirely.** When `fast` is `true` the
+> daemon does **not** call the planner — it builds a fixed lean 2-phase plan in code
+> (two parallel reviewers → one arbiter, `debate.ts buildFastPlan`, mirroring the
+> debate-router FAST workflow) and goes straight to step 2. That is much faster and
+> cheaper but shallower (generic worker prompts). Step 1 below runs only for the
+> full `fast: false` debate.
 
 1. **Plan (one-shot, with retry).** The daemon spawns a **planner** CLI
    (`--planner claude|codex`, default `claude`) that loads the `debate-router`
@@ -399,9 +411,10 @@ CLI it spawns (the planner and every worker) is **read-only**.
    only on execution **status**, never by parsing a worker's text content. The
    `answer_item` launch's output is the final answer.
 
-When `fast` is true, **codex** launches in turbo mode (`service_tier`/`fast_mode`)
-and the planner is asked for a leaner debate. **claude and copilot are exempt**
-(claude's fast mode needs an API token the runner does not provide).
+**codex always** launches in turbo mode (`service_tier`/`fast_mode`) at `xhigh` —
+its default posture, decoupled from `fast`. **claude and copilot have no turbo**
+(their fast mode needs an API token the runner strips). The `fast` request field
+controls only whether the planner is skipped (above), not turbo.
 
 ### Response format
 

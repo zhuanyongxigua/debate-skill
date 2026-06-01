@@ -148,28 +148,18 @@ test("thinking effort is per-launch (default high; planner picks the value)", ()
   assert.ok(x.argv.some((a) => a === 'model_reasoning_effort="xhigh"'));
 });
 
-test("fast mode applies to codex ONLY (claude is exempt — needs an API token)", () => {
-  // codex honors fast via per-invocation -c overrides
-  const x = buildChildLaunch({ provider: "codex", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {}, fast: true });
+test("codex always runs in turbo mode; claude/copilot never get turbo flags", () => {
+  // codex is unconditionally turbo (xhigh+fast is its default posture), via
+  // per-invocation -c overrides — no `fast` input needed or accepted.
+  const x = buildChildLaunch({ provider: "codex", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {} });
   assert.ok(x.argv.includes('service_tier="fast"'));
   assert.ok(x.argv.includes("features.fast_mode=true"));
-  // claude is fast-exempt: even with fast=true it gets NO fast flag (its fast mode
-  // needs an API token, which the runner strips — it runs on the logged-in account)
-  const c = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {}, fast: true });
-  assert.ok(!c.argv.includes("--settings"));
-  assert.ok(!c.argv.some((a) => a.includes("fastMode")));
-});
-
-test("no fast flags when fast is false / omitted", () => {
+  // claude/copilot get NO turbo flags (their fast mode needs an API token the
+  // runner strips — they run on the logged-in account).
   const c = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {} });
-  assert.ok(!c.argv.includes("--settings"));
-  const x = buildChildLaunch({ provider: "codex", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {}, fast: false });
-  assert.ok(!x.argv.some((a) => a.includes("service_tier") || a.includes("fast_mode")));
-});
-
-test("copilot is exempt from fast mode", () => {
-  const cp = buildChildLaunch({ provider: "copilot", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {}, fast: true });
-  assert.ok(!cp.argv.some((a) => a.includes("fast") || a.includes("--settings") || a.includes("service_tier")));
+  assert.ok(!c.argv.some((a) => a.includes("service_tier") || a.includes("fast_mode")));
+  const cp = buildChildLaunch({ provider: "copilot", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {} });
+  assert.ok(!cp.argv.some((a) => a.includes("service_tier") || a.includes("fast_mode")));
 });
 
 test("planner structured-output flags: claude inline --json-schema, codex --output-schema/-o", () => {

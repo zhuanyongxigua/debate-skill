@@ -124,13 +124,10 @@ test("explicit workspace_write capability accepted when allowlisted", () => {
   assert.equal(req.capability, "workspace_write");
 });
 
-test("fast defaults to false and accepts a boolean", () => {
-  assert.equal(validateRequest(baseRequest(repo), allow).fast, false);
-  assert.equal(validateRequest({ ...baseRequest(repo), fast: true }, allow).fast, true);
-});
-
-test("non-boolean fast rejected", () => {
-  expectReject({ ...baseRequest(repo), fast: "yes" }, /fast must be a boolean/);
+test("the retired low-level `fast` request field is now rejected as unknown", () => {
+  // codex always runs turbo and there is no per-request turbo toggle, so `fast` is
+  // no longer a valid run/run-batch request field (strict unknown-field reject).
+  expectReject({ ...baseRequest(repo), fast: true }, /unknown request field/);
 });
 
 test("capability not in allowlist rejected", () => {

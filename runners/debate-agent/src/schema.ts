@@ -34,7 +34,6 @@ const ALLOWED_REQUEST_FIELDS = new Set([
   "profile",
   "capability",
   "effort",
-  "fast",
   "prompt",
   "timeout_seconds",
 ]);
@@ -66,7 +65,6 @@ export interface ValidatedRequest {
   profile: string | null;
   capability: string;
   effort: string;
-  fast: boolean;
   prompt: string;
   timeoutSeconds: number;
   requestDigest: string;
@@ -200,13 +198,6 @@ export function validateRequest(raw: Record<string, unknown>, allow: Allowlist):
     `capability ${JSON.stringify(capability)} not in allowlist ${JSON.stringify(allow.capabilities)}`,
   );
 
-  // --- fast (turbo mode) --------------------------------------------------
-  let fast = false;
-  if (raw.fast !== undefined && raw.fast !== null) {
-    req(typeof raw.fast === "boolean", "fast must be a boolean");
-    fast = raw.fast as boolean;
-  }
-
   // --- effort (per-launch thinking depth) ---------------------------------
   // The planner picks this per worker; valid values depend on the provider.
   let effort: string;
@@ -254,7 +245,6 @@ export function validateRequest(raw: Record<string, unknown>, allow: Allowlist):
     profile,
     capability,
     effort,
-    fast,
     prompt: prompt as string,
     timeoutSeconds: timeout,
     requestDigest: computeDigest(raw),

@@ -70,6 +70,19 @@ plus one optional execution adapter:
    non-rate-limit reason drops the session so the next attempt regenerates fresh.
    Any future structured-output call MUST follow this rule (named + resumable, with
    a regenerate fallback when the CLI cannot resume).
+   (f) **`fast` requests skip the planner — a deliberate exception to (a)/(c) and
+   to #2's "the daemon plans … the whole debate."** `fast` is the **default**; a
+   fast `debate_request` runs a **fixed, hardcoded lean 2-phase shape** (two
+   parallel reviewers → one arbiter, `debate.ts buildFastPlan`) with **generic
+   worker prompts** — no planner call at all. This is a speed/token-vs-depth
+   tradeoff: the fast path is shallower (no planner-designed, task-specific
+   prompts). The hardcoded shape MIRRORS debate-router's FAST workflow **by hand**
+   (same pattern as `launch.ts` mirroring `cli-launch`); keep them in sync. The
+   **full** planner path (one planning call + mechanical execution, per (c)) still
+   runs for `fast: false`, used only when the human explicitly asks for a
+   serious/thorough debate. Also: **codex always runs turbo (`service_tier=fast` /
+   `fast_mode`) at xhigh** as its default posture — fully decoupled from the `fast`
+   field; there is no per-request/per-launch turbo toggle.
 4. **The runner is closed by default and fails closed.** No `repo_roots` ⇒ every
    request rejected. Malformed config raises at startup; the daemon's per-request
    allowlist reload instead keeps the last-good config and warns — neither path

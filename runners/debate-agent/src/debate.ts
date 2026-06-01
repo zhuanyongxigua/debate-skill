@@ -125,22 +125,62 @@ function capabilityRank(provider: string): number {
   return provider === "codex" ? 2 : 1;
 }
 
+/** The hardcoded FAST debate shape used when a request is `fast`: skip the planner
+ * entirely and run a fixed lean 2-phase debate — two independent reviewers in
+ * parallel, then one arbiter. This MIRRORS the debate-router FAST workflow by hand
+ * (same "kept in sync by hand" pattern as launch.ts mirroring cli-launch). It uses
+ * GENERIC worker prompts (no planner-crafted, task-specific instructions), so it is
+ * faster/cheaper but shallower than the planner path; a non-fast (fast=false)
+ * request still goes through the full planner. See AGENTS.md invariant #3. */
+function buildFastPlan(req: DebateRequest): Plan {
+  const lang = req.language ? `\n\nRespond in ${req.language}.` : "";
+  const reviewer =
+    `${req.prompt}\n\nIndependently complete the task above. If it concerns this repository, read the ` +
+    `affected code AND its callers/dependents to judge impact — do not restrict yourself to only a diff, ` +
+    `and do not "explore the whole repo". Be concrete and cite specifics.${lang}`;
+  const arbiter =
+    `Two independent analyses of the same task are below.\n\n--- Analysis A ---\n{{P1.output}}\n\n` +
+    `--- Analysis B ---\n{{P2.output}}\n\nThe task was:\n${req.prompt}\n\nDecide and write the FINAL ` +
+    `answer, reconciling the two and noting any important disagreement.${lang}`;
+  return {
+    complexity: "simple",
+    phases: [
+      {
+        name: "proposal_generation",
+        launches: [
+          { id: "P1", provider: "codex", prompt: reviewer },
+          { id: "P2", provider: "claude", prompt: reviewer },
+        ],
+      },
+      { name: "arbitration", launches: [{ id: "A1", provider: "claude", prompt: arbiter }] },
+    ],
+    answerItem: "A1",
+  };
+}
+
 export async function runDebate(req: DebateRequest, allow: Allowlist, deps: DebateDeps): Promise<DebateResponse> {
   const runItems = deps.runItems ?? runPreparedItems;
   const readOutput = deps.readOutput ?? defaultReadOutput;
   const log = deps.log;
   log?.(`debate ${req.id}: repo=${req.repo} language=${req.language ?? "-"} fast=${req.fast}`);
 
-  // --- Step 1: plan (with retry) -----------------------------------------
+  // --- Step 1: plan ------------------------------------------------------
+  // Fast path skips the planner entirely (saves a full xhigh planning call) and
+  // runs a fixed lean 2-phase shape; the non-fast path plans with the CLI planner.
   let plan: Plan;
-  try {
-    plan = await planWithRetry(req, allow, deps.planner, deps.maxPlanAttempts, log);
-  } catch (err) {
-    const reason = err instanceof PlanFailed ? err.message : `planning failed: ${String(err)}`;
-    log?.(`error: ${reason}`);
-    const resp = errorResponse(req.id, reason);
-    log?.(`done: error (no plan) — response → ${req.id}.json`);
-    return resp;
+  if (req.fast) {
+    plan = buildFastPlan(req);
+    log?.(`fast mode: planner skipped — fixed lean 2-phase shape (P1 codex, P2 claude, A1 claude)`);
+  } else {
+    try {
+      plan = await planWithRetry(req, allow, deps.planner, deps.maxPlanAttempts, log);
+    } catch (err) {
+      const reason = err instanceof PlanFailed ? err.message : `planning failed: ${String(err)}`;
+      log?.(`error: ${reason}`);
+      const resp = errorResponse(req.id, reason);
+      log?.(`done: error (no plan) — response → ${req.id}.json`);
+      return resp;
+    }
   }
 
   // --- Step 2: execute the plan mechanically -----------------------------
@@ -173,7 +213,6 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
           prompt: substituted[idx]!,
           capability: "read_only_review", // FORCED read-only; the plan cannot request writes
           effort,
-          fast: launch.fast ?? req.fast, // per-launch (codex turbo); fall back to the request flag
         };
         const streamPath = deps.streamDir ? join(deps.streamDir, `${launch.id}.log`) : undefined;
         return { itemId: launch.id, req: validateRequest(reqObj, allow), streamPath };

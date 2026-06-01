@@ -18,7 +18,6 @@ export interface PlanLaunch {
   provider: string;
   prompt: string; // a template; may contain `{{<id>.output}}` referencing earlier launches
   effort?: string; // thinking depth the planner picked (per provider's valid set)
-  fast?: boolean; // codex turbo (claude/copilot ignore it)
 }
 
 export interface PlanPhase {
@@ -64,7 +63,6 @@ export const PLAN_JSON_SCHEMA = {
                 provider: { type: "string" },
                 prompt: { type: "string" },
                 effort: { type: "string" },
-                fast: { type: "boolean" },
               },
             },
           },
@@ -82,7 +80,7 @@ const MAX_PHASES = 8;
 
 const ALLOWED_PLAN_FIELDS = new Set(["phases", "answer_item", "complexity"]);
 const ALLOWED_PHASE_FIELDS = new Set(["name", "launches"]);
-const ALLOWED_LAUNCH_FIELDS = new Set(["id", "provider", "prompt", "effort", "fast"]);
+const ALLOWED_LAUNCH_FIELDS = new Set(["id", "provider", "prompt", "effort"]);
 
 /** Item ids a prompt references via `{{id.output}}` (deduplicated, in order). */
 export function placeholderRefs(prompt: string): string[] {
@@ -195,13 +193,8 @@ export function validatePlan(raw: unknown, allow: Allowlist): Plan {
         }
         effort = launch.effort as string;
       }
-      let fast: boolean | undefined;
-      if (launch.fast !== undefined && launch.fast !== null) {
-        if (typeof launch.fast !== "boolean") bad(`launch ${id} fast must be a boolean`);
-        fast = launch.fast as boolean;
-      }
 
-      return { id: id as string, provider: provider as string, prompt: prompt as string, effort, fast };
+      return { id: id as string, provider: provider as string, prompt: prompt as string, effort };
     });
     phases.push({ name: phase.name as string, launches });
   });

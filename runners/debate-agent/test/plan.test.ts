@@ -110,11 +110,11 @@ test("validatePlan rejects unknown reference and bad answer_item", () => {
   assert.throws(() => validatePlan({ phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "a" }] }], answer_item: "nope" }, allow), /answer_item/);
 });
 
-test("validatePlan accepts per-launch effort/fast + complexity, rejects bad effort", () => {
+test("validatePlan accepts per-launch effort + complexity, rejects bad effort and unknown fields", () => {
   const ok = {
     complexity: "simple",
     phases: [{ name: "p", launches: [
-      { id: "P1", provider: "codex", prompt: "x", effort: "xhigh", fast: true },
+      { id: "P1", provider: "codex", prompt: "x", effort: "xhigh" },
       { id: "P2", provider: "claude", prompt: "y", effort: "max" },
     ] }],
     answer_item: "P1",
@@ -122,14 +122,14 @@ test("validatePlan accepts per-launch effort/fast + complexity, rejects bad effo
   const plan = validatePlan(ok, allow);
   assert.equal(plan.complexity, "simple");
   assert.equal(plan.phases[0]!.launches[0]!.effort, "xhigh");
-  assert.equal(plan.phases[0]!.launches[0]!.fast, true);
   assert.equal(plan.phases[0]!.launches[1]!.effort, "max"); // max valid for claude
   // 'max' is NOT valid for codex
   const badCodex = { phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "x", effort: "max" }] }], answer_item: "P1" };
   assert.throws(() => validatePlan(badCodex, allow), /effort .* not allowed for provider "codex"/);
-  // non-boolean fast
-  const badFast = { phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "x", fast: "yes" }] }], answer_item: "P1" };
-  assert.throws(() => validatePlan(badFast, allow), /fast must be a boolean/);
+  // the retired per-launch `fast` field is now an UNKNOWN field => rejected
+  // (codex always runs turbo, so there is nothing to toggle per launch)
+  const badFast = { phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "x", fast: true }] }], answer_item: "P1" };
+  assert.throws(() => validatePlan(badFast, allow), /unknown field/);
 });
 
 test("validatePlan enforces per-phase launch cap (max_batch_items)", () => {

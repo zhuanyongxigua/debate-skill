@@ -464,6 +464,68 @@ test("watch daemon: a rate-limited planner AND worker fall back to the other eng
   }
 });
 
+test("watch daemon: a fast request skips the planner and runs the fixed 2-phase shape", async () => {
+  const ctx = setup();
+  // No planner runs in fast mode: the daemon builds a fixed 2-phase plan in code.
+  // The stubs serve ONLY as workers (no `--json-schema` planner call ever reaches
+  // them). codex echoes CODEX[...], claude echoes CLAUDE[...]; the arbiter (A1
+  // claude) embeds both worker outputs, proving the shape + substitution e2e.
+  const argsFile = join(ctx.root, "claude_args");
+  makeStub(ctx.binDir, "codex", "#!/usr/bin/env bash\ninput=$(cat)\nprintf 'CODEX[%s]\\n' \"$input\"\n");
+  makeStub(
+    ctx.binDir,
+    "claude",
+    "#!/usr/bin/env bash\n" + `echo "$@" >> ${JSON.stringify(argsFile)}\n` + "input=$(cat)\nprintf 'CLAUDE[%s]\\n' \"$input\"\n",
+  );
+  const mailbox = join(ctx.root, "mailbox");
+  const env = cliEnv(ctx, { DEBATE_AGENT_MAILBOX: mailbox });
+  let daemon: ReturnType<typeof spawn> | undefined;
+  try {
+    let stderr = "";
+    daemon = spawn(process.execPath, [BIN, "--config", ctx.cfg, "watch"], { env, detached: true });
+    daemon.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
+    daemon.on("error", (e) => (stderr += `spawn error: ${String(e)}`));
+    await waitFor(() => stderr.includes("polling every"), 8000, `daemon banner (stderr so far: ${stderr})`);
+
+    const id = "20260531-itest-fast";
+    writeFileSync(
+      join(mailbox, "requests", `${id}.json`),
+      JSON.stringify({ schema_version: 1, id, kind: "debate_request", prompt: "decide X", repo: realpathSync(ctx.repo), fast: true }),
+    );
+
+    const respPath = join(mailbox, "responses", `${id}.json`);
+    await waitFor(() => existsSync(respPath), 15000, `response ${id}.json (stderr: ${stderr})`);
+
+    const resp = JSON.parse(readFileSync(respPath, "utf8"));
+    assert.equal(resp.status, "completed", JSON.stringify(resp));
+    // fixed shape: P1 codex + P2 claude (proposal_generation), then A1 claude (arbitration)
+    assert.deepEqual(
+      resp.trace.map((t: { item: string; provider: string }) => `${t.item}:${t.provider}`),
+      ["P1:codex", "P2:claude", "A1:claude"],
+    );
+    // the arbiter answer embeds BOTH workers' outputs (mechanical substitution)
+    assert.match(resp.answer_markdown, /CODEX\[/);
+    assert.match(resp.answer_markdown, /CLAUDE\[/);
+    // PROOF the planner was skipped: no planner stream file, and no --json-schema
+    // (the planner's structured-output flag) ever reached the claude stub
+    assert.ok(!existsSync(join(mailbox, "responses", `${id}.streams`, "planner-1.log")), "no planner stream in fast mode");
+    assert.ok(!readFileSync(argsFile, "utf8").includes("--json-schema"), "no planner call (no --json-schema)");
+  } finally {
+    if (daemon?.pid !== undefined) {
+      try {
+        process.kill(-daemon.pid, "SIGKILL");
+      } catch {
+        try {
+          daemon.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+    cleanup(ctx.root);
+  }
+});
+
 test("timeout kills process group", async () => {
   const ctx = setup();
   try {

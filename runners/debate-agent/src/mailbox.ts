@@ -145,7 +145,10 @@ export interface DebateRequest {
   repo: string; // realpath-resolved, under an allowed root
   repoRoot: string;
   language: string | null; // the human's primary language; the debate answers in it
-  fast: boolean; // turbo mode: launch every CLI (planner + workers) in its fast mode
+  // Lean flow: when true the daemon SKIPS the planner and runs a fixed lean 2-phase
+  // shape (see debate.ts buildFastPlan); when false it runs the full planner debate.
+  // It does NOT control codex/claude turbo (codex always runs turbo regardless).
+  fast: boolean;
 }
 
 // The exact accepted fields. Exported so the debate-router skill's request-file
