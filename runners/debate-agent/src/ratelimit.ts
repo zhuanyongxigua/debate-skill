@@ -9,12 +9,18 @@
 
 export class RateLimitPatternError extends Error {}
 
-// Conservative, case-insensitive default signatures, applied to claude and codex
-// alike unless overridden per provider in the allowlist's `rate_limit_patterns`.
-// These are a STARTING POINT: verify them against real claude/codex usage-limit
-// output and tune via config — no code change needed. Kept deliberately tight so
-// an ordinary failure is not misread as a rate limit. An operator can disable
-// detection for a provider by configuring an empty pattern list for it.
+// Case-insensitive default signatures, applied to claude and codex alike unless
+// overridden per provider in the allowlist's `rate_limit_patterns`. These are a
+// STARTING POINT: verify them against real claude/codex usage-limit output and tune
+// via config — no code change needed.
+//
+// They deliberately FAVOR RECALL (broad words like `quota` / `overloaded` / `429`):
+// in this use case a false positive is cheap — it just re-runs the SAME task on
+// another available engine — while a false NEGATIVE is the failure we are trying to
+// prevent (a real limit missed → the launch degrades instead of swapping engines).
+// They are only ever tested against an already-FAILED (non-zero) child, which keeps
+// the false-positive rate low. An operator who wants tighter matching (or to disable
+// detection for a provider) overrides the list in config (empty list = off).
 export const DEFAULT_RATE_LIMIT_PATTERNS: readonly string[] = [
   "rate[ -]?limit",
   "\\b429\\b",

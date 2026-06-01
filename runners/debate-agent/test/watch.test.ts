@@ -109,6 +109,16 @@ test("watchLoop fails closed when the planner provider is not allowlisted", asyn
   await assert.rejects(() => watchLoop(onlyCodex, { plannerProvider: "claude" }), /planner provider claude is not in the allowlist/);
 });
 
+test("watchLoop fails closed when the planner provider cannot produce a structured plan", async () => {
+  // copilot is allowlisted but has no native JSON-Schema, so it can't be the
+  // planner — reject up front instead of burning retries on a guaranteed failure.
+  const withCopilot = makeAllowlist(repo, { providers: ["claude", "codex", "copilot"] });
+  await assert.rejects(
+    () => watchLoop(withCopilot, { plannerProvider: "copilot" }),
+    /planner provider copilot cannot produce a structured plan/,
+  );
+});
+
 test("claim is atomic: second claim returns null", () => {
   const mb = openMailbox();
   writeRequestFile("r1");

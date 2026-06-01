@@ -359,10 +359,20 @@ test("watch daemon: real bin subprocess — planner retry + multi-phase template
     assert.match(argv, /--permission-mode default/);
     assert.match(argv, /--disallowedTools/);
     assert.ok(!argv.includes("propose"), "prompt must go on stdin, not argv");
-    // the planner created a session on attempt 1 and RESUMED it on the retry
-    // (proven across the real subprocess boundary, not just in a unit stub)
-    assert.match(argv, /--session-id/);
-    assert.match(argv, /--resume/);
+    // the planner created a session on attempt 1 and RESUMED THE SAME ONE on the
+    // retry (proven across the real subprocess boundary, not just in a unit stub).
+    // Parse per claude invocation (one line each); planner calls carry --json-schema.
+    const argLines = argv.trim().split("\n");
+    const plannerLines = argLines.filter((l) => l.includes("--json-schema"));
+    assert.equal(plannerLines.length, 2, "planner ran twice (invalid then valid)");
+    const sid = plannerLines[0]!.match(/--session-id (\S+)/);
+    assert.ok(sid && !plannerLines[0]!.includes("--resume"), "attempt 1 creates a fresh --session-id");
+    const rid = plannerLines[1]!.match(/--resume (\S+)/);
+    assert.ok(rid && !plannerLines[1]!.includes("--session-id"), "attempt 2 resumes, does not re-create");
+    assert.equal(rid![1], sid![1], "the retry resumes the SAME session id, not a new one");
+    // worker calls (no --json-schema) carry no session flags at all
+    const workerLines = argLines.filter((l) => !l.includes("--json-schema"));
+    assert.ok(workerLines.length > 0 && workerLines.every((l) => !l.includes("--session-id") && !l.includes("--resume")));
 
     // the daemon moved the request out of processing/ and preserved it in
     // archive/ with its original prompt intact (durable record, not deleted)

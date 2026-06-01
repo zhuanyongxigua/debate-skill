@@ -353,7 +353,7 @@ prompts; the daemon produces those.
 | `prompt` | string | non-empty, ≤ `max_prompt_chars` — the task to debate |
 | `repo` | string | absolute; `realpath` must resolve under an allowed repo root |
 | `language` | string | optional; the human's language (workers + answer use it) |
-| `fast` | bool | **default `true`** — lean flow: skip the planner and run a fixed lean 2-phase shape (2 parallel reviewers → 1 arbiter). `false` runs the full planner debate (use only on an explicit serious/thorough request). Does NOT control turbo (codex always turbo) |
+| `fast` | bool | optional. **The skill always writes it `true`** (lean flow: skip the planner and run a fixed lean 2-phase shape, 2 parallel reviewers → 1 arbiter); `false` runs the full planner debate (use only on an explicit serious/thorough request). **Daemon default when the field is omitted is `false`** (conservative full-planner path — a hand-crafted request must set `true` for the lean path). Does NOT control turbo (codex always turbo) |
 
 ### How the daemon runs a debate
 

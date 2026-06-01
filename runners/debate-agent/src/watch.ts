@@ -118,10 +118,14 @@ export async function processNewRequests(
       // The file name is the id callers poll by; a payload id that disagrees
       // would write the response under a name the caller never watches.
       if (req.id !== id) throw new MailboxRequestRejected(`request id "${req.id}" does not match file name "${id}"`);
-      // The planner is a launched CLI too: re-check it against the current allowlist.
+      // The planner is a launched CLI too: re-check it against the current allowlist
+      // AND that it can actually plan (only claude/codex have native JSON-Schema).
       const plannerProvider = opts.plannerProvider ?? "claude";
       if (!opts.makeDeps && !allowNow.providers.includes(plannerProvider)) {
         throw new Error(`planner provider ${plannerProvider} is not in the current allowlist providers (${allowNow.providers.join(", ")})`);
+      }
+      if (!opts.makeDeps && !PLANNER_PROVIDERS.has(plannerProvider)) {
+        throw new Error(`planner provider ${plannerProvider} cannot produce a structured plan (supported: ${[...PLANNER_PROVIDERS].join(", ")})`);
       }
       const streamDir = requestStreamDir(mb, id);
       const deps = opts.makeDeps ? opts.makeDeps(req) : defaultDeps(req, opts, streamDir, allowNow);
@@ -168,11 +172,15 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 /** Run the daemon forever: snapshot existing requests (ignored), then poll. */
 export async function watchLoop(allow: Allowlist, opts: WatchOptions = {}): Promise<never> {
   // Fail closed: the planner is a launched CLI, so its provider must be in the
-  // allowlist (skipped when makeDeps injects a scripted planner, e.g. tests).
+  // allowlist AND be able to produce a structured plan (claude/codex only;
+  // skipped when makeDeps injects a scripted planner, e.g. tests).
   if (!opts.makeDeps) {
     const plannerProvider = opts.plannerProvider ?? "claude";
     if (!allow.providers.includes(plannerProvider)) {
       throw new Error(`planner provider ${plannerProvider} is not in the allowlist providers (${allow.providers.join(", ")})`);
+    }
+    if (!PLANNER_PROVIDERS.has(plannerProvider)) {
+      throw new Error(`planner provider ${plannerProvider} cannot produce a structured plan (supported: ${[...PLANNER_PROVIDERS].join(", ")})`);
     }
   }
   const mb = openMailbox();

@@ -495,16 +495,18 @@ Rules in this mode:
 - **Judge complexity first** and set `complexity`. **Simple** task (focused
   question, small/single-area change, clearly-scoped review) → emit the **FAST
   workflow**: Phase 1 = two independent reviewers in parallel (1 `codex` at
-  `xhigh`+`fast`, 1 `claude` at `high`); Phase 2 = one `claude` (`high`) arbiter
+  `xhigh`, 1 `claude` at `high`); Phase 2 = one `claude` (`high`) arbiter
   that reads `{{P1.output}}`+`{{P2.output}}` and writes the final answer. No
   separate critique/cross-review for a simple task — that lean shape mirrors
   `parallel_positions` + arbitration and is the whole point of going fast.
   **Complex** task → design the full bounded debate (proposal → normalization →
   critique → cross-review → arbitration).
-- **Pick `effort` per launch** (the daemon no longer hardcodes it):
-  - `codex`: generally `xhigh` + `fast: true` (it is fast and token-cheap).
+- **Pick `effort` per launch** (the daemon no longer hardcodes it). A launch has
+  only `id`, `provider`, `effort`, `prompt` — there is **no per-launch `fast`
+  field** (codex always runs in turbo mode in code; do not try to set it):
+  - `codex`: generally `xhigh` (codex is fast and token-cheap).
   - `claude`: usually `high` is enough; use `xhigh`/`max` only when that launch
-    needs deep reasoning. `claude` ignores `fast`.
+    needs deep reasoning.
 - **Know what each provider can do**, and allocate accordingly:
   - `claude` worker = Read/Grep/Glob **and read-only git** (`git diff`/`log`/
     `show`/`status`/`blame`), but **no arbitrary shell**.
