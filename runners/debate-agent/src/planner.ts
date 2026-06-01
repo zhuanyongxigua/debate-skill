@@ -15,13 +15,16 @@ import { Allowlist } from "./allowlist";
 import { buildChildLaunch } from "./launch";
 import { DebateRequest } from "./mailbox";
 import { PLAN_JSON_SCHEMA, Plan, PlanInvalid, parsePlan, validatePlan } from "./plan";
+import { classifyRateLimit } from "./ratelimit";
 import { execute } from "./runner";
 
 const SCHEMA_STR = JSON.stringify(PLAN_JSON_SCHEMA);
 
 // Planning is one reasoning-heavy call; mirror the proposal-generation budget.
 const PLANNER_TIMEOUT_SECONDS = 1800;
-const DEFAULT_MAX_ATTEMPTS = 3;
+// One extra attempt over the old default so a rate-limited primary planner can
+// rotate to a fallback provider AND still get a retry-on-invalid there.
+const DEFAULT_MAX_ATTEMPTS = 4;
 
 export class PlanFailed extends Error {}
 
@@ -145,14 +148,46 @@ export function extractClaudeStructuredOutput(stdout: string): string {
  */
 export function makeCliPlanner(
   repo: string,
-  opts: { provider: string; baseEnv?: Record<string, string | undefined>; streamDir?: string },
+  opts: {
+    // Ordered planner providers: primary first, then rate-limit fallbacks.
+    providers: string[];
+    baseEnv?: Record<string, string | undefined>;
+    streamDir?: string;
+    // provider -> compiled rate-limit signatures (so the planner can swap engines).
+    rateLimitPatterns?: Record<string, readonly RegExp[]>;
+  },
 ): PlannerFn {
+  // The planner is a launched CLI too, so it can be rate-limited. We rotate to
+  // the next provider on a rate limit (same task, swap engine); `exhausted`
+  // tracks which providers are spent across this debate's plan attempts.
+  const exhausted = new Set<string>();
   return async (req, attempt, lastError) => {
     const baseEnv = opts.baseEnv ?? process.env;
     const prompt = buildPlannerPrompt(req, lastError);
+    const provider = opts.providers.find((p) => !exhausted.has(p));
+    if (provider === undefined) {
+      throw new Error(`all planner providers are rate-limited (${opts.providers.join(", ")})`);
+    }
     const streamPath = opts.streamDir ? join(opts.streamDir, `planner-${attempt + 1}.log`) : undefined;
 
-    if (opts.provider === "codex") {
+    // Shared failure handler: re-label a rate limit and mark this provider
+    // exhausted so the next plan attempt rotates to a fallback; otherwise surface
+    // the raw failure. Throwing lets planWithRetry retry (with the rotated
+    // provider). Branch on execution status only, never on the planner's text.
+    const fail = (exec: { status: string; errorCategory: string | null; stderr: string; stdout: string }): never => {
+      const patterns = opts.rateLimitPatterns?.[provider] ?? [];
+      const limited =
+        exec.errorCategory !== "timeout" &&
+        exec.errorCategory !== "missing_cli" &&
+        classifyRateLimit(exec.stderr, exec.stdout, patterns);
+      if (limited) {
+        exhausted.add(provider);
+        throw new Error(`planner CLI rate-limited on ${provider}; rotating to a fallback provider`);
+      }
+      throw new Error(`planner CLI ${exec.status} (${exec.errorCategory ?? "?"}): ${(exec.stderr || "").slice(0, 300)}`);
+    };
+
+    if (provider === "codex") {
       // codex takes the schema as a file and writes the final message to `-o`.
       const dir = mkdtempSync(join(tmpdir(), "debate-plan-"));
       const schemaFile = join(dir, "schema.json");
@@ -172,9 +207,7 @@ export function makeCliPlanner(
           codexOutputFile: outFile,
         });
         const exec = await execute(launch, PLANNER_TIMEOUT_SECONDS, streamPath);
-        if (exec.status !== "completed") {
-          throw new Error(`planner CLI ${exec.status} (${exec.errorCategory ?? "?"}): ${(exec.stderr || "").slice(0, 300)}`);
-        }
+        if (exec.status !== "completed") fail(exec);
         try {
           return readFileSync(outFile, "utf8");
         } catch {
@@ -191,7 +224,7 @@ export function makeCliPlanner(
 
     // claude (default): inline schema; the result is in the envelope's structured_output.
     const launch = buildChildLaunch({
-      provider: "claude",
+      provider,
       cwd: repo,
       profile: null,
       capability: "read_only_review",
@@ -201,9 +234,7 @@ export function makeCliPlanner(
       jsonSchema: SCHEMA_STR,
     });
     const exec = await execute(launch, PLANNER_TIMEOUT_SECONDS, streamPath);
-    if (exec.status !== "completed") {
-      throw new Error(`planner CLI ${exec.status} (${exec.errorCategory ?? "?"}): ${(exec.stderr || "").slice(0, 300)}`);
-    }
+    if (exec.status !== "completed") fail(exec);
     return extractClaudeStructuredOutput(exec.stdout);
   };
 }

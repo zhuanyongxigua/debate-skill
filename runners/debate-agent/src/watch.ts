@@ -45,12 +45,24 @@ export interface WatchOptions {
   makeDeps?: (req: DebateRequest) => DebateDeps;
 }
 
-function defaultDeps(req: DebateRequest, opts: WatchOptions, streamDir: string): DebateDeps {
+function defaultDeps(req: DebateRequest, opts: WatchOptions, streamDir: string, allow: Allowlist): DebateDeps {
+  const primary = opts.plannerProvider ?? "claude";
+  // Planner provider order: primary first, then the rate-limit fallback order
+  // intersected with the allowlist — so a rate-limited planner can swap engines
+  // just like a worker does. Disabling fallback leaves only the primary.
+  const providers = [primary];
+  if (allow.fallback.enabled) {
+    const order = allow.fallback.order.length ? allow.fallback.order : allow.providers;
+    for (const p of order) {
+      if (p !== primary && allow.providers.includes(p) && !providers.includes(p)) providers.push(p);
+    }
+  }
   return {
     planner: makeCliPlanner(req.repo, {
-      provider: opts.plannerProvider ?? "claude",
+      providers,
       baseEnv: opts.baseEnv,
       streamDir,
+      rateLimitPatterns: allow.rateLimitPatterns,
     }),
     baseEnv: opts.baseEnv,
     maxPlanAttempts: opts.maxPlanAttempts,
@@ -104,7 +116,7 @@ export async function processNewRequests(
         throw new Error(`planner provider ${plannerProvider} is not in the current allowlist providers (${allowNow.providers.join(", ")})`);
       }
       const streamDir = requestStreamDir(mb, id);
-      const deps = opts.makeDeps ? opts.makeDeps(req) : defaultDeps(req, opts, streamDir);
+      const deps = opts.makeDeps ? opts.makeDeps(req) : defaultDeps(req, opts, streamDir, allowNow);
       deps.log = log;
       deps.streamDir = streamDir;
       response = await runDebate(req, allowNow, deps);

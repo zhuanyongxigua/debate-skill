@@ -378,6 +378,83 @@ test("watch daemon: real bin subprocess — planner retry + multi-phase template
   }
 });
 
+test("watch daemon: a rate-limited planner AND worker fall back to the other engine", async () => {
+  const ctx = setup();
+  // The `claude` stub is rate-limited for EVERY call (planner and worker): it
+  // prints a usage-limit signature on stderr and exits non-zero, so the runner
+  // classifies it `rate_limited`. The `codex` stub is healthy and serves BOTH
+  // roles — as the planner (input contains "You are the PLANNER") it prints a
+  // plan that, deliberately, assigns a `claude` worker; as a worker it echoes its
+  // prompt. So the daemon must: rotate the planner claude→codex, then swap the
+  // rate-limited claude worker→codex, and still finish `completed`.
+  makeStub(
+    ctx.binDir,
+    "claude",
+    "#!/usr/bin/env bash\n" +
+      "cat >/dev/null\n" +
+      "printf 'Error: usage limit reached (HTTP 429 Too Many Requests)\\n' >&2\n" +
+      "exit 1\n",
+  );
+  const plan =
+    '{"phases":[{"name":"proposal_generation","launches":[{"id":"P1","provider":"claude","prompt":"propose something"}]}],"answer_item":"P1"}';
+  makeStub(
+    ctx.binDir,
+    "codex",
+    "#!/usr/bin/env bash\n" +
+      "input=$(cat)\n" +
+      'if printf "%s" "$input" | grep -q "You are the PLANNER"; then\n' +
+      `  printf '%s\\n' ${JSON.stringify(plan)}\n` +
+      "else\n" +
+      '  printf \'CODEX_WORKER[%s]\\n\' "$input"\n' +
+      "fi\n",
+  );
+  const mailbox = join(ctx.root, "mailbox");
+  const env = cliEnv(ctx, { DEBATE_AGENT_MAILBOX: mailbox });
+  let daemon: ReturnType<typeof spawn> | undefined;
+  try {
+    let stderr = "";
+    daemon = spawn(process.execPath, [BIN, "--config", ctx.cfg, "watch"], { env, detached: true });
+    daemon.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
+    daemon.on("error", (e) => (stderr += `spawn error: ${String(e)}`));
+    await waitFor(() => stderr.includes("polling every"), 8000, `daemon banner (stderr so far: ${stderr})`);
+
+    const id = "20260531-itest-ratelimit";
+    writeFileSync(
+      join(mailbox, "requests", `${id}.json`),
+      JSON.stringify({ schema_version: 1, id, kind: "debate_request", prompt: "decide X", repo: realpathSync(ctx.repo) }),
+    );
+
+    const respPath = join(mailbox, "responses", `${id}.json`);
+    await waitFor(() => existsSync(respPath), 20000, `response ${id}.json (stderr: ${stderr})`);
+
+    const resp = JSON.parse(readFileSync(respPath, "utf8"));
+    assert.equal(resp.status, "completed", JSON.stringify(resp));
+    // the (only) worker P1 was planned as claude but ran on codex after the swap
+    assert.deepEqual(
+      resp.trace.map((t: { item: string; provider: string; status: string }) => `${t.item}:${t.provider}:${t.status}`),
+      ["P1:codex:completed"],
+    );
+    // the answer is the codex worker's echo (claude never produced output)
+    assert.match(resp.answer_markdown, /CODEX_WORKER\[propose something\]/);
+    // the live log recorded the worker-level fallback decision
+    const logText = readFileSync(join(mailbox, "responses", `${id}.log`), "utf8");
+    assert.match(logText, /rate-limit fallback: P1 → codex/);
+  } finally {
+    if (daemon?.pid !== undefined) {
+      try {
+        process.kill(-daemon.pid, "SIGKILL");
+      } catch {
+        try {
+          daemon.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+    cleanup(ctx.root);
+  }
+});
+
 test("timeout kills process group", async () => {
   const ctx = setup();
   try {

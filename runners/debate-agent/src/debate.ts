@@ -97,6 +97,17 @@ function errorResponse(id: string, message: string): DebateResponse {
   };
 }
 
+/** Next provider to try for a rate_limited launch: the first entry in the
+ * fallback order that is allowlisted and not yet tried for this launch. Returns
+ * null when every available provider has been tried (the launch then degrades). */
+function pickFallbackProvider(allow: Allowlist, tried: Set<string>): string | null {
+  const order = allow.fallback.order.length ? allow.fallback.order : allow.providers;
+  for (const p of order) {
+    if (allow.providers.includes(p) && !tried.has(p)) return p;
+  }
+  return null;
+}
+
 export async function runDebate(req: DebateRequest, allow: Allowlist, deps: DebateDeps): Promise<DebateResponse> {
   const runItems = deps.runItems ?? runPreparedItems;
   const readOutput = deps.readOutput ?? defaultReadOutput;
@@ -124,18 +135,27 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
     const phase = plan.phases[pi]!;
     log?.(`phase ${pi + 1}/${plan.phases.length} ${phase.name}: ${phase.launches.map((l) => `${l.id} ${l.provider}`).join(", ")}`);
 
-    const prepared: PreparedItem[] = phase.launches.map((launch) => {
+    // The same substituted prompt is reused verbatim if we have to swap engines
+    // on a rate limit, so compute it once per launch (mechanical text fill-in;
+    // no LLM runs here).
+    const substituted = phase.launches.map((launch) => substitute(launch.prompt, outputs));
+
+    // Build a PreparedItem for one launch on a chosen provider. The initial run
+    // honors the planner's effort; a fallback passes effort=undefined so the new
+    // provider's default applies (e.g. claude "max" is invalid for codex).
+    const buildItem = (idx: number, provider: string, effort: string | undefined): PreparedItem => {
+      const launch = phase.launches[idx]!;
       try {
         const reqObj = {
           schema_version: 1,
           run_id: `${req.id}-${launch.id}`.slice(0, 128),
           phase: validPhase(phase.name),
-          provider: launch.provider,
+          provider,
           mode: phaseToMode(phase.name, allow),
           repo: req.repo,
-          prompt: substitute(launch.prompt, outputs), // mechanical text fill-in; no LLM here
+          prompt: substituted[idx]!,
           capability: "read_only_review", // FORCED read-only; the plan cannot request writes
-          effort: launch.effort, // planner's per-launch choice (undefined => provider default)
+          effort,
           fast: launch.fast ?? req.fast, // per-launch (codex turbo); fall back to the request flag
         };
         const streamPath = deps.streamDir ? join(deps.streamDir, `${launch.id}.log`) : undefined;
@@ -144,11 +164,49 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
         if (err instanceof RequestRejected) return { itemId: launch.id, rejected: err.message };
         throw err;
       }
-    });
+    };
 
     let results: BatchItemResult[];
     try {
-      results = await runItems(prepared, allow, deps.baseEnv, allow.maxParallel);
+      // Initial run: each launch on its planned provider and effort.
+      results = await runItems(
+        phase.launches.map((l, i) => buildItem(i, l.provider, l.effort)),
+        allow,
+        deps.baseEnv,
+        allow.maxParallel,
+      );
+
+      // Rate-limit fallback: re-run any `rate_limited` launch on the next
+      // available provider — same task, swap engine. Bounded by the provider
+      // count; we branch only on error_category (execution status), never on a
+      // worker's text. A launch with no untried provider left degrades as before.
+      if (allow.fallback.enabled) {
+        const tried = phase.launches.map((l) => new Set<string>([l.provider]));
+        for (let round = 0; round < allow.providers.length; round++) {
+          const retry: Array<{ idx: number; provider: string }> = [];
+          results.forEach((r, i) => {
+            if (r.error_category !== "rate_limited") return;
+            const next = pickFallbackProvider(allow, tried[i]!);
+            if (next !== null) retry.push({ idx: i, provider: next });
+          });
+          if (retry.length === 0) break;
+          log?.(
+            `  rate-limit fallback: ${retry
+              .map(({ idx, provider }) => `${phase.launches[idx]!.id} → ${provider}`)
+              .join(", ")}`,
+          );
+          retry.forEach(({ idx, provider }) => tried[idx]!.add(provider));
+          const retryResults = await runItems(
+            retry.map(({ idx, provider }) => buildItem(idx, provider, undefined)),
+            allow,
+            deps.baseEnv,
+            allow.maxParallel,
+          );
+          retry.forEach(({ idx }, k) => {
+            results[idx] = retryResults[k]!;
+          });
+        }
+      }
     } catch (err) {
       log?.(`error: phase ${phase.name} failed to execute: ${String(err)}`);
       const resp: DebateResponse = {

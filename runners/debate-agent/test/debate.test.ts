@@ -134,3 +134,69 @@ test("a plan with a non-allowlisted provider rejects that launch and degrades", 
   assert.equal(resp.status, "error");
   assert.match(resp.status_reason, /not in allowlist/);
 });
+
+// --- rate-limit fallback: same task, swap engine ---------------------------
+
+const onePhaseClaudePlan = JSON.stringify({
+  phases: [{ name: "proposal_generation", launches: [{ id: "P1", provider: "claude", prompt: "do the task" }] }],
+  answer_item: "P1",
+});
+
+/** Stub workers that fail `failProviders` with a rate limit and complete the rest. */
+function rateLimitRun(failProviders: Set<string>): { runItems: DebateDeps["runItems"]; calls: PreparedItem[][] } {
+  const calls: PreparedItem[][] = [];
+  const runItems: DebateDeps["runItems"] = async (items) => {
+    calls.push(items);
+    return items.map((it): BatchItemResult => {
+      if (it.rejected !== undefined) return { item_id: it.itemId, status: "rejected", reject_reason: it.rejected };
+      const provider = it.req!.provider;
+      return failProviders.has(provider)
+        ? { item_id: it.itemId, status: "error", provider, error_category: "rate_limited" }
+        : { item_id: it.itemId, status: "completed", provider };
+    });
+  };
+  return { runItems, calls };
+}
+
+test("a rate_limited worker is re-run on the next provider (same task, swap engine)", async () => {
+  const planner: PlannerFn = async () => onePhaseClaudePlan;
+  const { runItems, calls } = rateLimitRun(new Set(["claude"])); // claude limited, codex ok
+  const resp = await runDebate(req(), allow, { planner, runItems, readOutput });
+
+  assert.equal(resp.status, "completed");
+  assert.equal(calls.length, 2); // initial (claude) + one fallback round (codex)
+  assert.equal(calls[0]![0]!.req!.provider, "claude");
+  assert.equal(calls[1]![0]!.req!.provider, "codex");
+  // the SAME substituted prompt is reused verbatim on the swap
+  assert.equal(calls[1]![0]!.req!.prompt, calls[0]![0]!.req!.prompt);
+  // the planner's claude effort ("high") is dropped for codex's default ("xhigh")
+  assert.equal(calls[0]![0]!.req!.effort, "high");
+  assert.equal(calls[1]![0]!.req!.effort, "xhigh");
+  // trace + answer reflect the substitute engine
+  assert.deepEqual(resp.trace.map((t) => `${t.item}:${t.provider}:${t.status}`), ["P1:codex:completed"]);
+  assert.equal(resp.answer_markdown, "OUT[P1]");
+});
+
+test("when every provider is rate-limited the launch degrades (bounded, no infinite loop)", async () => {
+  const planner: PlannerFn = async () => onePhaseClaudePlan;
+  const { runItems, calls } = rateLimitRun(new Set(["claude", "codex"]));
+  const resp = await runDebate(req(), allow, { planner, runItems, readOutput });
+
+  assert.equal(resp.status, "degraded");
+  assert.equal(resp.answer_markdown, "");
+  // initial + exactly one fallback round (then both providers tried => stop)
+  assert.equal(calls.length, 2);
+});
+
+test("fallback disabled leaves a rate_limited worker to degrade (no retry)", async () => {
+  const allowNoFb = makeAllowlist(repo, {
+    modes: ["debate-proposal", "debate-critique", "debate-cross-review"],
+    fallback: { enabled: false, order: ["claude", "codex"] },
+  });
+  const planner: PlannerFn = async () => onePhaseClaudePlan;
+  const { runItems, calls } = rateLimitRun(new Set(["claude"]));
+  const resp = await runDebate(req(), allowNoFb, { planner, runItems, readOutput });
+
+  assert.equal(resp.status, "degraded");
+  assert.equal(calls.length, 1); // no fallback round
+});
