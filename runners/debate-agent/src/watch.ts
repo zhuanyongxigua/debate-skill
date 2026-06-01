@@ -45,6 +45,12 @@ export interface WatchOptions {
   makeDeps?: (req: DebateRequest) => DebateDeps;
 }
 
+// Only claude and codex support the native JSON-Schema structured output the
+// planner relies on (claude --json-schema, codex --output-schema). copilot has no
+// equivalent, so the planner must never rotate onto it — that would silently drop
+// the schema constraint. Workers are unaffected (they can use any provider).
+const PLANNER_PROVIDERS = new Set(["claude", "codex"]);
+
 function defaultDeps(req: DebateRequest, opts: WatchOptions, streamDir: string, allow: Allowlist): DebateDeps {
   const primary = opts.plannerProvider ?? "claude";
   // Planner provider order: primary first, then the rate-limit fallback order
@@ -54,7 +60,9 @@ function defaultDeps(req: DebateRequest, opts: WatchOptions, streamDir: string, 
   if (allow.fallback.enabled) {
     const order = allow.fallback.order.length ? allow.fallback.order : allow.providers;
     for (const p of order) {
-      if (p !== primary && allow.providers.includes(p) && !providers.includes(p)) providers.push(p);
+      if (p !== primary && allow.providers.includes(p) && PLANNER_PROVIDERS.has(p) && !providers.includes(p)) {
+        providers.push(p);
+      }
     }
   }
   return {

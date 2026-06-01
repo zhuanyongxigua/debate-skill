@@ -225,6 +225,11 @@ function parseRateLimitPatterns(raw: unknown): Record<string, RegExp[]> {
 function parseFallback(raw: unknown, providers: string[]): FallbackPolicy {
   if (raw === undefined) return { enabled: true, order: [...providers] };
   const obj = expectObject(raw, "fallback");
+  // Reject unknown nested keys so a typo like "enable" (not "enabled") fails closed
+  // instead of silently leaving fallback enabled. (Top-level keys still allow the
+  // `_comment`/`_note` config convention, so we only tighten inside `fallback`.)
+  const extra = Object.keys(obj).filter((k) => k !== "enabled" && k !== "order");
+  if (extra.length) throw new AllowlistError(`fallback has unknown field(s): ${JSON.stringify(extra.sort())}`);
   const enabled = obj.enabled === undefined ? true : expectBoolean(obj.enabled, "fallback.enabled");
   const order = obj.order === undefined ? [...providers] : expectStringArray(obj.order, "fallback.order");
   for (const provider of order) {

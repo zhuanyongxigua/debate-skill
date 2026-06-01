@@ -309,3 +309,7 @@ test("malformed fallback (non-object / bad enabled / bad order) is rejected", ()
   expectShapeError({ fallback: { enabled: "yes" } }, /fallback\.enabled must be a boolean/);
   expectShapeError({ fallback: { order: "codex" } }, /fallback\.order must be an array of strings/);
 });
+
+test("an unknown nested fallback field (e.g. the 'enable' typo) fails closed", () => {
+  expectShapeError({ fallback: { enable: false } }, /fallback has unknown field\(s\): \["enable"\]/);
+});

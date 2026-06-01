@@ -28,6 +28,11 @@ const DEFAULT_MAX_ATTEMPTS = 4;
 
 export class PlanFailed extends Error {}
 
+/** Thrown by the CLI planner when every candidate provider is rate-limited, so
+ * planWithRetry can stop immediately instead of spinning its remaining retry
+ * budget on attempts that can only re-throw this. */
+export class AllPlannersRateLimited extends Error {}
+
 /** Raw planner: returns the planner CLI's stdout for one attempt. Injectable so
  * tests can script plans without a real model. */
 export type PlannerFn = (req: DebateRequest, attempt: number, lastError: string | null) => Promise<string>;
@@ -49,6 +54,12 @@ export async function planWithRetry(
     try {
       text = await planner(req, attempt, lastError);
     } catch (err) {
+      // Every planner provider is rate-limited — further attempts can only
+      // re-throw this, so stop now rather than burn the rest of the budget.
+      if (err instanceof AllPlannersRateLimited) {
+        log?.(`plan aborted: ${err.message}`);
+        throw new PlanFailed(err.message);
+      }
       lastError = `planner call failed: ${String(err)}`;
       log?.(`plan attempt ${attempt + 1} failed: ${lastError}`);
       continue;
@@ -155,18 +166,22 @@ export function makeCliPlanner(
     streamDir?: string;
     // provider -> compiled rate-limit signatures (so the planner can swap engines).
     rateLimitPatterns?: Record<string, readonly RegExp[]>;
+    // Injectable child executor (defaults to the real execute) so the provider
+    // rotation can be unit-tested without spawning a CLI.
+    exec?: typeof execute;
   },
 ): PlannerFn {
   // The planner is a launched CLI too, so it can be rate-limited. We rotate to
   // the next provider on a rate limit (same task, swap engine); `exhausted`
   // tracks which providers are spent across this debate's plan attempts.
   const exhausted = new Set<string>();
+  const execFn = opts.exec ?? execute;
   return async (req, attempt, lastError) => {
     const baseEnv = opts.baseEnv ?? process.env;
     const prompt = buildPlannerPrompt(req, lastError);
     const provider = opts.providers.find((p) => !exhausted.has(p));
     if (provider === undefined) {
-      throw new Error(`all planner providers are rate-limited (${opts.providers.join(", ")})`);
+      throw new AllPlannersRateLimited(`all planner providers are rate-limited (${opts.providers.join(", ")})`);
     }
     const streamPath = opts.streamDir ? join(opts.streamDir, `planner-${attempt + 1}.log`) : undefined;
 
@@ -206,7 +221,7 @@ export function makeCliPlanner(
           codexSchemaFile: schemaFile,
           codexOutputFile: outFile,
         });
-        const exec = await execute(launch, PLANNER_TIMEOUT_SECONDS, streamPath);
+        const exec = await execFn(launch, PLANNER_TIMEOUT_SECONDS, streamPath);
         if (exec.status !== "completed") fail(exec);
         try {
           return readFileSync(outFile, "utf8");
@@ -233,7 +248,7 @@ export function makeCliPlanner(
       effort: "xhigh", // the planner's job is heavy — always xhigh
       jsonSchema: SCHEMA_STR,
     });
-    const exec = await execute(launch, PLANNER_TIMEOUT_SECONDS, streamPath);
+    const exec = await execFn(launch, PLANNER_TIMEOUT_SECONDS, streamPath);
     if (exec.status !== "completed") fail(exec);
     return extractClaudeStructuredOutput(exec.stdout);
   };

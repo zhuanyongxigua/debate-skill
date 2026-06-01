@@ -237,6 +237,12 @@ export function buildChildLaunch(args: {
     if (profile !== null) {
       throw new Error("copilot profile is not supported by this runner");
     }
+    // copilot has no native JSON-Schema flag, so it cannot honor a structured
+    // plan request. Fail closed rather than silently drop the schema (the planner
+    // candidate set already excludes copilot; this is defense in depth).
+    if (jsonSchema !== undefined) {
+      throw new Error("copilot does not support native JSON schema; it cannot be used as a planner");
+    }
     argv = buildCopilotArgv(cwd, capability, prompt);
     promptTransport = "argv";
   } else {
