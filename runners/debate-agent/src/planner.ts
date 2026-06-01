@@ -7,6 +7,7 @@
 // validation error fed back, which is why strict-format generation is reliable
 // here (code-driven retry) in a way it is not in the sandboxed parent.
 
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -131,6 +132,20 @@ function buildPlannerPrompt(req: DebateRequest, lastError: string | null): strin
     .join("\n");
 }
 
+/** Follow-up prompt for a RESUMED claude planner session: the task, format, and
+ * the model's own prior (rejected) plan are already in the session context, so we
+ * only send the validation error and ask for the corrected full plan — that is the
+ * point of resuming (fix in-context instead of regenerating from scratch). */
+function buildResumePrompt(lastError: string | null): string {
+  return [
+    "Your previous plan was REJECTED by the validator for this reason:",
+    lastError ?? "(unknown)",
+    "",
+    "Fix only what that error points to and output the corrected, COMPLETE plan again",
+    "in the same JSON schema/format as before. Output ONLY the JSON object — no prose.",
+  ].join("\n");
+}
+
 /** Extract the plan text from claude's `--output-format json` envelope: the
  * schema-validated object lives in `structured_output`. Falls back to the
  * envelope's text `result`, then to the raw stdout, so parse/validate + retry
@@ -176,9 +191,15 @@ export function makeCliPlanner(
   // tracks which providers are spent across this debate's plan attempts.
   const exhausted = new Set<string>();
   const execFn = opts.exec ?? execute;
+  // When set, the NEXT claude attempt resumes this session once (to fix the plan
+  // in-context); it is consumed each time. A fresh claude attempt arms it on
+  // success; a resume attempt does NOT re-arm it, so a resume that fails to fix the
+  // plan (or a CLI that ignores --resume) falls back to a fresh regeneration rather
+  // than looping. codex can't pin a session id for a non-interactive structured
+  // exec, so codex is never resumed — it regenerates each attempt (see AGENTS.md).
+  let pendingResumeSession: string | undefined;
   return async (req, attempt, lastError) => {
     const baseEnv = opts.baseEnv ?? process.env;
-    const prompt = buildPlannerPrompt(req, lastError);
     const provider = opts.providers.find((p) => !exhausted.has(p));
     if (provider === undefined) {
       throw new AllPlannersRateLimited(`all planner providers are rate-limited (${opts.providers.join(", ")})`);
@@ -204,6 +225,7 @@ export function makeCliPlanner(
 
     if (provider === "codex") {
       // codex takes the schema as a file and writes the final message to `-o`.
+      const prompt = buildPlannerPrompt(req, lastError); // codex always regenerates (no resume)
       const dir = mkdtempSync(join(tmpdir(), "debate-plan-"));
       const schemaFile = join(dir, "schema.json");
       const outFile = join(dir, "plan.json");
@@ -237,7 +259,16 @@ export function makeCliPlanner(
       }
     }
 
-    // claude (default): inline schema; the result is in the envelope's structured_output.
+    // claude (default): inline schema; the result is in the envelope's
+    // structured_output. A fresh attempt opens a named session (--session-id); if
+    // its plan is rejected, the next attempt resumes it (--resume) with only the
+    // correction. Resume is consumed BEFORE the call and re-armed only after a fresh
+    // attempt, so a resume that fails (or a CLI that ignores it) falls back to a
+    // fresh regeneration next time instead of looping the planner into failure.
+    const resuming = pendingResumeSession !== undefined;
+    const sessionId = pendingResumeSession ?? randomUUID();
+    pendingResumeSession = undefined;
+    const prompt = resuming ? buildResumePrompt(lastError) : buildPlannerPrompt(req, lastError);
     const launch = buildChildLaunch({
       provider,
       cwd: repo,
@@ -247,9 +278,13 @@ export function makeCliPlanner(
       baseEnv,
       effort: "xhigh", // the planner's job is heavy — always xhigh
       jsonSchema: SCHEMA_STR,
+      claudeSession: { id: sessionId, resume: resuming },
     });
     const exec = await execFn(launch, PLANNER_TIMEOUT_SECONDS, streamPath);
     if (exec.status !== "completed") fail(exec);
+    // Arm exactly one resume of this session — but only after a FRESH generation,
+    // never after a resume (so a resume that didn't fix the plan regenerates fresh).
+    if (!resuming) pendingResumeSession = sessionId;
     return extractClaudeStructuredOutput(exec.stdout);
   };
 }

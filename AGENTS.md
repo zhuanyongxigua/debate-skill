@@ -55,6 +55,21 @@ plus one optional execution adapter:
    primitives only *label* a failure `rate_limited` (no retry, no rebalance); the
    request/batch schema gains **no** field and there is still no `provider: auto`.
    Detection signatures and the fallback order are allowlist config, not code.
+   (e) **Structured-output calls are named + resumable.** When a call needs the
+   CLI's native JSON-Schema structured output, an invalid result must be **fixed,
+   not regenerated** — so the call runs in a **named, resumable session**: the
+   claude planner sets a runner-generated `--session-id` on the first attempt and
+   `--resume`s it on an invalid-plan retry, sending only the validator error so the
+   model patches in-context. The plan is currently the ONLY structured-output
+   artifact. The session id is runner-generated (not a request value), so the
+   static-argv rule (#5) still holds — but note this does introduce persistent
+   claude session state between plan attempts (a deliberate exception to the
+   otherwise-stateless children). `codex exec` cannot pin a session id for a
+   non-interactive structured run, so codex is **not** resumed — it regenerates
+   each attempt (asymmetry on purpose), and a resume that fails for any
+   non-rate-limit reason drops the session so the next attempt regenerates fresh.
+   Any future structured-output call MUST follow this rule (named + resumable, with
+   a regenerate fallback when the CLI cannot resume).
 4. **The runner is closed by default and fails closed.** No `repo_roots` ⇒ every
    request rejected. Malformed config raises at startup; the daemon's per-request
    allowlist reload instead keeps the last-good config and warns — neither path

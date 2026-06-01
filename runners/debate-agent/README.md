@@ -366,7 +366,17 @@ CLI it spawns (the planner and every worker) is **read-only**.
    the SHAPE; `validatePlan` enforces what a JSON Schema can't — provider
    allowlist, unique ids, `answer_item` validity, and that every `{{id.output}}`
    references a STRICTLY earlier phase. The plan is the ONE strict-format artifact
-   — and the only place retry is needed. A plan is a static DAG of phases:
+   — and the only place retry is needed.
+
+   The **claude planner runs in a named, resumable session** so an invalid plan is
+   *fixed in-context, not regenerated*: the first attempt sets a runner-generated
+   `--session-id`, and a retry `--resume`s it with only the validator error. (This
+   is the one place a child keeps state between calls; the session id is
+   runner-generated, so the static-argv rule still holds. A resume that fails for a
+   non-rate-limit reason drops the session and the next attempt regenerates fresh.)
+   `codex exec` can't pin a session id for a non-interactive structured run, so a
+   **codex planner regenerates each attempt** instead — see AGENTS.md invariant #3(e).
+   A plan is a static DAG of phases:
 
    ```json
    {

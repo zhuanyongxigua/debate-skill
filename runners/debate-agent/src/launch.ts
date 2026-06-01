@@ -117,7 +117,12 @@ const CLAUDE_READONLY_TOOLS = [
   "Bash(git blame:*)",
 ];
 
-function buildClaudeArgv(capability: string, effort: string, jsonSchema?: string): string[] {
+function buildClaudeArgv(
+  capability: string,
+  effort: string,
+  jsonSchema?: string,
+  session?: { id: string; resume: boolean },
+): string[] {
   // Mirrors cli-launch Claude Code defaults: print mode, prompt via stdin. Thinking
   // `effort` is per-launch (the planner picks it; the planner itself runs xhigh).
   // Claude profiles are unsupported (caller fails closed before reaching here).
@@ -130,6 +135,14 @@ function buildClaudeArgv(capability: string, effort: string, jsonSchema?: string
   // honors `fast`.
   const permissionMode = capability === "workspace_write" ? "acceptEdits" : "default";
   const argv = ["claude", "--print", "--permission-mode", permissionMode, "--effort", effort];
+  if (session) {
+    // Resumable planner session. The id is RUNNER-generated (not a request value),
+    // so the static-argv rule still holds. `--session-id` creates the session on
+    // the first attempt; `--resume` continues it so an invalid plan can be fixed
+    // in-context rather than regenerated from scratch. Only the planner sets this;
+    // workers never do.
+    argv.push(session.resume ? "--resume" : "--session-id", session.id);
+  }
   if (capability !== "workspace_write") {
     argv.push("--disallowedTools", ...CLAUDE_DENY_WRITE_TOOLS);
     argv.push("--allowedTools", ...CLAUDE_READONLY_TOOLS);
@@ -216,8 +229,11 @@ export function buildChildLaunch(args: {
   jsonSchema?: string; // claude: inline `--json-schema` (with `--output-format json`)
   codexSchemaFile?: string; // codex: `--output-schema <file>`
   codexOutputFile?: string; // codex: `-o <file>` (final message written here)
+  // Planner-only resumable claude session (runner-generated id). First attempt
+  // sets `--session-id`; an invalid-plan retry sets `--resume` to fix in-context.
+  claudeSession?: { id: string; resume: boolean };
 }): ChildLaunch {
-  const { provider, cwd, profile, capability, prompt, baseEnv, effort = "high", fast = false, jsonSchema, codexSchemaFile, codexOutputFile } = args;
+  const { provider, cwd, profile, capability, prompt, baseEnv, effort = "high", fast = false, jsonSchema, codexSchemaFile, codexOutputFile, claudeSession } = args;
 
   let argv: string[];
   let promptTransport: "stdin" | "argv";
@@ -227,7 +243,7 @@ export function buildChildLaunch(args: {
     if (profile !== null) {
       throw new Error("claude profile is not supported by this runner");
     }
-    argv = buildClaudeArgv(capability, effort, jsonSchema); // claude is fast-exempt (needs an API token)
+    argv = buildClaudeArgv(capability, effort, jsonSchema, claudeSession); // claude is fast-exempt (needs an API token)
     promptTransport = "stdin";
   } else if (provider === "codex") {
     argv = buildCodexArgv(cwd, profile, capability, effort, fast, codexSchemaFile, codexOutputFile);

@@ -190,6 +190,19 @@ test("planner structured-output flags: claude inline --json-schema, codex --outp
   const w = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {} });
   assert.ok(!w.argv.includes("--json-schema"));
   assert.ok(w.argv.includes("--output-format") && w.argv.includes("stream-json") && w.argv.includes("--verbose"));
+  // a normal worker (no claudeSession) carries no session flags
+  assert.ok(!w.argv.includes("--session-id") && !w.argv.includes("--resume"));
+});
+
+test("claude planner session: --session-id creates, --resume continues (runner-generated id)", () => {
+  const fresh = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {}, jsonSchema: "{}", claudeSession: { id: "11111111-1111-1111-1111-111111111111", resume: false } });
+  const si = fresh.argv.indexOf("--session-id");
+  assert.ok(si >= 0 && fresh.argv[si + 1] === "11111111-1111-1111-1111-111111111111");
+  assert.ok(!fresh.argv.includes("--resume"));
+  const resumed = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {}, jsonSchema: "{}", claudeSession: { id: "11111111-1111-1111-1111-111111111111", resume: true } });
+  const ri = resumed.argv.indexOf("--resume");
+  assert.ok(ri >= 0 && resumed.argv[ri + 1] === "11111111-1111-1111-1111-111111111111");
+  assert.ok(!resumed.argv.includes("--session-id"));
 });
 
 test("claude profile is a hard error", () => {

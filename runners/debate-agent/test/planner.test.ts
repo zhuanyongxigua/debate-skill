@@ -94,3 +94,85 @@ test("rotation composes with invalid-plan retry within the attempt budget", asyn
     cleanup(root);
   }
 });
+
+// --- claude resumable session (fix the plan in-context, not regenerate) -------
+
+test("claude planner creates a named session, then resumes it on an invalid retry", async () => {
+  const root = makeTempDir();
+  try {
+    const allow = makeAllowlist(root);
+    const launches: ChildLaunch[] = [];
+    let n = 0;
+    const exec = async (launch: ChildLaunch): Promise<ExecResult> => {
+      launches.push(launch);
+      n++;
+      return ok(n === 1 ? "not a valid plan" : VALID_PLAN); // first invalid → retry, then valid
+    };
+    const planner = makeCliPlanner(root, { providers: ["claude", "codex"], rateLimitPatterns: RL_PATTERNS, exec });
+    const plan = await planWithRetry(plannerReq(root), allow, planner, 4);
+    assert.equal(plan.answerItem, "P1");
+    assert.equal(launches.length, 2);
+    // first attempt: fresh named session
+    assert.ok(launches[0]!.argv.includes("--session-id"));
+    assert.ok(!launches[0]!.argv.includes("--resume"));
+    const id = launches[0]!.argv[launches[0]!.argv.indexOf("--session-id") + 1];
+    // retry: resume the SAME session, not a new one
+    assert.ok(launches[1]!.argv.includes("--resume"));
+    assert.ok(!launches[1]!.argv.includes("--session-id"));
+    assert.equal(launches[1]!.argv[launches[1]!.argv.indexOf("--resume") + 1], id);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("a resume that does not fix the plan falls back to a fresh regeneration (no resume loop)", async () => {
+  const root = makeTempDir();
+  try {
+    const allow = makeAllowlist(root);
+    const launches: ChildLaunch[] = [];
+    let n = 0;
+    const exec = async (launch: ChildLaunch): Promise<ExecResult> => {
+      launches.push(launch);
+      n++;
+      // attempt 1 invalid, attempt 2 (resume) STILL invalid, attempt 3 (fresh) valid
+      return ok(n <= 2 ? "still not a plan" : VALID_PLAN);
+    };
+    const planner = makeCliPlanner(root, { providers: ["claude", "codex"], rateLimitPatterns: RL_PATTERNS, exec });
+    const plan = await planWithRetry(plannerReq(root), allow, planner, 4);
+    assert.equal(plan.answerItem, "P1");
+    assert.equal(launches.length, 3);
+    assert.ok(launches[0]!.argv.includes("--session-id")); // fresh
+    assert.ok(launches[1]!.argv.includes("--resume")); // one resume
+    assert.ok(launches[2]!.argv.includes("--session-id")); // resume didn't fix it → fresh again
+    const id1 = launches[0]!.argv[launches[0]!.argv.indexOf("--session-id") + 1];
+    const id3 = launches[2]!.argv[launches[2]!.argv.indexOf("--session-id") + 1];
+    assert.notEqual(id3, id1); // a genuinely new session, not the stale one
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("rate-limit rotation starts the fallback engine fresh; codex never gets a session flag", async () => {
+  const root = makeTempDir();
+  try {
+    const allow = makeAllowlist(root);
+    const launches: ChildLaunch[] = [];
+    const exec = async (launch: ChildLaunch): Promise<ExecResult> => {
+      launches.push(launch);
+      return launch.provider === "claude" ? RL : ok(VALID_PLAN);
+    };
+    const planner = makeCliPlanner(root, { providers: ["claude", "codex"], rateLimitPatterns: RL_PATTERNS, exec });
+    const plan = await planWithRetry(plannerReq(root), allow, planner, 4);
+    assert.equal(plan.answerItem, "P1");
+    // the claude attempt opened a fresh session but was never resumed (it failed)
+    const claudeLaunch = launches.find((l) => l.provider === "claude")!;
+    assert.ok(claudeLaunch.argv.includes("--session-id"));
+    assert.ok(!claudeLaunch.argv.includes("--resume"));
+    // codex (the fallback engine) carries no session flags at all
+    const codexLaunch = launches.find((l) => l.provider === "codex")!;
+    assert.ok(!codexLaunch.argv.includes("--session-id"));
+    assert.ok(!codexLaunch.argv.includes("--resume"));
+  } finally {
+    cleanup(root);
+  }
+});

@@ -298,13 +298,16 @@ test("watch daemon: real bin subprocess — planner retry + multi-phase template
   const planCounter = join(ctx.root, "plan_calls");
   const plan =
     '{"phases":[{"name":"proposal_generation","launches":[{"id":"P1","provider":"claude","prompt":"propose"}]},{"name":"arbitration","launches":[{"id":"A1","provider":"claude","prompt":"context {{P1.output}} decide"}]}],"answer_item":"A1"}';
+  // Route planner vs worker by ARGV (--json-schema is present on every planner
+  // call, fresh or --resume) rather than by a stdin marker — the resume prompt no
+  // longer repeats "You are the PLANNER", so argv is the robust discriminator.
   makeStub(
     ctx.binDir,
     "claude",
     "#!/usr/bin/env bash\n" +
       "input=$(cat)\n" +
       `echo "$@" >> ${JSON.stringify(argsFile)}\n` +
-      'if printf "%s" "$input" | grep -q "You are the PLANNER"; then\n' +
+      'if printf "%s" "$*" | grep -q -- "--json-schema"; then\n' +
       `  n=$(cat ${JSON.stringify(planCounter)} 2>/dev/null || echo 0)\n` +
       `  echo $((n+1)) > ${JSON.stringify(planCounter)}\n` +
       '  if [ "$n" -eq 0 ]; then\n' +
@@ -356,6 +359,10 @@ test("watch daemon: real bin subprocess — planner retry + multi-phase template
     assert.match(argv, /--permission-mode default/);
     assert.match(argv, /--disallowedTools/);
     assert.ok(!argv.includes("propose"), "prompt must go on stdin, not argv");
+    // the planner created a session on attempt 1 and RESUMED it on the retry
+    // (proven across the real subprocess boundary, not just in a unit stub)
+    assert.match(argv, /--session-id/);
+    assert.match(argv, /--resume/);
 
     // the daemon moved the request out of processing/ and preserved it in
     // archive/ with its original prompt intact (durable record, not deleted)
