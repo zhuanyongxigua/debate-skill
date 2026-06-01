@@ -46,6 +46,44 @@ NETWORK_TASK_RE = re.compile(
     r"\b[a-z0-9._%+-]+@[a-z0-9.-]+\b)"
 )
 
+# Conservative default rate-limit signatures (mirror runners/debate-agent's
+# DEFAULT_RATE_LIMIT_PATTERNS). Case-insensitive; a STARTING POINT to verify
+# against real claude/codex usage-limit output and tune. Same set per provider.
+RATE_LIMIT_PATTERN_STRINGS = (
+    r"rate[ -]?limit",
+    r"\b429\b",
+    r"too many requests",
+    r"quota",
+    r"usage limit",
+    r"overloaded",
+)
+
+
+def compile_rate_limit_patterns(
+    strings: Sequence[str] = RATE_LIMIT_PATTERN_STRINGS,
+) -> dict[str, list[re.Pattern[str]]]:
+    """Compile signature strings to case-insensitive patterns, one list per
+    provider cli-launch can build. Override `strings` to tune detection."""
+    compiled = [re.compile(s, re.IGNORECASE) for s in strings]
+    return {"claude": list(compiled), "codex": list(compiled), "copilot": list(compiled)}
+
+
+DEFAULT_RATE_LIMIT_PATTERNS: dict[str, list[re.Pattern[str]]] = compile_rate_limit_patterns()
+
+
+def classify_rate_limit(
+    stderr: str,
+    stdout: str,
+    patterns: Sequence[re.Pattern[str]] | None,
+) -> bool:
+    """True if a FAILED child's output matches any rate-limit signature. Call this
+    ONLY for non-success results, so a successful answer that merely mentions "rate
+    limit" is never reclassified. Empty/None patterns => detection off."""
+    if not patterns:
+        return False
+    hay = f"{stderr}\n{stdout}"
+    return any(p.search(hay) for p in patterns)
+
 
 @dataclass(frozen=True)
 class LaunchSpec:
@@ -477,19 +515,25 @@ class ParallelSpec:
     matching ParallelResult so callers (e.g. debate-router) can attach phase,
     role, candidate id, or any other debate-level semantics without leaking
     those concepts into cli-launch's schema.
+
+    fallbacks is an ordered tuple of pre-built "same task, different engine"
+    alternates. run_specs_parallel_with_fallback uses them, in order, only when a
+    run comes back error_category="rate_limited". The caller builds them (it has
+    the prompt; cli-launch never reaches into a built spec to swap providers).
     """
 
     spec: LaunchSpec
     cwd: str = "."
     timeout_override: int | None = None
     caller_metadata: dict[str, Any] = field(default_factory=dict)
+    fallbacks: tuple[ParallelSpec, ...] = ()
 
 
 @dataclass(frozen=True)
 class ParallelResult:
     status: str  # "completed" | "timed_out" | "error"
     returncode: int | None
-    error_category: str | None  # None | "timeout" | "missing_cli" | "nonzero_exit" | "exception"
+    error_category: str | None  # None | "timeout" | "missing_cli" | "nonzero_exit" | "rate_limited" | "exception"
     stdout: str
     stderr: str
     elapsed_seconds: float
@@ -523,7 +567,11 @@ def _terminate_process_group(proc: subprocess.Popen[str], sig: int) -> None:
             pass
 
 
-def _run_one_parallel(parallel: ParallelSpec) -> ParallelResult:
+def _run_one_parallel(
+    parallel: ParallelSpec,
+    *,
+    rate_limit_patterns: dict[str, list[re.Pattern[str]]] | None = None,
+) -> ParallelResult:
     spec = parallel.spec
     timeout_seconds = (
         parallel.timeout_override
@@ -592,6 +640,14 @@ def _run_one_parallel(parallel: ParallelSpec) -> ParallelResult:
     elif proc.returncode != 0:
         status = "error"
         error_category = "nonzero_exit"
+        # Re-label a usage/rate limit so a fallback wrapper can swap engines. Only
+        # a non-zero (already failed) run is reconsidered, so a successful answer
+        # that merely mentions "rate limit" is never reclassified. cli-launch only
+        # LABELS here; the swap decision lives in the fallback wrapper / caller.
+        if rate_limit_patterns and classify_rate_limit(
+            stderr or "", stdout or "", rate_limit_patterns.get(spec.provider)
+        ):
+            error_category = "rate_limited"
     else:
         status = "completed"
         error_category = None
@@ -614,6 +670,7 @@ def run_specs_parallel(
     specs: Sequence[ParallelSpec],
     *,
     max_parallel: int | None = None,
+    rate_limit_patterns: dict[str, list[re.Pattern[str]]] | None = None,
 ) -> list[ParallelResult]:
     """Fan out multiple CLI launches and join on per-spec timeouts.
 
@@ -626,6 +683,13 @@ def run_specs_parallel(
     fresh process group and on timeout the group receives SIGTERM, then
     SIGKILL after a 10s grace period. There is no retry, no policy decision
     about whether to continue, no judging, no transcript shape.
+
+    rate_limit_patterns is optional and only LABELS results: when given, a failed
+    (non-zero) child whose output matches a provider's signature is reported as
+    error_category="rate_limited" instead of "nonzero_exit". It does NOT add any
+    retry or provider swap — that stays out of this mechanical primitive (see
+    run_specs_parallel_with_fallback). With None (the default) behavior is
+    unchanged.
     """
     if not specs:
         return []
@@ -634,7 +698,7 @@ def run_specs_parallel(
     results: list[ParallelResult | None] = [None] * len(specs)
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
         future_to_index = {
-            executor.submit(_run_one_parallel, parallel): idx
+            executor.submit(_run_one_parallel, parallel, rate_limit_patterns=rate_limit_patterns): idx
             for idx, parallel in enumerate(specs)
         }
         for future in concurrent.futures.as_completed(future_to_index):
@@ -642,3 +706,48 @@ def run_specs_parallel(
             results[idx] = future.result()
     assert all(r is not None for r in results)
     return [r for r in results if r is not None]
+
+
+def run_specs_parallel_with_fallback(
+    specs: Sequence[ParallelSpec],
+    *,
+    max_parallel: int | None = None,
+    rate_limit_patterns: dict[str, list[re.Pattern[str]]] | None = DEFAULT_RATE_LIMIT_PATTERNS,
+) -> list[ParallelResult]:
+    """Fan out specs; when a run comes back error_category="rate_limited", re-run
+    that slot's task on the next pre-built fallback engine (same task, swap
+    engine), looping until no rate-limited slot has an untried fallback left.
+    Results are returned in input order.
+
+    The alternates come from each ParallelSpec.fallbacks (the caller built them; it
+    has the prompt). cli-launch keeps owning only mechanical fan-out + per-spec
+    status — this wrapper just decides, purely from error_category, whether to try
+    the next pre-built engine. It never parses a child's text and never invents a
+    spec. A slot with no fallback left keeps its rate_limited result and the caller
+    handles it (degrade).
+    """
+    if not specs:
+        return []
+    specs = list(specs)
+    results = run_specs_parallel(specs, max_parallel=max_parallel, rate_limit_patterns=rate_limit_patterns)
+    consumed = [0] * len(specs)  # fallbacks already used per slot
+    max_rounds = max((len(s.fallbacks) for s in specs), default=0)
+    for _ in range(max_rounds):
+        retry_indices: list[int] = []
+        retry_specs: list[ParallelSpec] = []
+        for i, res in enumerate(results):
+            if res.error_category != "rate_limited":
+                continue
+            if consumed[i] >= len(specs[i].fallbacks):
+                continue
+            retry_indices.append(i)
+            retry_specs.append(specs[i].fallbacks[consumed[i]])
+            consumed[i] += 1
+        if not retry_specs:
+            break
+        retry_results = run_specs_parallel(
+            retry_specs, max_parallel=max_parallel, rate_limit_patterns=rate_limit_patterns
+        )
+        for idx, res in zip(retry_indices, retry_results):
+            results[idx] = res
+    return results
