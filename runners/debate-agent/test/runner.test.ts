@@ -5,8 +5,12 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 
+import { compilePatterns } from "../src/ratelimit";
 import { extractClaudeStreamResult, runRequestFile } from "../src/runner";
 import { CLAUDE_STUB, cleanup, makeAllowlist, makeMarkerStub, makeStub, makeTempDir, writeRequest } from "./helpers";
+
+const RATE_LIMIT_STUB =
+  "#!/usr/bin/env bash\n" + "cat >/dev/null\n" + "printf 'Error: usage limit reached (HTTP 429)\\n' >&2\n" + "exit 1\n";
 
 test("extractClaudeStreamResult: final result event, else raw fallback", () => {
   // a stream-json transcript: assistant events + a final result event
@@ -106,4 +110,27 @@ test("missing cli reported", async () => {
   const result = await runRequestFile(reqPath, allow, env({ PATH: binDir }));
   assert.equal(result.status, "error");
   assert.equal(result.error_category, "missing_cli");
+});
+
+test("a non-zero failure matching a signature is reclassified rate_limited (real runValidated path)", async () => {
+  // This exercises the ACTUAL detection chain in runValidated (not the injected
+  // error_category the orchestrator tests use): a real child exits non-zero with a
+  // limit signature on stderr, and the runner relabels it from the configured
+  // patterns. Detection is opt-in, so with empty patterns it stays nonzero_exit.
+  makeStub(binDir, "claude", RATE_LIMIT_STUB);
+  const reqPath = join(root, "request.json");
+  writeRequest(reqPath, repo, { timeout_seconds: 30 });
+
+  // patterns off (the default makeAllowlist) => ordinary failure
+  const plain = await runRequestFile(reqPath, allow, env());
+  assert.equal(plain.status, "error");
+  assert.equal(plain.error_category, "nonzero_exit");
+
+  // patterns on => reclassified
+  const withPatterns = makeAllowlist(repo, {
+    rateLimitPatterns: { claude: compilePatterns(["usage limit", "\\b429\\b"]), codex: [], copilot: [] },
+  });
+  const limited = await runRequestFile(reqPath, withPatterns, env());
+  assert.equal(limited.status, "error");
+  assert.equal(limited.error_category, "rate_limited");
 });

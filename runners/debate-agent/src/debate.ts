@@ -41,8 +41,15 @@ export interface DebateDeps {
 export interface TraceRow {
   phase: string;
   item: string;
-  provider: string;
+  provider: string; // the engine that actually ran (may differ from planned_provider after a swap)
   status: string;
+  // The provider the plan assigned. Present (and != provider) when a rate-limit
+  // swap moved this launch to another engine, so a swap is visible in the
+  // response — not only in the live log.
+  planned_provider?: string;
+  // The final launch's error_category when it did not complete (e.g. "rate_limited"
+  // when every engine was exhausted), so a degrade reason is visible too.
+  error_category?: string;
 }
 
 export interface DebateResponse {
@@ -106,6 +113,16 @@ function pickFallbackProvider(allow: Allowlist, tried: Set<string>): string | nu
     if (allow.providers.includes(p) && !tried.has(p)) return p;
   }
   return null;
+}
+
+// Read-only capability rank, for a downgrade warning when a rate-limit swap moves
+// a task to a weaker engine. codex's OS sandbox can run ANY read-only command
+// (shell/build/tests); claude/copilot are limited to read tools + read-only git.
+// We cannot know whether a given task actually needs shell (the plan carries no
+// such hint yet), so a codex→claude swap is allowed but flagged — the operator can
+// see it in both the log and the trace's planned_provider.
+function capabilityRank(provider: string): number {
+  return provider === "codex" ? 2 : 1;
 }
 
 export async function runDebate(req: DebateRequest, allow: Allowlist, deps: DebateDeps): Promise<DebateResponse> {
@@ -192,9 +209,20 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
           if (retry.length === 0) break;
           log?.(
             `  rate-limit fallback: ${retry
-              .map(({ idx, provider }) => `${phase.launches[idx]!.id} → ${provider}`)
+              .map(({ idx, provider }) => `${phase.launches[idx]!.id} ${phase.launches[idx]!.provider} → ${provider}`)
               .join(", ")}`,
           );
+          // Flag a capability downgrade (e.g. codex → claude): a task the planner
+          // gave to codex because it may need shell could underperform on claude.
+          for (const { idx, provider } of retry) {
+            const planned = phase.launches[idx]!.provider;
+            if (capabilityRank(provider) < capabilityRank(planned)) {
+              log?.(
+                `  warning: ${phase.launches[idx]!.id} ${planned} → ${provider} is a capability downgrade ` +
+                  `(${provider} cannot run arbitrary read-only shell); a task needing shell may underperform`,
+              );
+            }
+          }
           retry.forEach(({ idx, provider }) => tried[idx]!.add(provider));
           const retryResults = await runItems(
             retry.map(({ idx, provider }) => buildItem(idx, provider, undefined)),
@@ -221,12 +249,19 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
 
     results.forEach((r, i) => {
       const launch = phase.launches[i]!;
-      const provider = (r.provider as string) ?? launch.provider;
+      const plannedProvider = launch.provider;
+      const provider = (r.provider as string) ?? plannedProvider;
       outputs[launch.id] = r.status === "completed" ? readOutput(r) : "";
       if (r.status !== "completed") allCompleted = false;
-      const detail = r.status === "completed" ? "" : r.reject_reason ? ` (${r.reject_reason})` : r.error_category ? ` (${r.error_category})` : "";
+      const errorCategory = typeof r.error_category === "string" ? (r.error_category as string) : undefined;
+      const detail = r.status === "completed" ? "" : r.reject_reason ? ` (${r.reject_reason})` : errorCategory ? ` (${errorCategory})` : "";
       log?.(`  ${launch.id} ${provider} ${r.status}${detail}`);
-      trace.push({ phase: phase.name, item: launch.id, provider, status: r.status });
+      const row: TraceRow = { phase: phase.name, item: launch.id, provider, status: r.status };
+      // Surface a rate-limit swap and a degrade reason in the response itself,
+      // not only in the live log.
+      if (provider !== plannedProvider) row.planned_provider = plannedProvider;
+      if (r.status !== "completed" && errorCategory) row.error_category = errorCategory;
+      trace.push(row);
     });
   }
 

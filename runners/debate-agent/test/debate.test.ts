@@ -6,6 +6,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 
+import { DEFAULT_EFFORT } from "../src/allowlist";
 import { DebateDeps, runDebate } from "../src/debate";
 import { DebateRequest } from "../src/mailbox";
 import { PlannerFn } from "../src/planner";
@@ -169,11 +170,12 @@ test("a rate_limited worker is re-run on the next provider (same task, swap engi
   assert.equal(calls[1]![0]!.req!.provider, "codex");
   // the SAME substituted prompt is reused verbatim on the swap
   assert.equal(calls[1]![0]!.req!.prompt, calls[0]![0]!.req!.prompt);
-  // the planner's claude effort ("high") is dropped for codex's default ("xhigh")
-  assert.equal(calls[0]![0]!.req!.effort, "high");
-  assert.equal(calls[1]![0]!.req!.effort, "xhigh");
-  // trace + answer reflect the substitute engine
+  // the planner's claude effort is dropped for codex's default on the swap
+  assert.equal(calls[0]![0]!.req!.effort, DEFAULT_EFFORT.claude);
+  assert.equal(calls[1]![0]!.req!.effort, DEFAULT_EFFORT.codex);
+  // trace + answer reflect the substitute engine, and the swap is visible
   assert.deepEqual(resp.trace.map((t) => `${t.item}:${t.provider}:${t.status}`), ["P1:codex:completed"]);
+  assert.equal(resp.trace[0]!.planned_provider, "claude"); // swap from the planned engine is recorded
   assert.equal(resp.answer_markdown, "OUT[P1]");
 });
 
@@ -186,6 +188,8 @@ test("when every provider is rate-limited the launch degrades (bounded, no infin
   assert.equal(resp.answer_markdown, "");
   // initial + exactly one fallback round (then both providers tried => stop)
   assert.equal(calls.length, 2);
+  // the degrade reason is visible in the trace, not only the log
+  assert.equal(resp.trace[0]!.error_category, "rate_limited");
 });
 
 test("fallback disabled leaves a rate_limited worker to degrade (no retry)", async () => {

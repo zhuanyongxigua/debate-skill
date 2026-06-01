@@ -429,16 +429,18 @@ test("watch daemon: a rate-limited planner AND worker fall back to the other eng
 
     const resp = JSON.parse(readFileSync(respPath, "utf8"));
     assert.equal(resp.status, "completed", JSON.stringify(resp));
-    // the (only) worker P1 was planned as claude but ran on codex after the swap
+    // the (only) worker P1 was planned as claude but ran on codex after the swap;
+    // the swap is visible in the trace (planned_provider), not only the log
     assert.deepEqual(
       resp.trace.map((t: { item: string; provider: string; status: string }) => `${t.item}:${t.provider}:${t.status}`),
       ["P1:codex:completed"],
     );
+    assert.equal(resp.trace[0].planned_provider, "claude");
     // the answer is the codex worker's echo (claude never produced output)
     assert.match(resp.answer_markdown, /CODEX_WORKER\[propose something\]/);
-    // the live log recorded the worker-level fallback decision
+    // the live log recorded the worker-level fallback decision (planned → actual)
     const logText = readFileSync(join(mailbox, "responses", `${id}.log`), "utf8");
-    assert.match(logText, /rate-limit fallback: P1 → codex/);
+    assert.match(logText, /rate-limit fallback: P1 claude → codex/);
   } finally {
     if (daemon?.pid !== undefined) {
       try {

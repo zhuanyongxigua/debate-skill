@@ -456,7 +456,9 @@ the parent forces the turn to end. If you stop for a non-response reason, read
 **Step 3 — Present the result.** `responses/<id>.json` is a `debate_result`:
 render `answer_markdown`; if `status` is not `completed`, say so briefly with
 `status_reason`. `trace` is a faithful per-launch record (phase, item, provider,
-status) you may surface if useful. If the original task had a required output
+status; plus `planned_provider` when a rate-limit swap moved a launch to another
+engine, and `error_category` on a non-completed launch) you may surface if useful.
+If the original task had a required output
 format, render the answer in that format here (this is where Mode 2 still owns
 caller-format preservation). Do **not** run the debate yourself or fabricate a
 result.

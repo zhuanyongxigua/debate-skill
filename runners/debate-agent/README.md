@@ -296,6 +296,14 @@ to see what it is doing. claude workers run with `--output-format stream-json`
 for this (the runner extracts the clean final answer from the stream; the answer
 path is unchanged). These files are **debug-only** and can grow large.
 
+> **Audit caveat (planner).** Worker launches go through `runValidated`, so each is
+> written to the execution audit dir (`~/.debate-agent/<run-id>/`). **Planner
+> launches do not** — they call `execute()` directly, so a planner attempt (and any
+> rate-limit provider rotation) is recorded only in the live `planner-<n>.log`
+> stream and the progress `<id>.log`, not in the structured execution audit. This is
+> a known exception to "every launch is audited"; rely on those logs for planner
+> provenance.
+
 On start it **recovers any orphaned `processing/` entries** (a request claimed
 before a previous crash/restart gets an `error` response so the caller stops
 waiting), then **snapshots existing requests and ignores them** (submit after the
@@ -401,11 +409,18 @@ that worker's prompt); `trace` is the faithful per-launch record.
   "answer_markdown": "## Decision …",
   "trace": [
     { "phase": "proposal_generation", "item": "P1", "provider": "codex",  "status": "completed" },
+    { "phase": "proposal_generation", "item": "P2", "provider": "codex",  "status": "completed",
+      "planned_provider": "claude" },
     { "phase": "arbitration",         "item": "A1", "provider": "claude", "status": "completed" }
   ],
   "finished_at": "2026-05-31T12:00:41Z"
 }
 ```
+
+A `trace` row's `provider` is the engine that actually ran. After a rate-limit
+swap it carries `planned_provider` (the engine the plan assigned, when it differs)
+so the swap is visible in the response, not only the live log; a non-completed row
+carries `error_category` (e.g. `rate_limited` when every engine was exhausted).
 
 `status` is `completed` when every launch completed and the answer is non-empty,
 otherwise `degraded` (a failed worker substitutes as empty text; the debate still
