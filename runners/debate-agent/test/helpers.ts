@@ -49,6 +49,8 @@ export function makeAllowlist(repoRoot: string, overrides: Partial<Allowlist> = 
     maxBatchItems: 8,
     maxParallel: 4,
     maxParallelPerProvider: 2,
+    rateLimitPatterns: { claude: [], codex: [], copilot: [] },
+    fallback: { enabled: true, order: ["claude", "codex"] },
     ...overrides,
   };
 }

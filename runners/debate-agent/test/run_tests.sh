@@ -18,7 +18,7 @@ case "${1:-all}" in
     exec node --test dist/test/schema.test.js dist/test/allowlist.test.js \
       dist/test/launch.test.js dist/test/audit.test.js dist/test/runner.test.js \
       dist/test/batch.test.js dist/test/brain.test.js dist/test/debate.test.js \
-      dist/test/watch.test.js
+      dist/test/watch.test.js dist/test/ratelimit.test.js
     ;;
   --integration)
     exec node --test dist/test/integration.test.js

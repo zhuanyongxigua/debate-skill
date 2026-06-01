@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { Allowlist } from "./allowlist";
 import { AuditPaths, writeExecutionAudit } from "./audit";
 import { ChildLaunch, buildChildLaunch } from "./launch";
+import { classifyRateLimit } from "./ratelimit";
 import {
   RequestRejected,
   ValidatedRequest,
@@ -242,6 +243,7 @@ export async function runValidated(
   reqValidated: ValidatedRequest,
   baseEnv?: Record<string, string | undefined>,
   streamPath?: string,
+  rateLimitPatterns: readonly RegExp[] = [],
 ): Promise<ResultEnvelope> {
   const env = baseEnv ?? process.env;
   const launch = buildChildLaunch({
@@ -255,6 +257,19 @@ export async function runValidated(
     fast: reqValidated.fast,
   });
   const exec = await execute(launch, reqValidated.timeoutSeconds, streamPath);
+
+  // Detect a usage/rate limit and re-label it `rate_limited` so the orchestrator
+  // can swap engines. Only a FAILED, non-timeout run is reconsidered, so a
+  // successful answer that merely mentions "rate limit" is never reclassified, and
+  // a genuine timeout stays a timeout. The runner only LABELS here; it never
+  // rebalances providers (that is the daemon's job).
+  const errorCategory =
+    exec.status !== "completed" &&
+    exec.errorCategory !== "timeout" &&
+    exec.errorCategory !== "missing_cli" &&
+    classifyRateLimit(exec.stderr, exec.stdout, rateLimitPatterns)
+      ? "rate_limited"
+      : exec.errorCategory;
 
   // claude workers run with --output-format stream-json (for the live debug
   // stream); the clean answer is the stream's final result. Everything downstream
@@ -277,7 +292,7 @@ export async function runValidated(
     display_command: launch.displayCommand,
     timeout_seconds: reqValidated.timeoutSeconds,
     status: exec.status,
-    error_category: exec.errorCategory,
+    error_category: errorCategory,
     returncode: exec.returncode,
     elapsed_seconds: exec.elapsedSeconds,
     stripped_env_keys: launch.strippedEnvKeys,
@@ -300,7 +315,7 @@ export async function runValidated(
     mode: reqValidated.mode,
     capability: reqValidated.capability,
     status: exec.status,
-    error_category: exec.errorCategory,
+    error_category: errorCategory,
     returncode: exec.returncode,
     elapsed_seconds: exec.elapsedSeconds,
     timeout_seconds: reqValidated.timeoutSeconds,
@@ -326,7 +341,7 @@ export async function runRequestFile(
     const raw = loadRequestDict(requestPath);
     runId = raw.run_id ?? "";
     const reqValidated = validateRequest(raw, allow);
-    return await runValidated(reqValidated, baseEnv);
+    return await runValidated(reqValidated, baseEnv, undefined, allow.rateLimitPatterns[reqValidated.provider] ?? []);
   } catch (err) {
     if (err instanceof RequestRejected) {
       return rejectedResult(runId, err.message);
@@ -418,7 +433,11 @@ export async function runPreparedItems(
       jobIndexBySlot.set(idx, jobs.length);
       jobs.push({
         key: slot.req.provider,
-        run: async () => ({ item_id: slot.itemId, ...(await runValidated(slot.req!, baseEnv, slot.streamPath)) }) as BatchItemResult,
+        run: async () =>
+          ({
+            item_id: slot.itemId,
+            ...(await runValidated(slot.req!, baseEnv, slot.streamPath, allow.rateLimitPatterns[slot.req!.provider] ?? [])),
+          }) as BatchItemResult,
       });
     }
   });

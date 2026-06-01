@@ -239,3 +239,73 @@ test("repo root match", () => {
   assert.equal(repoRootMatch(allow, "/a/b"), "/a/b");
   assert.equal(repoRootMatch(allow, "/somewhere/else"), null);
 });
+
+// --- rate-limit patterns + fallback policy ---------------------------------
+
+test("default allowlist ships rate-limit patterns and enabled fallback", () => {
+  assert.ok(DEFAULT_ALLOWLIST.rateLimitPatterns.claude!.length > 0);
+  assert.ok(DEFAULT_ALLOWLIST.rateLimitPatterns.codex!.length > 0);
+  assert.equal(DEFAULT_ALLOWLIST.fallback.enabled, true);
+  assert.deepEqual(DEFAULT_ALLOWLIST.fallback.order, ["claude", "codex"]);
+});
+
+test("rate_limit_patterns override per provider; empty list disables a provider; absent keeps defaults", () => {
+  const d = makeTempDir();
+  try {
+    const cfg = join(d, "allowlist.json");
+    writeFileSync(cfg, JSON.stringify({ repo_roots: [d], rate_limit_patterns: { claude: ["FOOBAR"], codex: [] } }));
+    const allow = loadAllowlist(cfg);
+    assert.ok(allow.rateLimitPatterns.claude!.some((re) => re.test("a foobar happened")));
+    assert.equal(allow.rateLimitPatterns.codex!.length, 0); // detection off for codex
+    assert.ok(allow.rateLimitPatterns.copilot!.length > 0); // untouched => defaults
+  } finally {
+    cleanup(d);
+  }
+});
+
+test("an invalid rate-limit regex fails closed", () => {
+  expectShapeError({ rate_limit_patterns: { claude: ["("] } }, /rate_limit_patterns\.claude: invalid rate-limit pattern/);
+});
+
+test("rate_limit_patterns naming an unknown provider is rejected", () => {
+  expectShapeError({ rate_limit_patterns: { gpt5: ["x"] } }, /rate_limit_patterns names unknown provider/);
+});
+
+test("malformed rate_limit_patterns (non-object / non-array value) is rejected", () => {
+  expectShapeError({ rate_limit_patterns: "rate limit" }, /rate_limit_patterns must be a JSON object/);
+  expectShapeError({ rate_limit_patterns: { claude: "rate limit" } }, /rate_limit_patterns\.claude must be an array of strings/);
+});
+
+test("fallback policy parses enabled + order", () => {
+  const d = makeTempDir();
+  try {
+    const cfg = join(d, "allowlist.json");
+    writeFileSync(cfg, JSON.stringify({ repo_roots: [d], providers: ["claude", "codex"], fallback: { enabled: false, order: ["codex", "claude"] } }));
+    const allow = loadAllowlist(cfg);
+    assert.equal(allow.fallback.enabled, false);
+    assert.deepEqual(allow.fallback.order, ["codex", "claude"]);
+  } finally {
+    cleanup(d);
+  }
+});
+
+test("fallback.order defaults to providers when unset", () => {
+  const d = makeTempDir();
+  try {
+    const cfg = join(d, "allowlist.json");
+    writeFileSync(cfg, JSON.stringify({ repo_roots: [d], providers: ["codex"], fallback: { enabled: true } }));
+    assert.deepEqual(loadAllowlist(cfg).fallback.order, ["codex"]);
+  } finally {
+    cleanup(d);
+  }
+});
+
+test("fallback.order entry not in providers is rejected", () => {
+  expectShapeError({ providers: ["claude"], fallback: { order: ["codex"] } }, /fallback\.order entry "codex" is not in providers/);
+});
+
+test("malformed fallback (non-object / bad enabled / bad order) is rejected", () => {
+  expectShapeError({ fallback: "on" }, /fallback must be a JSON object/);
+  expectShapeError({ fallback: { enabled: "yes" } }, /fallback\.enabled must be a boolean/);
+  expectShapeError({ fallback: { order: "codex" } }, /fallback\.order must be an array of strings/);
+});

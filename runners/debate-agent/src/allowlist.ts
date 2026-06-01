@@ -10,6 +10,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, sep } from "node:path";
 
 import { expandUser, realpathLenient } from "./paths";
+import { DEFAULT_RATE_LIMIT_PATTERNS, RateLimitPatternError, compilePatterns } from "./ratelimit";
 
 // Providers the runner knows how to launch. Adding one here is not enough; it
 // also needs a static argv builder in launch.ts. Both edits are deliberate.
@@ -74,6 +75,19 @@ export const MAX_TIMEOUT_SECONDS = 86400;
 
 export class AllowlistError extends Error {}
 
+// Rate-limit fallback policy. When a worker (or the planner) is classified
+// `rate_limited`, the orchestrator re-runs the SAME task on the next provider in
+// `order` (filtered to allowlisted, not-yet-tried providers). This is execution
+// resilience driven purely by execution status — NOT a `provider: auto` request
+// API and NOT a change to the run/run-batch primitives, which never rebalance.
+export interface FallbackPolicy {
+  // When false, a rate_limited launch is left to degrade (the prior behavior).
+  enabled: boolean;
+  // Preference order for picking a substitute provider. Filtered to allowlisted
+  // providers at use-site; defaults to `providers` order when unset.
+  order: string[];
+}
+
 export interface Allowlist {
   // Absolute, realpath-resolved roots. A request repo must resolve under one.
   repoRoots: string[];
@@ -89,6 +103,18 @@ export interface Allowlist {
   maxBatchItems: number;
   maxParallel: number;
   maxParallelPerProvider: number;
+  // provider -> compiled rate-limit signatures. A FAILED child whose output
+  // matches one is reclassified `rate_limited`; the orchestrator then swaps
+  // engines. Empty for a provider => detection off for it.
+  rateLimitPatterns: Record<string, RegExp[]>;
+  fallback: FallbackPolicy;
+}
+
+/** Default per-provider rate-limit signatures (the same conservative set for
+ * every supported provider). Compiled fresh so each Allowlist owns its regexes. */
+function defaultRateLimitPatterns(): Record<string, RegExp[]> {
+  const compiled = compilePatterns(DEFAULT_RATE_LIMIT_PATTERNS);
+  return { claude: [...compiled], codex: [...compiled], copilot: [...compiled] };
 }
 
 // Conservative built-in defaults. With no repo roots configured, every repo is
@@ -105,6 +131,9 @@ export const DEFAULT_ALLOWLIST: Allowlist = {
   maxBatchItems: 8,
   maxParallel: 4,
   maxParallelPerProvider: 2,
+  rateLimitPatterns: defaultRateLimitPatterns(),
+  // Swap engines on a rate limit by default; order follows `providers`.
+  fallback: { enabled: true, order: ["claude", "codex"] },
 };
 
 export function repoRootMatch(allow: Allowlist, resolvedRepo: string): string | null {
@@ -156,6 +185,56 @@ function expectNumber(value: unknown, field: string): number {
     throw new AllowlistError(`${field} must be a number`);
   }
   return value;
+}
+
+function expectBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new AllowlistError(`${field} must be a boolean`);
+  }
+  return value;
+}
+
+/** Parse the optional `rate_limit_patterns` map. Starts from the per-provider
+ * defaults and overrides only the providers present in config, so an operator can
+ * tune one provider (or disable detection for it with an empty list) without
+ * re-listing the rest. Compiles eagerly so a bad regex fails closed at load. */
+function parseRateLimitPatterns(raw: unknown): Record<string, RegExp[]> {
+  const result = defaultRateLimitPatterns();
+  if (raw === undefined) return result;
+  const obj = expectObject(raw, "rate_limit_patterns");
+  for (const [provider, value] of Object.entries(obj)) {
+    if (!isSupportedProvider(provider)) {
+      throw new AllowlistError(`rate_limit_patterns names unknown provider ${JSON.stringify(provider)}`);
+    }
+    const strings = expectStringArray(value, `rate_limit_patterns.${provider}`);
+    try {
+      result[provider] = compilePatterns(strings);
+    } catch (err) {
+      if (err instanceof RateLimitPatternError) {
+        throw new AllowlistError(`rate_limit_patterns.${provider}: ${err.message}`);
+      }
+      throw err;
+    }
+  }
+  return result;
+}
+
+/** Parse the optional `fallback` block. `order` defaults to `providers` and every
+ * entry must itself be an allowlisted provider (an unreachable substitute is a
+ * misconfiguration, so fail closed rather than silently skip it). */
+function parseFallback(raw: unknown, providers: string[]): FallbackPolicy {
+  if (raw === undefined) return { enabled: true, order: [...providers] };
+  const obj = expectObject(raw, "fallback");
+  const enabled = obj.enabled === undefined ? true : expectBoolean(obj.enabled, "fallback.enabled");
+  const order = obj.order === undefined ? [...providers] : expectStringArray(obj.order, "fallback.order");
+  for (const provider of order) {
+    if (!providers.includes(provider)) {
+      throw new AllowlistError(
+        `fallback.order entry ${JSON.stringify(provider)} is not in providers ${JSON.stringify(providers)}`,
+      );
+    }
+  }
+  return { enabled, order };
 }
 
 /**
@@ -230,6 +309,9 @@ export function loadAllowlist(configPath: string | null | undefined): Allowlist 
   const limit = (key: string, fallback: number): number =>
     limits[key] === undefined ? fallback : expectNumber(limits[key], `limits.${key}`);
 
+  const rateLimitPatterns = parseRateLimitPatterns(obj.rate_limit_patterns);
+  const fallback = parseFallback(obj.fallback, providers);
+
   return {
     repoRoots,
     modes,
@@ -240,6 +322,8 @@ export function loadAllowlist(configPath: string | null | undefined): Allowlist 
     maxBatchItems: limit("max_batch_items", base.maxBatchItems),
     maxParallel: limit("max_parallel", base.maxParallel),
     maxParallelPerProvider: limit("max_parallel_per_provider", base.maxParallelPerProvider),
+    rateLimitPatterns,
+    fallback,
   };
 }
 

@@ -16,6 +16,8 @@ const allow: Allowlist = {
   maxBatchItems: 8,
   maxParallel: 4,
   maxParallelPerProvider: 2,
+  rateLimitPatterns: { claude: [], codex: [] },
+  fallback: { enabled: true, order: ["claude", "codex"] },
 };
 
 function goodPlan(): unknown {
