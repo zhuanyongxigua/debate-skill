@@ -427,9 +427,11 @@ Pick a unique `<id>` (`YYYYMMDD-HHMMSS-slug`).
   Set **`fast: false`** ONLY when the human explicitly asks for a serious / heavy /
   thorough debate — signals like "认真", "重度", "彻底", "深入", "详尽", "严谨",
   "全面", "thorough", "comprehensive", "rigorous", "in-depth", "deep dive",
-  "exhaustive" or equivalent — which runs the full planner-designed debate
-  (proposal → critique → cross-review → arbitration). `fast` is purely about flow
-  leanness; it does **not** control codex/claude turbo (codex always runs turbo).
+  "exhaustive" or equivalent — which runs the **planner-designed debate**: the
+  planner judges complexity and designs the phases (the full proposal → critique →
+  cross-review → arbitration for a substantial task; it may still choose a leaner
+  shape for one it judges genuinely simple). `fast` is purely about flow leanness;
+  it does **not** control codex/claude turbo (codex always runs turbo).
 
 > **Exactly these fields, nothing else.** The request has ONLY
 > `schema_version, id, kind, prompt, repo, language, fast`. Do **not** add any
@@ -527,7 +529,6 @@ Rules in this mode:
   within one phase run in **parallel** and must not depend on each other.
 - Designate the launch whose output is the final answer; its prompt must instruct
   that worker to write the final answer in the required layout and language.
-- If the task is `fast`, bias toward the lean/fast shape.
 - Do **not** call `cli-launch`, do **not** write files, do **not** execute
   anything, do **not** include a Trace. Output **only** the plan.
 

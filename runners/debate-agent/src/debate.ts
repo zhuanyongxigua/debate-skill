@@ -132,15 +132,26 @@ function capabilityRank(provider: string): number {
  * GENERIC worker prompts (no planner-crafted, task-specific instructions), so it is
  * faster/cheaper but shallower than the planner path; a non-fast (fast=false)
  * request still goes through the full planner. See AGENTS.md invariant #3. */
-function buildFastPlan(req: DebateRequest): Plan {
+function buildFastPlan(req: DebateRequest, allow: Allowlist): Plan {
   const lang = req.language ? `\n\nRespond in ${req.language}.` : "";
+  // Escape any `{{...}}` in the user's task so the mechanical substitute() — which
+  // fills the daemon's own {{P1.output}}/{{P2.output}} below — cannot accidentally
+  // mangle a literal placeholder the user happened to write in their prompt.
+  const task = req.prompt.replace(/\{\{/g, "{ {");
+  // Pick real allowlisted providers — prefer the canonical codex+claude reviewers
+  // and a claude arbiter, but fall back to whatever IS allowlisted so a narrowed
+  // allowlist degrades to a working provider instead of a rejected/empty reviewer.
+  const pick = (...prefs: string[]) => prefs.find((p) => allow.providers.includes(p)) ?? allow.providers[0] ?? "claude";
+  const r1 = pick("codex", "claude");
+  const r2 = pick("claude", "codex");
+  const arb = pick("claude", "codex");
   const reviewer =
-    `${req.prompt}\n\nIndependently complete the task above. If it concerns this repository, read the ` +
+    `${task}\n\nIndependently complete the task above. If it concerns this repository, read the ` +
     `affected code AND its callers/dependents to judge impact — do not restrict yourself to only a diff, ` +
     `and do not "explore the whole repo". Be concrete and cite specifics.${lang}`;
   const arbiter =
     `Two independent analyses of the same task are below.\n\n--- Analysis A ---\n{{P1.output}}\n\n` +
-    `--- Analysis B ---\n{{P2.output}}\n\nThe task was:\n${req.prompt}\n\nDecide and write the FINAL ` +
+    `--- Analysis B ---\n{{P2.output}}\n\nThe task was:\n${task}\n\nDecide and write the FINAL ` +
     `answer, reconciling the two and noting any important disagreement.${lang}`;
   return {
     complexity: "simple",
@@ -148,11 +159,11 @@ function buildFastPlan(req: DebateRequest): Plan {
       {
         name: "proposal_generation",
         launches: [
-          { id: "P1", provider: "codex", prompt: reviewer },
-          { id: "P2", provider: "claude", prompt: reviewer },
+          { id: "P1", provider: r1, prompt: reviewer },
+          { id: "P2", provider: r2, prompt: reviewer },
         ],
       },
-      { name: "arbitration", launches: [{ id: "A1", provider: "claude", prompt: arbiter }] },
+      { name: "arbitration", launches: [{ id: "A1", provider: arb, prompt: arbiter }] },
     ],
     answerItem: "A1",
   };
@@ -169,7 +180,7 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
   // runs a fixed lean 2-phase shape; the non-fast path plans with the CLI planner.
   let plan: Plan;
   if (req.fast) {
-    plan = buildFastPlan(req);
+    plan = buildFastPlan(req, allow);
     log?.(`fast mode: planner skipped — fixed lean 2-phase shape (P1 codex, P2 claude, A1 claude)`);
   } else {
     try {

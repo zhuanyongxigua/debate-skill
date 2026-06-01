@@ -229,6 +229,30 @@ test("the fast path still swaps engines on a rate limit", async () => {
   assert.equal(p1.planned_provider, "codex");
 });
 
+test("the fast plan picks allowlisted providers (a narrowed allowlist degrades gracefully)", async () => {
+  // only claude allowlisted → both reviewers + arbiter run on claude (no rejected/
+  // empty reviewer from a hardcoded codex that isn't available).
+  const claudeOnly = makeAllowlist(repo, { providers: ["claude"] });
+  const planner: PlannerFn = async () => {
+    throw new Error("planner must NOT be called for a fast request");
+  };
+  const { runItems } = stubRun();
+  const resp = await runDebate(req({ fast: true }), claudeOnly, { planner, runItems, readOutput });
+  assert.equal(resp.status, "completed");
+  assert.deepEqual(resp.trace.map((t) => `${t.item}:${t.provider}`), ["P1:claude", "P2:claude", "A1:claude"]);
+});
+
+test("the fast plan escapes {{...}} in the user prompt (not mangled by substitute)", async () => {
+  const planner: PlannerFn = async () => {
+    throw new Error("planner must NOT be called for a fast request");
+  };
+  const { runItems, calls } = stubRun();
+  await runDebate(req({ fast: true, prompt: "explain {{P1.output}} in the template" }), allow, { planner, runItems, readOutput });
+  // the user's literal placeholder survives (escaped to `{ {`), not blanked away
+  assert.match(calls[0]![0]!.req!.prompt, /\{ \{P1\.output\}\}/);
+  assert.ok(!/explain\s+in the template/.test(calls[0]![0]!.req!.prompt), "user placeholder must not be substituted to empty");
+});
+
 test("fallback disabled leaves a rate_limited worker to degrade (no retry)", async () => {
   const allowNoFb = makeAllowlist(repo, {
     modes: ["debate-proposal", "debate-critique", "debate-cross-review"],
