@@ -313,17 +313,48 @@ Contract:
   (phase, role, candidate id) without leaking those into this skill's schema.
 - Each child runs in its own process group. On per-spec timeout the group
   receives `SIGTERM`, then `SIGKILL` after a 10-second grace period.
-- `max_parallel` is a mechanical concurrency cap only. There is no retry,
-  rate-limit, queue policy, or partial-failure judgment — those belong to the
-  caller (typically `debate-router`).
+- `max_parallel` is a mechanical concurrency cap only. `run_specs_parallel`
+  itself does no retry, queue policy, or partial-failure judgment — those belong
+  to the caller (typically `debate-router`). It can optionally **label** a
+  rate-limited failure (see below), but never acts on it.
 - Per-spec `timeout_override` overrides `LaunchSpec.timeout_seconds`. The
   caller is responsible for picking phase-appropriate values; defaults remain
   the phase-aware values from `timeout_seconds_for_phase`.
 
 `ParallelResult` carries: `status` (`completed` | `timed_out` | `error`),
 `returncode`, `error_category` (`null` | `timeout` | `missing_cli` |
-`nonzero_exit` | `exception`), `stdout`, `stderr`, `elapsed_seconds`,
-`timeout_seconds`, `timed_out`, `display_command`, and `caller_metadata`.
+`nonzero_exit` | `rate_limited` | `exception`), `stdout`, `stderr`,
+`elapsed_seconds`, `timeout_seconds`, `timed_out`, `display_command`, and
+`caller_metadata`.
+
+#### Rate-limit fallback (same task, swap engine)
+
+A subscription can hit a usage/rate limit mid-run. Detection and the engine swap
+are split so the mechanical primitive stays mechanical:
+
+- Pass `rate_limit_patterns` (default `DEFAULT_RATE_LIMIT_PATTERNS`, a
+  per-provider `{provider: [compiled regex]}` map) to either function. A failed
+  (non-zero) child whose stderr/stdout matches its provider's signature is
+  **labeled** `error_category="rate_limited"`. `run_specs_parallel` only labels;
+  it still does not retry. The defaults are conservative — verify them against
+  your real CLI limit output and override as needed (empty list = detection off).
+- `run_specs_parallel_with_fallback(specs, *, max_parallel=None,
+  rate_limit_patterns=DEFAULT_RATE_LIMIT_PATTERNS)` adds the swap: for any slot
+  that comes back `rate_limited`, it re-runs that slot on the next pre-built
+  alternate in `ParallelSpec.fallbacks` (same task, different engine), in order,
+  until none is rate-limited or the fallbacks run out. Results stay in input
+  order. It branches only on `error_category`, never on a child's text.
+
+You build the alternates (you hold the prompt; this skill never reaches into a
+built spec to change its provider). Build a codex-engine `LaunchSpec` for the same
+task and attach it:
+
+```python
+ParallelSpec(spec=claude_spec, fallbacks=(ParallelSpec(spec=codex_same_task),))
+```
+
+A slot whose fallbacks are all exhausted keeps its `rate_limited` result for the
+caller to degrade.
 
 Use this helper only for phases that are genuinely independent. Sequential
 stages such as proposal normalization, cross-review (which reads complete

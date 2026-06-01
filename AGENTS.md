@@ -47,7 +47,14 @@ plus one optional execution adapter:
    branches only on execution **status**, never by parsing a worker's text content.
    A per-step planner is the retired brain loop (and its JSON-format failures) —
    don't. Keep generic execution primitives (`run`, `run-batch`); don't add a
-   `proposal_attack` / `multi_path` / `provider: auto` API.
+   `proposal_attack` / `multi_path` / `provider: auto` API. (d) **Rate-limit
+   fallback is the daemon's, not the primitives'.** When a worker or the planner is
+   `rate_limited`, the daemon re-runs the *same task* on the next available engine
+   — but that swap lives in `debate.ts` / `planner.ts` and branches **only on
+   `error_category`** (execution status, per (c)), never on a worker's text. The
+   primitives only *label* a failure `rate_limited` (no retry, no rebalance); the
+   request/batch schema gains **no** field and there is still no `provider: auto`.
+   Detection signatures and the fallback order are allowlist config, not code.
 4. **The runner is closed by default and fails closed.** No `repo_roots` ⇒ every
    request rejected. Malformed config raises at startup; the daemon's per-request
    allowlist reload instead keeps the last-good config and warns — neither path

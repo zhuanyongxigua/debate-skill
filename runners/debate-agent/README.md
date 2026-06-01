@@ -206,9 +206,12 @@ redacted in `display_command`, but unlike stdin it is visible in `ps`.
 ```
 
 `status` ∈ `completed | timed_out | error | rejected`.
-`error_category` ∈ `null | rejected | timeout | missing_cli | nonzero_exit | exception`.
+`error_category` ∈ `null | rejected | timeout | missing_cli | nonzero_exit | rate_limited | exception`.
 A `rejected` result is produced for any allowlist/schema failure and the child
-is never launched.
+is never launched. `rate_limited` is a refinement of a failed run: a non-zero,
+non-timeout child whose stderr/stdout matches a provider's configured rate-limit
+signature (see [Rate-limit fallback](#rate-limit-fallback)). It only **labels**
+the result; `run` / `run-batch` never act on it — the daemon does.
 
 ## run-batch (parallel execution)
 
@@ -264,7 +267,9 @@ Batch result (items in **input order**):
 Exit code is `0` only when every item completed; `degraded` / `rejected` exit
 `1`, but the envelope is always parseable so the caller can inspect per-item
 status. Provider allocation is the **caller's** job: the runner has no
-`provider: auto` and never rebalances.
+`provider: auto` and never rebalances. (The `watch` daemon, a higher layer, *does*
+swap a `rate_limited` launch onto another engine — see
+[Rate-limit fallback](#rate-limit-fallback) — but `run-batch` itself never does.)
 
 ## watch (the plan + execute daemon)
 
@@ -409,6 +414,39 @@ The response is always written, so the sandboxed side never hangs. `debate-route
 reads `answer_markdown` and presents it (re-rendering to a caller-required format
 only if the original task demanded one).
 
+## Rate-limit fallback
+
+A subscription can hit a usage/rate limit mid-debate. Rather than let that worker
+(or the planner) fail and degrade the whole debate, the daemon re-runs the **same
+task on the next available engine** — claude's task → codex, and vice versa.
+
+The split is deliberate and preserves the runner's invariants:
+
+- **Detection lives in the execution primitive** (`runner.ts`, `_run_one_parallel`
+  in cli-launch): a failed, non-timeout child whose stderr/stdout matches a
+  provider's configured signature is **labeled** `error_category: "rate_limited"`.
+  That is the *only* change to `run` / `run-batch`; they still launch exactly the
+  provider they were told and never rebalance.
+- **The swap lives in the orchestrator** (`debate.ts` for workers, `planner.ts`
+  for the plan). After a phase runs, any `rate_limited` launch is rebuilt with the
+  **same substituted prompt** on the next provider in `fallback.order` (allowlisted
+  and not yet tried) and re-run, bounded by the provider count. The planner rotates
+  the same way across its plan attempts. The decision branches **only on
+  `error_category`** — never on a worker's text — so it does not become debate
+  strategy or a `provider: auto` request API. When switching engines the per-launch
+  `effort` is dropped to the new provider's default (e.g. claude `max` is invalid
+  for codex). If every provider for a launch is rate-limited, it degrades as before.
+
+Tuning (allowlist, hot-reloaded per request):
+
+- `rate_limit_patterns` — `provider -> [regex]` signatures, case-insensitive.
+  Conservative built-in defaults ship for every provider; **verify them against
+  your real claude/codex limit output and tune here** (no code change). An empty
+  list for a provider turns detection off for it.
+- `fallback` — `{ "enabled": bool, "order": [provider…] }`. `enabled: false`
+  restores the prior "rate limit → degrade" behavior. `order` is the substitute
+  preference (filtered to allowlisted providers; defaults to `providers`).
+
 ## Security model
 
 1. **Static argv.** The runner builds the child command itself from a fixed
@@ -509,6 +547,8 @@ through it, all of the following must be in place. This is the full list.
    | `limits.max_batch_items` | items per `run-batch` | 8 |
    | `limits.max_parallel` | global batch concurrency | 4 |
    | `limits.max_parallel_per_provider` | per-provider concurrency | 2 |
+   | `rate_limit_patterns` | `provider -> [regex]` limit signatures (tune to your CLIs) | conservative built-ins per provider |
+   | `fallback` | `{enabled, order}` for rate-limit engine swap | `{enabled: true, order: providers}` |
 
 3. **Codex Rules** at `~/.codex/rules/default.rules` allowing **only** the fixed
    runner path (see Install). `decision = "prompt"` asks each time;

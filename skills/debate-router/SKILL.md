@@ -601,8 +601,22 @@ Per-spec failures, timeouts, retries, and "is this enough surviving evidence
 to continue" decisions belong to this skill, not to `cli-launch`. The
 parallel helper only guarantees mechanical fan-out (process group, SIGTERM
 then SIGKILL after a 10s grace period) and per-spec status (`completed`,
-`timed_out`, `error`). Translate those into `DebateRecord.cli_participation`
-rows.
+`timed_out`, `error`, and the failure refinement `rate_limited`). Translate
+those into `DebateRecord.cli_participation` rows.
+
+**Rate-limit fallback — same task, swap engine.** A subscription can run out of
+quota mid-debate. When a result comes back `error_category: "rate_limited"`, do
+**not** treat it as an ordinary failure and degrade: re-run the *same task* on the
+next available engine (claude's task → codex, and vice versa), because the work
+still needs doing — only the engine changed. Build the alternate spec yourself
+(you hold the prompt) and hand it to `cli-launch` as a pre-built fallback:
+`cli-launch.run_specs_parallel_with_fallback` consumes each `ParallelSpec.fallbacks`
+in order, swapping only on `rate_limited` and branching on status alone — never on
+a child's text. Drop a provider-specific `effort` when you switch (claude `max`
+is invalid for codex). Only when **every** allowed engine for that launch is
+rate-limited do you record it as degraded. In Mode 2 the daemon does all of this
+for you; you just present the result, and the `trace` shows the engine that
+actually ran (which may differ from a plan's suggested provider).
 
 Even within phases that should fan out, parallelism is a default, not an
 absolute. Skip it when only one CLI is selected for that phase, when the
@@ -707,6 +721,9 @@ would make concurrent calls counterproductive. Record the reason in
 - Fanning out `cross_review`, `arbitration`, `proposal_normalization`, final
   rendering, or any shared-state mutation through `run_specs_parallel` —
   those depend on prior outputs or single-writer state and must stay serial.
+- Treating a `rate_limited` result as an ordinary failure and degrading the
+  debate, instead of re-running the same task on another available engine
+  (claude ↔ codex). Only a launch with no un-rate-limited engine left degrades.
 
 ## References
 
