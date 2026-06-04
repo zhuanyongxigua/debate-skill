@@ -75,13 +75,13 @@ export const MAX_TIMEOUT_SECONDS = 86400;
 
 export class AllowlistError extends Error {}
 
-// Rate-limit fallback policy. When a worker (or the planner) is classified
-// `rate_limited`, the orchestrator re-runs the SAME task on the next provider in
+// Provider fallback policy. When a worker (or the planner) cannot launch or fails
+// to produce output, the orchestrator re-runs the SAME task on the next provider in
 // `order` (filtered to allowlisted, not-yet-tried providers). This is execution
 // resilience driven purely by execution status — NOT a `provider: auto` request
 // API and NOT a change to the run/run-batch primitives, which never rebalance.
 export interface FallbackPolicy {
-  // When false, a rate_limited launch is left to degrade (the prior behavior).
+  // When false, a failed launch is left to degrade/error instead of swapping.
   enabled: boolean;
   // Preference order for picking a substitute provider. Filtered to allowlisted
   // providers at use-site; defaults to `providers` order when unset.
@@ -104,8 +104,8 @@ export interface Allowlist {
   maxParallel: number;
   maxParallelPerProvider: number;
   // provider -> compiled rate-limit signatures. A FAILED child whose output
-  // matches one is reclassified `rate_limited`; the orchestrator then swaps
-  // engines. Empty for a provider => detection off for it.
+  // matches one is reclassified `rate_limited`; fallback itself applies to any
+  // provider launch/completion failure. Empty for a provider => detection off for it.
   rateLimitPatterns: Record<string, RegExp[]>;
   fallback: FallbackPolicy;
 }
@@ -132,7 +132,7 @@ export const DEFAULT_ALLOWLIST: Allowlist = {
   maxParallel: 4,
   maxParallelPerProvider: 2,
   rateLimitPatterns: defaultRateLimitPatterns(),
-  // Swap engines on a rate limit by default; order follows `providers`.
+  // Swap engines on provider failure by default; order follows `providers`.
   fallback: { enabled: true, order: ["claude", "codex"] },
 };
 

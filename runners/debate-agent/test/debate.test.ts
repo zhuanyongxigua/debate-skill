@@ -105,6 +105,7 @@ test("a planner that never produces a valid plan yields an error response (never
 
 test("a worker that does not complete degrades the debate (branch on status, not content)", async () => {
   const planner: PlannerFn = async () => twoPhasePlan;
+  const allowNoFallback = { ...allow, fallback: { enabled: false, order: ["claude", "codex"] } };
   const calls: PreparedItem[][] = [];
   const runItems: DebateDeps["runItems"] = async (items) => {
     calls.push(items);
@@ -115,7 +116,7 @@ test("a worker that does not complete degrades the debate (branch on status, not
         : { item_id: it.itemId, status: "completed", provider: it.req!.provider },
     );
   };
-  const resp = await runDebate(req(), allow, { planner, runItems, readOutput });
+  const resp = await runDebate(req(), allowNoFallback, { planner, runItems, readOutput });
   assert.equal(resp.status, "degraded");
   // a failed upstream output substitutes as empty, debate still finishes
   const arbPrompt = calls[1]![0]!.req!.prompt;
@@ -136,15 +137,18 @@ test("a plan with a non-allowlisted provider rejects that launch and degrades", 
   assert.match(resp.status_reason, /not in allowlist/);
 });
 
-// --- rate-limit fallback: same task, swap engine ---------------------------
+// --- provider fallback: same task, swap engine ------------------------------
 
 const onePhaseClaudePlan = JSON.stringify({
   phases: [{ name: "proposal_generation", launches: [{ id: "P1", provider: "claude", prompt: "do the task" }] }],
   answer_item: "P1",
 });
 
-/** Stub workers that fail `failProviders` with a rate limit and complete the rest. */
-function rateLimitRun(failProviders: Set<string>): { runItems: DebateDeps["runItems"]; calls: PreparedItem[][] } {
+/** Stub workers that fail `failProviders` with `errorCategory` and complete the rest. */
+function failureRun(
+  failProviders: Set<string>,
+  errorCategory = "rate_limited",
+): { runItems: DebateDeps["runItems"]; calls: PreparedItem[][] } {
   const calls: PreparedItem[][] = [];
   const runItems: DebateDeps["runItems"] = async (items) => {
     calls.push(items);
@@ -152,7 +156,7 @@ function rateLimitRun(failProviders: Set<string>): { runItems: DebateDeps["runIt
       if (it.rejected !== undefined) return { item_id: it.itemId, status: "rejected", reject_reason: it.rejected };
       const provider = it.req!.provider;
       return failProviders.has(provider)
-        ? { item_id: it.itemId, status: "error", provider, error_category: "rate_limited" }
+        ? { item_id: it.itemId, status: "error", provider, error_category: errorCategory }
         : { item_id: it.itemId, status: "completed", provider };
     });
   };
@@ -161,7 +165,7 @@ function rateLimitRun(failProviders: Set<string>): { runItems: DebateDeps["runIt
 
 test("a rate_limited worker is re-run on the next provider (same task, swap engine)", async () => {
   const planner: PlannerFn = async () => onePhaseClaudePlan;
-  const { runItems, calls } = rateLimitRun(new Set(["claude"])); // claude limited, codex ok
+  const { runItems, calls } = failureRun(new Set(["claude"])); // claude limited, codex ok
   const resp = await runDebate(req(), allow, { planner, runItems, readOutput });
 
   assert.equal(resp.status, "completed");
@@ -179,9 +183,24 @@ test("a rate_limited worker is re-run on the next provider (same task, swap engi
   assert.equal(resp.answer_markdown, "OUT[P1]");
 });
 
+test("a nonzero_exit worker is re-run on the next provider (same task, swap engine)", async () => {
+  const planner: PlannerFn = async () => onePhaseClaudePlan;
+  const { runItems, calls } = failureRun(new Set(["claude"]), "nonzero_exit"); // e.g. cert/API failure
+  const resp = await runDebate(req(), allow, { planner, runItems, readOutput });
+
+  assert.equal(resp.status, "completed");
+  assert.equal(calls.length, 2); // initial (claude) + one fallback round (codex)
+  assert.equal(calls[0]![0]!.req!.provider, "claude");
+  assert.equal(calls[1]![0]!.req!.provider, "codex");
+  assert.equal(calls[1]![0]!.req!.prompt, calls[0]![0]!.req!.prompt);
+  assert.deepEqual(resp.trace.map((t) => `${t.item}:${t.provider}:${t.status}`), ["P1:codex:completed"]);
+  assert.equal(resp.trace[0]!.planned_provider, "claude");
+  assert.equal(resp.answer_markdown, "OUT[P1]");
+});
+
 test("when every provider is rate-limited the launch degrades (bounded, no infinite loop)", async () => {
   const planner: PlannerFn = async () => onePhaseClaudePlan;
-  const { runItems, calls } = rateLimitRun(new Set(["claude", "codex"]));
+  const { runItems, calls } = failureRun(new Set(["claude", "codex"]));
   const resp = await runDebate(req(), allow, { planner, runItems, readOutput });
 
   assert.equal(resp.status, "degraded");
@@ -220,7 +239,7 @@ test("the fast path still swaps engines on a rate limit", async () => {
   const planner: PlannerFn = async () => {
     throw new Error("planner must NOT be called for a fast request");
   };
-  const { runItems } = rateLimitRun(new Set(["codex"])); // P1 codex limited → fall back
+  const { runItems } = failureRun(new Set(["codex"])); // P1 codex limited → fall back
   const resp = await runDebate(req({ fast: true }), allow, { planner, runItems, readOutput });
   assert.equal(resp.status, "completed");
   // P1 was planned codex but ran on claude after the swap
@@ -259,7 +278,7 @@ test("fallback disabled leaves a rate_limited worker to degrade (no retry)", asy
     fallback: { enabled: false, order: ["claude", "codex"] },
   });
   const planner: PlannerFn = async () => onePhaseClaudePlan;
-  const { runItems, calls } = rateLimitRun(new Set(["claude"]));
+  const { runItems, calls } = failureRun(new Set(["claude"]));
   const resp = await runDebate(req(), allowNoFb, { planner, runItems, readOutput });
 
   assert.equal(resp.status, "degraded");

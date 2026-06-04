@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Allowlist } from "./allowlist";
+import { fallbackCategory, isFallbackEligible } from "./fallback";
 import { buildChildLaunch } from "./launch";
 import { DebateRequest } from "./mailbox";
 import { PLAN_JSON_SCHEMA, Plan, PlanInvalid, parsePlan, validatePlan } from "./plan";
@@ -23,16 +24,18 @@ const SCHEMA_STR = JSON.stringify(PLAN_JSON_SCHEMA);
 
 // Planning is one reasoning-heavy call; mirror the proposal-generation budget.
 const PLANNER_TIMEOUT_SECONDS = 1800;
-// One extra attempt over the old default so a rate-limited primary planner can
-// rotate to a fallback provider AND still get a retry-on-invalid there.
+// One extra attempt over the old default so a failed primary planner can rotate
+// to a fallback provider AND still get a retry-on-invalid there.
 const DEFAULT_MAX_ATTEMPTS = 4;
 
 export class PlanFailed extends Error {}
 
-/** Thrown by the CLI planner when every candidate provider is rate-limited, so
- * planWithRetry can stop immediately instead of spinning its remaining retry
- * budget on attempts that can only re-throw this. */
-export class AllPlannersRateLimited extends Error {}
+/** Thrown by the CLI planner when every candidate provider failed to launch or
+ * produce a plan, so planWithRetry can stop immediately instead of spinning its
+ * remaining retry budget on attempts that can only re-throw this. */
+export class AllPlannersUnavailable extends Error {}
+// Back-compat for older tests/imports; rate limits are now one unavailable case.
+export class AllPlannersRateLimited extends AllPlannersUnavailable {}
 
 /** Raw planner: returns the planner CLI's stdout for one attempt. Injectable so
  * tests can script plans without a real model. */
@@ -55,9 +58,9 @@ export async function planWithRetry(
     try {
       text = await planner(req, attempt, lastError);
     } catch (err) {
-      // Every planner provider is rate-limited — further attempts can only
+      // Every planner provider is unavailable — further attempts can only
       // re-throw this, so stop now rather than burn the rest of the budget.
-      if (err instanceof AllPlannersRateLimited) {
+      if (err instanceof AllPlannersUnavailable) {
         log?.(`plan aborted: ${err.message}`);
         throw new PlanFailed(err.message);
       }
@@ -174,20 +177,20 @@ export function extractClaudeStructuredOutput(stdout: string): string {
 export function makeCliPlanner(
   repo: string,
   opts: {
-    // Ordered planner providers: primary first, then rate-limit fallbacks.
+    // Ordered planner providers: primary first, then provider-failure fallbacks.
     providers: string[];
     baseEnv?: Record<string, string | undefined>;
     streamDir?: string;
-    // provider -> compiled rate-limit signatures (so the planner can swap engines).
+    // provider -> compiled rate-limit signatures (for the `rate_limited` label).
     rateLimitPatterns?: Record<string, readonly RegExp[]>;
     // Injectable child executor (defaults to the real execute) so the provider
     // rotation can be unit-tested without spawning a CLI.
     exec?: typeof execute;
   },
 ): PlannerFn {
-  // The planner is a launched CLI too, so it can be rate-limited. We rotate to
-  // the next provider on a rate limit (same task, swap engine); `exhausted`
-  // tracks which providers are spent across this debate's plan attempts.
+  // The planner is a launched CLI too. If it fails to produce output, rotate to
+  // the next provider (same task, swap engine); `exhausted` tracks which
+  // providers are spent across this debate's plan attempts.
   const exhausted = new Set<string>();
   const execFn = opts.exec ?? execute;
   // When set, the NEXT claude attempt resumes this session once (to fix the plan
@@ -201,25 +204,26 @@ export function makeCliPlanner(
     const baseEnv = opts.baseEnv ?? process.env;
     const provider = opts.providers.find((p) => !exhausted.has(p));
     if (provider === undefined) {
-      throw new AllPlannersRateLimited(`all planner providers are rate-limited (${opts.providers.join(", ")})`);
+      throw new AllPlannersUnavailable(`all planner providers are unavailable (${opts.providers.join(", ")})`);
     }
     const streamPath = opts.streamDir ? join(opts.streamDir, `planner-${attempt + 1}.log`) : undefined;
 
-    // Shared failure handler: re-label a rate limit and mark this provider
-    // exhausted so the next plan attempt rotates to a fallback; otherwise surface
-    // the raw failure. Throwing lets planWithRetry retry (with the rotated
-    // provider). Branch on execution status only, never on the planner's text.
+    // Shared failure handler: rate limits keep their label, but any planner
+    // launch/completion failure (nonzero exit, missing CLI, timeout, connection
+    // error, ...) marks this provider exhausted so the next plan attempt rotates to a
+    // fallback. Throwing lets planWithRetry retry with the rotated provider.
+    // Branch on execution status only, never on the planner's text.
     const fail = (exec: { status: string; errorCategory: string | null; stderr: string; stdout: string }): never => {
       const patterns = opts.rateLimitPatterns?.[provider] ?? [];
       const limited =
-        exec.errorCategory !== "timeout" &&
-        exec.errorCategory !== "missing_cli" &&
         classifyRateLimit(exec.stderr, exec.stdout, patterns);
-      if (limited) {
+      const category = limited ? "rate_limited" : fallbackCategory(exec.errorCategory);
+      if (isFallbackEligible(exec.status, category)) {
         exhausted.add(provider);
-        throw new Error(`planner CLI rate-limited on ${provider}; rotating to a fallback provider`);
+        const reason = limited ? "rate-limited" : `failed (${category})`;
+        throw new Error(`planner CLI ${reason} on ${provider}; rotating to a fallback provider`);
       }
-      throw new Error(`planner CLI ${exec.status} (${exec.errorCategory ?? "?"}): ${(exec.stderr || "").slice(0, 300)}`);
+      throw new Error(`planner CLI ${exec.status} (${category}): ${(exec.stderr || "").slice(0, 300)}`);
     };
 
     if (provider === "codex") {

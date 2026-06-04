@@ -53,9 +53,9 @@ const PLANNER_PROVIDERS = new Set(["claude", "codex"]);
 
 function defaultDeps(req: DebateRequest, opts: WatchOptions, streamDir: string, allow: Allowlist): DebateDeps {
   const primary = opts.plannerProvider ?? "claude";
-  // Planner provider order: primary first, then the rate-limit fallback order
-  // intersected with the allowlist — so a rate-limited planner can swap engines
-  // just like a worker does. Disabling fallback leaves only the primary.
+  // Planner provider order: primary first, then the fallback order intersected
+  // with the allowlist — so a failed planner can swap engines just like a worker
+  // does. Disabling fallback leaves only the primary.
   const providers = [primary];
   if (allow.fallback.enabled) {
     const order = allow.fallback.order.length ? allow.fallback.order : allow.providers;

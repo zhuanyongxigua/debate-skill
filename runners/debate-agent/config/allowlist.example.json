@@ -31,13 +31,13 @@
     "max_parallel_per_provider": 2
   },
 
-  "_rate_limit_note": "When a worker (or the planner) hits a usage/rate limit, the daemon runs the SAME task on another available provider (same task, swap engine). A failed child is classified rate_limited when its stderr/stdout matches one of these case-insensitive signatures. These DEFAULTS are a starting point — verify them against your real claude/codex limit output and tune here; no code change needed. Listed providers override the built-in defaults; set a provider's list to [] to turn detection OFF for it. Omit this whole block to use the built-in defaults.",
+  "_rate_limit_note": "A failed child is classified rate_limited when its stderr/stdout matches one of these case-insensitive signatures. This is only a label; provider fallback can also happen for other failed launches such as nonzero_exit, timeout, missing_cli, or exception. These DEFAULTS are a starting point — verify them against your real claude/codex limit output and tune here; no code change needed. Listed providers override the built-in defaults; set a provider's list to [] to turn detection OFF for it. Omit this whole block to use the built-in defaults.",
   "rate_limit_patterns": {
     "claude": ["rate[ -]?limit", "\\b429\\b", "too many requests", "quota", "usage limit", "overloaded"],
     "codex": ["rate[ -]?limit", "\\b429\\b", "too many requests", "quota", "usage limit", "overloaded"]
   },
 
-  "_fallback_note": "Rate-limit fallback policy. enabled=false leaves a rate_limited launch to degrade (the prior behavior). order is the preference for picking a substitute provider; it is filtered to allowlisted providers and defaults to `providers`. Every entry must be one of `providers`.",
+  "_fallback_note": "Provider failure fallback policy. When a worker or planner cannot launch or fails to produce output, the daemon runs the SAME task on another available provider (same task, swap engine). enabled=false leaves failed launches to degrade/error without swapping. order is the preference for picking a substitute provider; it is filtered to allowlisted providers and defaults to `providers`. Every entry must be one of `providers`.",
   "fallback": {
     "enabled": true,
     "order": ["claude", "codex"]

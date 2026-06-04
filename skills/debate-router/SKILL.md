@@ -467,8 +467,8 @@ the parent forces the turn to end. If you stop for a non-response reason, read
 **Step 3 — Present the result.** `responses/<id>.json` is a `debate_result`:
 render `answer_markdown`; if `status` is not `completed`, say so briefly with
 `status_reason`. `trace` is a faithful per-launch record (phase, item, provider,
-status; plus `planned_provider` when a rate-limit swap moved a launch to another
-engine, and `error_category` on a non-completed launch) you may surface if useful.
+status; plus `planned_provider` when the daemon moved a launch to another engine,
+and `error_category` on a non-completed launch) you may surface if useful.
 If the original task had a required output
 format, render the answer in that format here (this is where Mode 2 still owns
 caller-format preservation). Do **not** run the debate yourself or fabricate a
@@ -633,9 +633,12 @@ still needs doing — only the engine changed. Build the alternate spec yourself
 in order, swapping only on `rate_limited` and branching on status alone — never on
 a child's text. Drop a provider-specific `effort` when you switch (claude `max`
 is invalid for codex). Only when **every** allowed engine for that launch is
-rate-limited do you record it as degraded. In Mode 2 the daemon does all of this
-for you; you just present the result, and the `trace` shows the engine that
-actually ran (which may differ from a plan's suggested provider).
+rate-limited do you record it as degraded. In Mode 2 the daemon's fallback is
+broader: it may swap engines for any provider launch/completion failure (for example
+`rate_limited`, `nonzero_exit`, `timeout`, `missing_cli`, or `exception`) while
+leaving `rejected` validation failures unswapped. You just present the result, and
+the `trace` shows the engine that actually ran (which may differ from a plan's
+suggested provider).
 
 Even within phases that should fan out, parallelism is a default, not an
 absolute. Skip it when only one CLI is selected for that phase, when the

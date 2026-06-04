@@ -10,6 +10,7 @@
 // `error`/`degraded` so the caller never hangs.
 
 import { Allowlist, VALID_PHASES } from "./allowlist";
+import { isFallbackEligible } from "./fallback";
 import { DebateRequest } from "./mailbox";
 import { Plan, substitute } from "./plan";
 import { PlanFailed, PlannerFn, planWithRetry } from "./planner";
@@ -43,8 +44,8 @@ export interface TraceRow {
   item: string;
   provider: string; // the engine that actually ran (may differ from planned_provider after a swap)
   status: string;
-  // The provider the plan assigned. Present (and != provider) when a rate-limit
-  // swap moved this launch to another engine, so a swap is visible in the
+  // The provider the plan assigned. Present (and != provider) when a provider
+  // fallback moved this launch to another engine, so a swap is visible in the
   // response — not only in the live log.
   planned_provider?: string;
   // The final launch's error_category when it did not complete (e.g. "rate_limited"
@@ -104,9 +105,9 @@ function errorResponse(id: string, message: string): DebateResponse {
   };
 }
 
-/** Next provider to try for a rate_limited launch: the first entry in the
- * fallback order that is allowlisted and not yet tried for this launch. Returns
- * null when every available provider has been tried (the launch then degrades). */
+/** Next provider to try for a failed launch: the first entry in the fallback
+ * order that is allowlisted and not yet tried for this launch. Returns null
+ * when every available provider has been tried (the launch then degrades). */
 function pickFallbackProvider(allow: Allowlist, tried: Set<string>): string | null {
   const order = allow.fallback.order.length ? allow.fallback.order : allow.providers;
   for (const p of order) {
@@ -115,7 +116,7 @@ function pickFallbackProvider(allow: Allowlist, tried: Set<string>): string | nu
   return null;
 }
 
-// Read-only capability rank, for a downgrade warning when a rate-limit swap moves
+// Read-only capability rank, for a downgrade warning when provider fallback moves
 // a task to a weaker engine. codex's OS sandbox can run ANY read-only command
 // (shell/build/tests); claude/copilot are limited to read tools + read-only git.
 // We cannot know whether a given task actually needs shell (the plan carries no
@@ -204,8 +205,8 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
     log?.(`phase ${pi + 1}/${plan.phases.length} ${phase.name}: ${phase.launches.map((l) => `${l.id} ${l.provider}`).join(", ")}`);
 
     // The same substituted prompt is reused verbatim if we have to swap engines
-    // on a rate limit, so compute it once per launch (mechanical text fill-in;
-    // no LLM runs here).
+    // after a CLI failure, so compute it once per launch (mechanical text
+    // fill-in; no LLM runs here).
     const substituted = phase.launches.map((launch) => substitute(launch.prompt, outputs));
 
     // Build a PreparedItem for one launch on a chosen provider. The initial run
@@ -243,22 +244,23 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
         allow.maxParallel,
       );
 
-      // Rate-limit fallback: re-run any `rate_limited` launch on the next
-      // available provider — same task, swap engine. Bounded by the provider
-      // count; we branch only on error_category (execution status), never on a
-      // worker's text. A launch with no untried provider left degrades as before.
+      // Provider fallback: re-run any CLI launch/completion failure on the next
+      // available provider — same task, swap engine. Bounded by the provider count; we
+      // branch only on execution status/category, never on a worker's text. A
+      // rejected launch is a policy/validation failure, so it is not swapped. A
+      // launch with no untried provider left degrades as before.
       if (allow.fallback.enabled) {
         const tried = phase.launches.map((l) => new Set<string>([l.provider]));
         for (let round = 0; round < allow.providers.length; round++) {
           const retry: Array<{ idx: number; provider: string }> = [];
           results.forEach((r, i) => {
-            if (r.error_category !== "rate_limited") return;
+            if (!isFallbackEligible(r.status as string, r.error_category as string | null | undefined)) return;
             const next = pickFallbackProvider(allow, tried[i]!);
             if (next !== null) retry.push({ idx: i, provider: next });
           });
           if (retry.length === 0) break;
           log?.(
-            `  rate-limit fallback: ${retry
+            `  provider fallback: ${retry
               .map(({ idx, provider }) => `${phase.launches[idx]!.id} ${phase.launches[idx]!.provider} → ${provider}`)
               .join(", ")}`,
           );
@@ -307,7 +309,7 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
       const detail = r.status === "completed" ? "" : r.reject_reason ? ` (${r.reject_reason})` : errorCategory ? ` (${errorCategory})` : "";
       log?.(`  ${launch.id} ${provider} ${r.status}${detail}`);
       const row: TraceRow = { phase: phase.name, item: launch.id, provider, status: r.status };
-      // Surface a rate-limit swap and a degrade reason in the response itself,
+      // Surface a provider swap and a degrade reason in the response itself,
       // not only in the live log.
       if (provider !== plannedProvider) row.planned_provider = plannedProvider;
       if (r.status !== "completed" && errorCategory) row.error_category = errorCategory;

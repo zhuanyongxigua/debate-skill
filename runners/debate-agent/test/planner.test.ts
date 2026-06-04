@@ -1,6 +1,6 @@
 // The claude structured-output extractor (reads the plan out of the
-// `--output-format json` envelope), plus the CLI planner's provider rotation on a
-// rate limit — driven by an injected `exec`, so no real CLI runs.
+// `--output-format json` envelope), plus the CLI planner's provider rotation on
+// provider failures — driven by an injected `exec`, so no real CLI runs.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -27,7 +27,7 @@ test("falls back to raw stdout when the output is not an envelope", () => {
   assert.equal(extractClaudeStructuredOutput("this is not a valid plan"), "this is not a valid plan");
 });
 
-// --- CLI planner provider rotation on a rate limit (injected exec) ----------
+// --- CLI planner provider rotation on provider failure (injected exec) -------
 
 const VALID_PLAN = JSON.stringify({
   phases: [{ name: "proposal_generation", launches: [{ id: "P1", provider: "codex", prompt: "do the task" }] }],
@@ -35,6 +35,15 @@ const VALID_PLAN = JSON.stringify({
 });
 const RL_PATTERNS = { claude: compilePatterns(["usage limit", "\\b429\\b"]), codex: compilePatterns(["usage limit", "\\b429\\b"]) };
 const RL: ExecResult = { status: "error", errorCategory: "nonzero_exit", returncode: 1, elapsedSeconds: 0, stdout: "", stderr: "usage limit reached (429)" };
+const MISSING_CLI: ExecResult = { status: "error", errorCategory: "missing_cli", returncode: null, elapsedSeconds: 0, stdout: "", stderr: "" };
+const CERT_ERROR: ExecResult = {
+  status: "error",
+  errorCategory: "nonzero_exit",
+  returncode: 1,
+  elapsedSeconds: 0,
+  stdout: "",
+  stderr: "API Error: Unable to connect to API (UNKNOWN_CERTIFICATE_VERIFICATION_ERROR)",
+};
 const ok = (stdout: string): ExecResult => ({ status: "completed", errorCategory: null, returncode: 0, elapsedSeconds: 0, stdout, stderr: "" });
 
 function plannerReq(repo: string): DebateRequest {
@@ -59,17 +68,53 @@ test("planner rotates to the next provider when the primary is rate-limited", as
   }
 });
 
-test("all planner providers rate-limited fails fast — no wasted attempts", async () => {
+test("planner rotates to the next provider when the primary fails to connect", async () => {
+  const root = makeTempDir();
+  try {
+    const allow = makeAllowlist(root);
+    const seen: string[] = [];
+    const exec = async (launch: ChildLaunch): Promise<ExecResult> => {
+      seen.push(launch.provider);
+      return launch.provider === "claude" ? CERT_ERROR : ok(VALID_PLAN);
+    };
+    const planner = makeCliPlanner(root, { providers: ["claude", "codex"], rateLimitPatterns: RL_PATTERNS, exec });
+    const plan = await planWithRetry(plannerReq(root), allow, planner, 4);
+    assert.deepEqual(seen, ["claude", "codex"]); // cert/API failure → rotate to codex
+    assert.equal(plan.answerItem, "P1");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("planner rotates to the next provider when the primary CLI cannot launch", async () => {
+  const root = makeTempDir();
+  try {
+    const allow = makeAllowlist(root);
+    const seen: string[] = [];
+    const exec = async (launch: ChildLaunch): Promise<ExecResult> => {
+      seen.push(launch.provider);
+      return launch.provider === "claude" ? MISSING_CLI : ok(VALID_PLAN);
+    };
+    const planner = makeCliPlanner(root, { providers: ["claude", "codex"], rateLimitPatterns: RL_PATTERNS, exec });
+    const plan = await planWithRetry(plannerReq(root), allow, planner, 4);
+    assert.deepEqual(seen, ["claude", "codex"]); // missing binary/config → rotate to codex
+    assert.equal(plan.answerItem, "P1");
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("all planner providers unavailable fails fast — no wasted attempts", async () => {
   const root = makeTempDir();
   try {
     const allow = makeAllowlist(root);
     let execCalls = 0;
     const exec = async (_launch: ChildLaunch): Promise<ExecResult> => {
       execCalls++;
-      return RL;
+      return CERT_ERROR;
     };
     const planner = makeCliPlanner(root, { providers: ["claude", "codex"], rateLimitPatterns: RL_PATTERNS, exec });
-    await assert.rejects(() => planWithRetry(plannerReq(root), allow, planner, 4), /rate-limited/);
+    await assert.rejects(() => planWithRetry(plannerReq(root), allow, planner, 4), /unavailable/);
     assert.equal(execCalls, 2, "should call exec once per provider, then stop (not spin to maxAttempts=4)");
   } finally {
     cleanup(root);

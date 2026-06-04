@@ -47,14 +47,18 @@ plus one optional execution adapter:
    branches only on execution **status**, never by parsing a worker's text content.
    A per-step planner is the retired brain loop (and its JSON-format failures) —
    don't. Keep generic execution primitives (`run`, `run-batch`); don't add a
-   `proposal_attack` / `multi_path` / `provider: auto` API. (d) **Rate-limit
-   fallback is the daemon's, not the primitives'.** When a worker or the planner is
-   `rate_limited`, the daemon re-runs the *same task* on the next available engine
-   — but that swap lives in `debate.ts` / `planner.ts` and branches **only on
-   `error_category`** (execution status, per (c)), never on a worker's text. The
-   primitives only *label* a failure `rate_limited` (no retry, no rebalance); the
-   request/batch schema gains **no** field and there is still no `provider: auto`.
-   Detection signatures and the fallback order are allowlist config, not code.
+   `proposal_attack` / `multi_path` / `provider: auto` API. (d) **Provider
+   failure fallback is the daemon's, not the primitives'.** When a worker or the
+   planner cannot launch or fails to produce output (for example `rate_limited`,
+   `nonzero_exit`, `timeout`, `missing_cli`, or `exception`), the daemon re-runs
+   the *same task* on the next available engine — but that swap lives in
+   `debate.ts` / `planner.ts` and branches **only on execution status/category**,
+   never on a worker's text. Rejections (policy/schema validation failures) are
+   not swapped. The primitives still do not retry or rebalance; they only label
+   failures, including the refinement `rate_limited`. The request/batch schema
+   gains **no** field and there is still no `provider: auto`. Detection signatures
+   for the `rate_limited` label and the fallback order are allowlist config, not
+   code.
    (e) **Structured-output calls are named + resumable.** When a call needs the
    CLI's native JSON-Schema structured output, an invalid result must be **fixed,
    not regenerated** — so the call runs in a **named, resumable session**: the
@@ -66,8 +70,8 @@ plus one optional execution adapter:
    claude session state between plan attempts (a deliberate exception to the
    otherwise-stateless children). `codex exec` cannot pin a session id for a
    non-interactive structured run, so codex is **not** resumed — it regenerates
-   each attempt (asymmetry on purpose), and a resume that fails for any
-   non-rate-limit reason drops the session so the next attempt regenerates fresh.
+   each attempt (asymmetry on purpose), and a resume that fails drops the session
+   so the next attempt regenerates fresh.
    Any future structured-output call MUST follow this rule (named + resumable, with
    a regenerate fallback when the CLI cannot resume).
    (f) **`fast` requests skip the planner — a deliberate exception to (a)/(c) and
