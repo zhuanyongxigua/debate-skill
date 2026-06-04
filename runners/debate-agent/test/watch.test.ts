@@ -76,14 +76,26 @@ test("validateDebateRequest accepts a good request and defaults", () => {
   assert.equal(r.repo, realpathSync(repo));
   assert.equal(r.language, null);
   assert.equal(r.fast, false);
+  assert.equal(r.plannerProvider, null);
 });
 
-test("validateDebateRequest accepts language + fast, rejects bad shapes", () => {
-  const r = validateDebateRequest({ schema_version: 1, id: "r1", kind: "debate_request", prompt: "x", repo: realpathSync(repo), language: "中文", fast: true }, allow);
+test("validateDebateRequest accepts language + fast + planner_provider, rejects bad shapes", () => {
+  const r = validateDebateRequest(
+    { schema_version: 1, id: "r1", kind: "debate_request", prompt: "x", repo: realpathSync(repo), language: "中文", fast: false, planner_provider: "codex" },
+    allow,
+  );
   assert.equal(r.language, "中文");
-  assert.equal(r.fast, true);
+  assert.equal(r.fast, false);
+  assert.equal(r.plannerProvider, "codex");
   const base = { schema_version: 1, id: "r1", kind: "debate_request", prompt: "x", repo: realpathSync(repo) };
   assert.throws(() => validateDebateRequest({ ...base, fast: "yes" }, allow), /fast must be a boolean/);
+  assert.throws(() => validateDebateRequest({ ...base, planner_provider: 1 }, allow), /planner_provider must be a string/);
+  assert.throws(() => validateDebateRequest({ ...base, planner_provider: "copilot" }, allow), /planner_provider must be one of/);
+  assert.throws(
+    () => validateDebateRequest({ ...base, planner_provider: "codex" }, makeAllowlist(repo, { providers: ["claude"] })),
+    /planner_provider codex is not in the allowlist/,
+  );
+  assert.throws(() => validateDebateRequest({ ...base, fast: true, planner_provider: "codex" }, allow), /planner_provider requires fast=false/);
   assert.throws(() => validateDebateRequest({ ...base, kind: "run_batch_request" }, allow), /kind must be/);
   assert.throws(() => validateDebateRequest({ ...base, oops: 1 }, allow), MailboxRequestRejected);
   assert.throws(() => validateDebateRequest({ ...base, repo: "/etc" }, allow), MailboxRequestRejected);

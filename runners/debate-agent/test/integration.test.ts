@@ -473,6 +473,94 @@ test("watch daemon: a failed planner AND worker fall back to the other engine", 
   }
 });
 
+test("watch daemon: request planner_provider overrides the daemon default planner", async () => {
+  const ctx = setup();
+  const claudeArgs = join(ctx.root, "claude_args");
+  const codexArgs = join(ctx.root, "codex_args");
+  const plan =
+    '{"phases":[{"name":"proposal_generation","launches":[{"id":"P1","provider":"claude","prompt":"worker prompt"}]}],"answer_item":"P1"}';
+  makeStub(
+    ctx.binDir,
+    "claude",
+    "#!/usr/bin/env bash\n" +
+      `echo "$@" >> ${JSON.stringify(claudeArgs)}\n` +
+      'if printf "%s" "$*" | grep -q -- "--json-schema"; then\n' +
+      "  printf 'claude should not be the planner for this request\\n' >&2\n" +
+      "  exit 9\n" +
+      "fi\n" +
+      "input=$(cat)\n" +
+      "printf 'CLAUDE_WORKER[%s]\\n' \"$input\"\n",
+  );
+  makeStub(
+    ctx.binDir,
+    "codex",
+    "#!/usr/bin/env bash\n" +
+      `echo "$@" >> ${JSON.stringify(codexArgs)}\n` +
+      "input=$(cat)\n" +
+      'out=""\n' +
+      'prev=""\n' +
+      'for arg in "$@"; do\n' +
+      '  if [ "$prev" = "-o" ]; then out="$arg"; fi\n' +
+      '  prev="$arg"\n' +
+      "done\n" +
+      'if printf "%s" "$input" | grep -q "You are the PLANNER"; then\n' +
+      `  [ -n "$out" ] && printf '%s\\n' ${JSON.stringify(plan)} > "$out"\n` +
+      `  printf '%s\\n' ${JSON.stringify(plan)}\n` +
+      "else\n" +
+      "  printf 'CODEX_WORKER[%s]\\n' \"$input\"\n" +
+      "fi\n",
+  );
+  const mailbox = join(ctx.root, "mailbox");
+  const env = cliEnv(ctx, { DEBATE_AGENT_MAILBOX: mailbox });
+  let daemon: ReturnType<typeof spawn> | undefined;
+  try {
+    let stderr = "";
+    // Start with a claude default, then override it per request with planner_provider.
+    daemon = spawn(process.execPath, [BIN, "--config", ctx.cfg, "watch", "--planner", "claude"], { env, detached: true });
+    daemon.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
+    daemon.on("error", (e) => (stderr += `spawn error: ${String(e)}`));
+    await waitFor(() => stderr.includes("polling every"), 8000, `daemon banner (stderr so far: ${stderr})`);
+
+    const id = "20260604-itest-request-planner-provider";
+    writeFileSync(
+      join(mailbox, "requests", `${id}.json`),
+      JSON.stringify({
+        schema_version: 1,
+        id,
+        kind: "debate_request",
+        prompt: "decide X",
+        repo: realpathSync(ctx.repo),
+        fast: false,
+        planner_provider: "codex",
+      }),
+    );
+
+    const respPath = join(mailbox, "responses", `${id}.json`);
+    await waitFor(() => existsSync(respPath), 15000, `response ${id}.json (stderr: ${stderr})`);
+
+    const resp = JSON.parse(readFileSync(respPath, "utf8"));
+    assert.equal(resp.status, "completed", JSON.stringify(resp));
+    assert.match(resp.answer_markdown, /CLAUDE_WORKER\[worker prompt\]/);
+    assert.match(readFileSync(codexArgs, "utf8"), /--output-schema/, "codex should be the request-selected planner");
+    assert.ok(!readFileSync(claudeArgs, "utf8").includes("--json-schema"), "claude should only run as worker, not planner");
+    const archived = JSON.parse(readFileSync(join(mailbox, "archive", `${id}.json`), "utf8"));
+    assert.equal(archived.planner_provider, "codex");
+  } finally {
+    if (daemon?.pid !== undefined) {
+      try {
+        process.kill(-daemon.pid, "SIGKILL");
+      } catch {
+        try {
+          daemon.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+    cleanup(ctx.root);
+  }
+});
+
 test("watch daemon: a fast request skips the planner and runs the fixed 2-phase shape", async () => {
   const ctx = setup();
   // No planner runs in fast mode: the daemon builds a fixed 2-phase plan in code.

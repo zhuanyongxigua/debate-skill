@@ -93,8 +93,9 @@ plus one optional execution adapter:
    ever silently widens. Unknown request/batch fields are rejected. Default
    `capability` is `read_only_review`. Preserve these when editing.
 5. **Static argv only.** No request value is ever spliced into a child `argv` as
-   a flag; the prompt goes on stdin. Capability/profile select among fixed safe
-   templates. Keep it that way.
+   a flag; the prompt goes on stdin. Capability/profile and the optional
+   `debate_request.planner_provider` select among fixed safe templates. Keep it
+   that way.
 6. **Two audit trails, linked by id only.** Protocol audit
    (`~/.debate-router/<run-id>/`) is the skill's; execution audit
    (`~/.debate-agent/<run-id|batch-id>/`) is the runner's. The runner never

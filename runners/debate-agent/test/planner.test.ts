@@ -47,7 +47,7 @@ const CERT_ERROR: ExecResult = {
 const ok = (stdout: string): ExecResult => ({ status: "completed", errorCategory: null, returncode: 0, elapsedSeconds: 0, stdout, stderr: "" });
 
 function plannerReq(repo: string): DebateRequest {
-  return { id: "d1", prompt: "decide", repo, repoRoot: repo, language: null, fast: false };
+  return { id: "d1", prompt: "decide", repo, repoRoot: repo, language: null, fast: false, plannerProvider: null };
 }
 
 test("planner rotates to the next provider when the primary is rate-limited", async () => {

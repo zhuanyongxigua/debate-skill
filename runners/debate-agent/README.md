@@ -355,6 +355,7 @@ prompts; the daemon produces those.
 | `repo` | string | absolute; `realpath` must resolve under an allowed repo root |
 | `language` | string | optional; the human's language (workers + answer use it) |
 | `fast` | bool | optional. **The skill always writes it `true`** (lean flow: skip the planner and run a fixed lean 2-phase shape, 2 parallel reviewers → 1 arbiter); `false` runs the full planner debate (use only on an explicit serious/thorough request). **Daemon default when the field is omitted is `false`** (conservative full-planner path — a hand-crafted request must set `true` for the lean path). Does NOT control turbo (codex always turbo) |
+| `planner_provider` | string | optional, only with `fast: false`. `"claude"` or `"codex"`; must be in allowlist `providers`. Overrides the daemon's `--planner` default for this one request. |
 
 ### How the daemon runs a debate
 
@@ -369,8 +370,9 @@ CLI it spawns (the planner and every worker) is **read-only**.
 > full `fast: false` debate.
 
 1. **Plan (one-shot, with retry).** The daemon spawns a **planner** CLI
-   (`--planner claude|codex`, default `claude`) that loads the `debate-router`
-   skill's STRATEGY and designs this debate. The daemon constrains the output with
+   (`--planner claude|codex`, default `claude`; a request may override it with
+   `planner_provider` when `fast: false`) that loads the `debate-router` skill's
+   STRATEGY and designs this debate. The daemon constrains the output with
    the CLI's **native JSON-Schema** structured output as a first line (claude
    `--output-format json --json-schema`, reading the result from the envelope's
    `structured_output`; codex `--output-schema <file> -o <file>`, reading the

@@ -27,7 +27,7 @@ beforeEach(() => {
 afterEach(() => cleanup(root));
 
 function req(overrides: Partial<DebateRequest> = {}): DebateRequest {
-  return { id: "d1", prompt: "debate this", repo, repoRoot: repo, language: null, fast: false, ...overrides };
+  return { id: "d1", prompt: "debate this", repo, repoRoot: repo, language: null, fast: false, plannerProvider: null, ...overrides };
 }
 
 /** Stub workers: capture the prepared items and complete each. */

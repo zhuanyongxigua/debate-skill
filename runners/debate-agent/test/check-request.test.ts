@@ -40,8 +40,17 @@ function runChecker(obj: unknown): { status: number; stderr: string } {
 }
 
 test("the skill checker accepts a valid request and rejects the stale output_contract field", () => {
-  const good = { schema_version: 1, id: "20260601-120000-x", kind: "debate_request", prompt: "debate this", repo: "/abs/repo", fast: false };
+  const good = {
+    schema_version: 1,
+    id: "20260601-120000-x",
+    kind: "debate_request",
+    prompt: "debate this",
+    repo: "/abs/repo",
+    fast: false,
+    planner_provider: "codex",
+  };
   assert.equal(runChecker(good).status, 0);
+  assert.equal(runChecker({ ...good, fast: true }).status, 1);
   // the exact recurring mistake: a stale top-level output_contract field
   const bad = { ...good, output_contract: { format: "default" } };
   const r = runChecker(bad);

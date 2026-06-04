@@ -18,6 +18,10 @@ import { DEFAULT_RATE_LIMIT_PATTERNS, RateLimitPatternError, compilePatterns } f
 // so an operator must add it to `providers` explicitly to enable it.
 export const SUPPORTED_PROVIDERS = ["claude", "codex", "copilot"] as const;
 export type Provider = (typeof SUPPORTED_PROVIDERS)[number];
+// Providers that can produce the daemon's native JSON-Schema structured plan.
+// Workers may use any supported provider; the planner is limited to this set.
+export const PLANNER_PROVIDERS = ["claude", "codex"] as const;
+export type PlannerProvider = (typeof PLANNER_PROVIDERS)[number];
 
 // Only Codex has local profiles the runner can honor (claude strips
 // CLAUDE_CONFIG_DIR; copilot has no profile concept here).

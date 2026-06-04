@@ -153,19 +153,24 @@ export async function main(argv: string[]): Promise<number> {
     if (args.command === "watch") {
       const configPath = args.config ?? defaultConfigPath();
       const allow = loadAllowlist(configPath);
-      const planner = args.planner ?? "claude";
-      if (planner !== "claude" && planner !== "codex") {
-        process.stderr.write(`--planner must be claude or codex, got ${planner}\n`);
-        return 2;
-      }
-      // Fail closed: the planner is itself a launched CLI, so it must be allowed by
-      // the same allowlist as the workers — otherwise it bypasses the boundary.
-      if (!allow.providers.includes(planner)) {
-        process.stderr.write(
-          `--planner ${planner} is not in the allowlist providers (${allow.providers.join(", ")}); ` +
-            `add it to providers or pick an allowed planner\n`,
-        );
-        return 2;
+      let planner: string | undefined;
+      if (args.planner !== undefined) {
+        planner = args.planner;
+        if (planner !== "claude" && planner !== "codex") {
+          process.stderr.write(`--planner must be claude or codex, got ${planner}\n`);
+          return 2;
+        }
+        // Fail closed: an explicit daemon default planner must be allowed by the
+        // same allowlist as the workers. If --planner is omitted, each request may
+        // supply planner_provider; requests without it still default to claude and
+        // are checked per request.
+        if (!allow.providers.includes(planner)) {
+          process.stderr.write(
+            `--planner ${planner} is not in the allowlist providers (${allow.providers.join(", ")}); ` +
+              `add it to providers or pick an allowed planner\n`,
+          );
+          return 2;
+        }
       }
       // Re-read the allowlist per request so config edits apply without a restart.
       // A bad/half-saved edit falls back to the last-good config (never throws).

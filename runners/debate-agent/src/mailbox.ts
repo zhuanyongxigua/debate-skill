@@ -6,7 +6,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, 
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
-import { Allowlist, repoRootMatch } from "./allowlist";
+import { Allowlist, PLANNER_PROVIDERS, repoRootMatch } from "./allowlist";
 import { expandUser, realpathLenient } from "./paths";
 
 const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,128}$/;
@@ -149,13 +149,16 @@ export interface DebateRequest {
   // shape (see debate.ts buildFastPlan); when false it runs the full planner debate.
   // It does NOT control codex/claude turbo (codex always runs turbo regardless).
   fast: boolean;
+  // Optional per-request primary planner provider for the full (fast=false) flow.
+  // Validated against allowlist + PLANNER_PROVIDERS; ignored nowhere.
+  plannerProvider: string | null;
 }
 
 // The exact accepted fields. Exported so the debate-router skill's request-file
 // checker (skills/debate-router/scripts/check-request.mjs) can be pinned to this
 // set by a test — if this changes, that test fails until the skill checker +
 // SKILL.md example are updated too (see AGENTS.md).
-export const ALLOWED_DEBATE_FIELDS = ["schema_version", "id", "kind", "prompt", "repo", "language", "fast"] as const;
+export const ALLOWED_DEBATE_FIELDS = ["schema_version", "id", "kind", "prompt", "repo", "language", "fast", "planner_provider"] as const;
 const ALLOWED_DEBATE_FIELD_SET = new Set<string>(ALLOWED_DEBATE_FIELDS);
 
 /** Parse any mailbox request file into a raw object (kind-agnostic). */
@@ -207,5 +210,15 @@ export function validateDebateRequest(raw: Record<string, unknown>, allow: Allow
     fast = raw.fast as boolean;
   }
 
-  return { id: id as string, prompt: prompt as string, repo: resolved, repoRoot: root as string, language, fast };
+  let plannerProvider: string | null = null;
+  if (raw.planner_provider !== undefined && raw.planner_provider !== null) {
+    req(typeof raw.planner_provider === "string", "planner_provider must be a string");
+    const provider = raw.planner_provider as string;
+    req((PLANNER_PROVIDERS as readonly string[]).includes(provider), `planner_provider must be one of ${JSON.stringify([...PLANNER_PROVIDERS])}`);
+    req(allow.providers.includes(provider), `planner_provider ${provider} is not in the allowlist providers (${allow.providers.join(", ")})`);
+    plannerProvider = provider;
+  }
+  req(!(fast && plannerProvider !== null), "planner_provider requires fast=false because fast requests skip the planner");
+
+  return { id: id as string, prompt: prompt as string, repo: resolved, repoRoot: root as string, language, fast, plannerProvider };
 }

@@ -11,7 +11,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { Allowlist } from "./allowlist";
+import { Allowlist, PLANNER_PROVIDERS } from "./allowlist";
 import { DebateDeps, DebateResponse, runDebate } from "./debate";
 import {
   DebateRequest,
@@ -45,14 +45,23 @@ export interface WatchOptions {
   makeDeps?: (req: DebateRequest) => DebateDeps;
 }
 
-// Only claude and codex support the native JSON-Schema structured output the
+// Only PLANNER_PROVIDERS support the native JSON-Schema structured output the
 // planner relies on (claude --json-schema, codex --output-schema). copilot has no
 // equivalent, so the planner must never rotate onto it — that would silently drop
 // the schema constraint. Workers are unaffected (they can use any provider).
-const PLANNER_PROVIDERS = new Set(["claude", "codex"]);
+const PLANNER_PROVIDER_SET = new Set<string>(PLANNER_PROVIDERS);
+
+function validatePlannerProvider(provider: string, allow: Allowlist): void {
+  if (!allow.providers.includes(provider)) {
+    throw new Error(`planner provider ${provider} is not in the allowlist providers (${allow.providers.join(", ")})`);
+  }
+  if (!PLANNER_PROVIDER_SET.has(provider)) {
+    throw new Error(`planner provider ${provider} cannot produce a structured plan (supported: ${[...PLANNER_PROVIDERS].join(", ")})`);
+  }
+}
 
 function defaultDeps(req: DebateRequest, opts: WatchOptions, streamDir: string, allow: Allowlist): DebateDeps {
-  const primary = opts.plannerProvider ?? "claude";
+  const primary = req.plannerProvider ?? opts.plannerProvider ?? "claude";
   // Planner provider order: primary first, then the fallback order intersected
   // with the allowlist — so a failed planner can swap engines just like a worker
   // does. Disabling fallback leaves only the primary.
@@ -60,7 +69,7 @@ function defaultDeps(req: DebateRequest, opts: WatchOptions, streamDir: string, 
   if (allow.fallback.enabled) {
     const order = allow.fallback.order.length ? allow.fallback.order : allow.providers;
     for (const p of order) {
-      if (p !== primary && allow.providers.includes(p) && PLANNER_PROVIDERS.has(p) && !providers.includes(p)) {
+      if (p !== primary && allow.providers.includes(p) && PLANNER_PROVIDER_SET.has(p) && !providers.includes(p)) {
         providers.push(p);
       }
     }
@@ -118,14 +127,11 @@ export async function processNewRequests(
       // The file name is the id callers poll by; a payload id that disagrees
       // would write the response under a name the caller never watches.
       if (req.id !== id) throw new MailboxRequestRejected(`request id "${req.id}" does not match file name "${id}"`);
-      // The planner is a launched CLI too: re-check it against the current allowlist
-      // AND that it can actually plan (only claude/codex have native JSON-Schema).
-      const plannerProvider = opts.plannerProvider ?? "claude";
-      if (!opts.makeDeps && !allowNow.providers.includes(plannerProvider)) {
-        throw new Error(`planner provider ${plannerProvider} is not in the current allowlist providers (${allowNow.providers.join(", ")})`);
-      }
-      if (!opts.makeDeps && !PLANNER_PROVIDERS.has(plannerProvider)) {
-        throw new Error(`planner provider ${plannerProvider} cannot produce a structured plan (supported: ${[...PLANNER_PROVIDERS].join(", ")})`);
+      // The planner is a launched CLI too: re-check the request-selected provider
+      // against the current allowlist. Fast requests skip the planner entirely.
+      const plannerProvider = req.plannerProvider ?? opts.plannerProvider ?? "claude";
+      if (!opts.makeDeps && !req.fast) {
+        validatePlannerProvider(plannerProvider, allowNow);
       }
       const streamDir = requestStreamDir(mb, id);
       const deps = opts.makeDeps ? opts.makeDeps(req) : defaultDeps(req, opts, streamDir, allowNow);
@@ -175,20 +181,14 @@ export async function watchLoop(allow: Allowlist, opts: WatchOptions = {}): Prom
   // allowlist AND be able to produce a structured plan (claude/codex only;
   // skipped when makeDeps injects a scripted planner, e.g. tests).
   if (!opts.makeDeps) {
-    const plannerProvider = opts.plannerProvider ?? "claude";
-    if (!allow.providers.includes(plannerProvider)) {
-      throw new Error(`planner provider ${plannerProvider} is not in the allowlist providers (${allow.providers.join(", ")})`);
-    }
-    if (!PLANNER_PROVIDERS.has(plannerProvider)) {
-      throw new Error(`planner provider ${plannerProvider} cannot produce a structured plan (supported: ${[...PLANNER_PROVIDERS].join(", ")})`);
-    }
+    if (opts.plannerProvider !== undefined) validatePlannerProvider(opts.plannerProvider, allow);
   }
   const mb = openMailbox();
   const recovered = recoverOrphans(mb);
   const ignore = snapshotRequestIds(mb);
   const interval = opts.intervalMs ?? 1000;
   process.stderr.write(
-    `debate-agent watch: mailbox ${mb.root}; planner=${opts.plannerProvider ?? "claude"}; ` +
+    `debate-agent watch: mailbox ${mb.root}; planner=${opts.plannerProvider ?? "claude"} (request planner_provider may override); ` +
       `recovered ${recovered.length} orphaned request(s); ignoring ${ignore.size} existing request(s); polling every ${interval}ms\n`,
   );
   for (;;) {

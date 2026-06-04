@@ -432,11 +432,16 @@ Pick a unique `<id>` (`YYYYMMDD-HHMMSS-slug`).
   cross-review → arbitration for a substantial task; it may still choose a leaner
   shape for one it judges genuinely simple). `fast` is purely about flow leanness;
   it does **not** control codex/claude turbo (codex always runs turbo).
+- `planner_provider`: optional; use only when the human explicitly asks to choose
+  the planner CLI for a full debate. Set `fast: false` and then set
+  `"planner_provider": "claude"` or `"codex"`. The daemon rejects it with
+  `fast: true`, because fast requests skip the planner entirely.
 
 > **Exactly these fields, nothing else.** The request has ONLY
-> `schema_version, id, kind, prompt, repo, language, fast`. Do **not** add any
-> other field — a common mistake is a stale `output_contract`; the daemon rejects
-> unknown fields. Put any required **output format / template** inside `prompt`.
+> `schema_version, id, kind, prompt, repo, language, fast, planner_provider`. Do
+> **not** add any other field — a common mistake is a stale `output_contract`; the
+> daemon rejects unknown fields. Put any required **output format / template**
+> inside `prompt`.
 
 **Step 1b — Check the request file.** After writing it, validate the format with
 this skill's bundled checker (it catches the field mistake above before the daemon
@@ -447,7 +452,7 @@ node <this-skill-dir>/scripts/check-request.mjs ~/.debate-router/requests/<id>.j
 ```
 
 Exit 0 = good; exit 1 prints the problem — fix and re-check. If your environment
-cannot run `node` here, re-read the file and confirm it has only the seven fields
+cannot run `node` here, re-read the file and confirm it has only the fields
 above; the daemon also rejects a bad request with a clear `error` response.
 
 **Step 2 — Watch for the response.** Poll `~/.debate-router/responses/` for

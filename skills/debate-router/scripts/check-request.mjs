@@ -17,7 +17,7 @@
 
 import { readFileSync } from "node:fs";
 
-const ALLOWED = ["schema_version", "id", "kind", "prompt", "repo", "language", "fast"];
+const ALLOWED = ["schema_version", "id", "kind", "prompt", "repo", "language", "fast", "planner_provider"];
 const REQUIRED = ["schema_version", "id", "kind", "prompt", "repo"];
 const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,128}$/;
 
@@ -51,6 +51,14 @@ function check(raw) {
     errs.push("language must be a string or null");
   }
   if ("fast" in raw && typeof raw.fast !== "boolean") errs.push("fast must be a boolean");
+  if ("planner_provider" in raw) {
+    if (typeof raw.planner_provider !== "string") {
+      errs.push("planner_provider must be a string");
+    } else if (!["claude", "codex"].includes(raw.planner_provider)) {
+      errs.push('planner_provider must be "claude" or "codex"');
+    }
+    if (raw.fast === true) errs.push("planner_provider requires fast=false because fast requests skip the planner");
+  }
   return errs;
 }
 
