@@ -160,10 +160,11 @@ export async function main(argv: string[]): Promise<number> {
           process.stderr.write(`--planner must be claude or codex, got ${planner}\n`);
           return 2;
         }
-        // Fail closed: an explicit daemon default planner must be allowed by the
-        // same allowlist as the workers. If --planner is omitted, each request may
-        // supply planner_provider; requests without it still default to claude and
-        // are checked per request.
+        // Fail closed: keep accepting the legacy daemon planner flag only for a
+        // known structured-output provider. Per request, planner_provider wins;
+        // otherwise the planner defaults to providers[0] (omitted providers
+        // defaults to codex). The daemon flag no longer widens or overrides a
+        // request's provider policy.
         if (!allow.providers.includes(planner)) {
           process.stderr.write(
             `--planner ${planner} is not in the allowlist providers (${allow.providers.join(", ")}); ` +

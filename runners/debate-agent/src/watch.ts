@@ -12,7 +12,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 import { Allowlist, PLANNER_PROVIDERS } from "./allowlist";
-import { DebateDeps, DebateResponse, runDebate } from "./debate";
+import { DebateDeps, DebateResponse, narrowAllowlistForRequest, runDebate } from "./debate";
 import {
   DebateRequest,
   Mailbox,
@@ -33,7 +33,7 @@ import { makeCliPlanner } from "./planner";
 import { RESULT_SCHEMA_VERSION } from "./version";
 
 export interface WatchOptions {
-  plannerProvider?: string; // CLI that produces the plan (default "claude")
+  plannerProvider?: string; // legacy/CLI option; requests choose planner_provider or providers[0]
   baseEnv?: Record<string, string | undefined>;
   intervalMs?: number;
   maxPlanAttempts?: number;
@@ -61,7 +61,7 @@ function validatePlannerProvider(provider: string, allow: Allowlist): void {
 }
 
 function defaultDeps(req: DebateRequest, opts: WatchOptions, streamDir: string, allow: Allowlist): DebateDeps {
-  const primary = req.plannerProvider ?? opts.plannerProvider ?? "claude";
+  const primary = req.plannerProvider ?? req.providers[0]! ?? "codex";
   // Planner provider order: primary first, then the fallback order intersected
   // with the allowlist — so a failed planner can swap engines just like a worker
   // does. Disabling fallback leaves only the primary.
@@ -124,20 +124,21 @@ export async function processNewRequests(
       // edits take effect without a restart; one consistent snapshot per debate.
       const allowNow = opts.reloadAllow ? opts.reloadAllow() : allow;
       const req = validateDebateRequest(loadRequestObject(join(mb.processingDir, `${id}.json`)), allowNow);
+      const allowForReq = narrowAllowlistForRequest(allowNow, req);
       // The file name is the id callers poll by; a payload id that disagrees
       // would write the response under a name the caller never watches.
       if (req.id !== id) throw new MailboxRequestRejected(`request id "${req.id}" does not match file name "${id}"`);
       // The planner is a launched CLI too: re-check the request-selected provider
       // against the current allowlist. Fast requests skip the planner entirely.
-      const plannerProvider = req.plannerProvider ?? opts.plannerProvider ?? "claude";
+      const plannerProvider = req.plannerProvider ?? req.providers[0]! ?? "codex";
       if (!opts.makeDeps && !req.fast) {
-        validatePlannerProvider(plannerProvider, allowNow);
+        validatePlannerProvider(plannerProvider, allowForReq);
       }
       const streamDir = requestStreamDir(mb, id);
-      const deps = opts.makeDeps ? opts.makeDeps(req) : defaultDeps(req, opts, streamDir, allowNow);
+      const deps = opts.makeDeps ? opts.makeDeps(req) : defaultDeps(req, opts, streamDir, allowForReq);
       deps.log = log;
       deps.streamDir = streamDir;
-      response = await runDebate(req, allowNow, deps);
+      response = await runDebate(req, allowForReq, deps);
     } catch (err) {
       log(`error: ${String(err)}`);
       response = errorResponse(id, String(err));
@@ -188,7 +189,8 @@ export async function watchLoop(allow: Allowlist, opts: WatchOptions = {}): Prom
   const ignore = snapshotRequestIds(mb);
   const interval = opts.intervalMs ?? 1000;
   process.stderr.write(
-    `debate-agent watch: mailbox ${mb.root}; planner=${opts.plannerProvider ?? "claude"} (request planner_provider may override); ` +
+    `debate-agent watch: mailbox ${mb.root}; providers default=codex; planner defaults to request providers[0]` +
+      `${opts.plannerProvider ? ` (legacy --planner=${opts.plannerProvider}; request fields decide each planner)` : ""}; ` +
       `recovered ${recovered.length} orphaned request(s); ignoring ${ignore.size} existing request(s); polling every ${interval}ms\n`,
   );
   for (;;) {

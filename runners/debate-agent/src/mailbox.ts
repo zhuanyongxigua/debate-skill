@@ -152,13 +152,18 @@ export interface DebateRequest {
   // Optional per-request primary planner provider for the full (fast=false) flow.
   // Validated against allowlist + PLANNER_PROVIDERS; ignored nowhere.
   plannerProvider: string | null;
+  // Per-request provider set for ALL daemon-launched CLIs. If omitted in the
+  // request file, this defaults to ["codex"]. It can only narrow the allowlist,
+  // never widen it. Order controls the planner default; fallback preference
+  // remains the allowlist's fallback.order, filtered to this request's providers.
+  providers: string[];
 }
 
 // The exact accepted fields. Exported so the debate-router skill's request-file
 // checker (skills/debate-router/scripts/check-request.mjs) can be pinned to this
 // set by a test — if this changes, that test fails until the skill checker +
 // SKILL.md example are updated too (see AGENTS.md).
-export const ALLOWED_DEBATE_FIELDS = ["schema_version", "id", "kind", "prompt", "repo", "language", "fast", "planner_provider"] as const;
+export const ALLOWED_DEBATE_FIELDS = ["schema_version", "id", "kind", "prompt", "repo", "language", "fast", "planner_provider", "providers"] as const;
 const ALLOWED_DEBATE_FIELD_SET = new Set<string>(ALLOWED_DEBATE_FIELDS);
 
 /** Parse any mailbox request file into a raw object (kind-agnostic). */
@@ -210,15 +215,43 @@ export function validateDebateRequest(raw: Record<string, unknown>, allow: Allow
     fast = raw.fast as boolean;
   }
 
+  let providers: string[] = ["codex"];
+  if (raw.providers !== undefined && raw.providers !== null) {
+    const rawProviders = raw.providers;
+    if (!Array.isArray(rawProviders)) {
+      throw new MailboxRequestRejected("providers must be an array of strings");
+    }
+    req(rawProviders.length > 0, "providers must be a non-empty array");
+    providers = [];
+  }
+  const rawProviders = raw.providers === undefined || raw.providers === null ? providers : (raw.providers as unknown[]);
+  const seenProviders = new Set<string>();
+  providers = [];
+  for (const p of rawProviders) {
+    if (typeof p !== "string") {
+      throw new MailboxRequestRejected("providers must be an array of strings");
+    }
+    req(allow.providers.includes(p), `providers entry ${JSON.stringify(p)} is not in the allowlist providers (${allow.providers.join(", ")})`);
+    req(!seenProviders.has(p), `providers has duplicate entry ${JSON.stringify(p)}`);
+    seenProviders.add(p);
+    providers.push(p);
+  }
+
   let plannerProvider: string | null = null;
   if (raw.planner_provider !== undefined && raw.planner_provider !== null) {
     req(typeof raw.planner_provider === "string", "planner_provider must be a string");
     const provider = raw.planner_provider as string;
     req((PLANNER_PROVIDERS as readonly string[]).includes(provider), `planner_provider must be one of ${JSON.stringify([...PLANNER_PROVIDERS])}`);
     req(allow.providers.includes(provider), `planner_provider ${provider} is not in the allowlist providers (${allow.providers.join(", ")})`);
+    req(providers.includes(provider), `planner_provider ${provider} is not in request providers (${providers.join(", ")})`);
     plannerProvider = provider;
   }
   req(!(fast && plannerProvider !== null), "planner_provider requires fast=false because fast requests skip the planner");
+  const defaultPlanner = plannerProvider ?? providers[0]!;
+  req(
+    fast || (PLANNER_PROVIDERS as readonly string[]).includes(defaultPlanner),
+    `planner defaults to first providers entry (${providers[0]}); set planner_provider to ${PLANNER_PROVIDERS.join(" or ")} or put a planner-capable provider first`,
+  );
 
-  return { id: id as string, prompt: prompt as string, repo: resolved, repoRoot: root as string, language, fast, plannerProvider };
+  return { id: id as string, prompt: prompt as string, repo: resolved, repoRoot: root as string, language, fast, plannerProvider, providers };
 }

@@ -53,12 +53,13 @@ test("watch e2e: scripted plan + real worker spawn, answer + live log + read-onl
   const id = "20260531-e2e-real";
   writeFileSync(
     join(mb.requestsDir, `${id}.json`),
-    JSON.stringify({ schema_version: 1, id, kind: "debate_request", prompt: "debate this", repo: realpathSync(repo) }),
+    JSON.stringify({ schema_version: 1, id, kind: "debate_request", prompt: "debate this", repo: realpathSync(repo), providers: ["claude"] }),
   );
 
   const baseEnv = { ...process.env, PATH: `${binDir}${delimiter}${process.env.PATH ?? ""}`, HOME: root };
   const plan = JSON.stringify({
-    phases: [{ name: "arbitration", launches: [{ id: "A1", provider: "claude", prompt: "decide and answer" }] }],
+    complexity: "simple",
+    phases: [{ name: "arbitration", launches: [{ id: "A1", provider: "claude", effort: "high", prompt: "decide and answer" }] }],
     answer_item: "A1",
   });
   const planner: PlannerFn = async () => plan; // injected planner; workers are REAL

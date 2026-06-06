@@ -77,6 +77,9 @@ debate-agent print-rules [--path <installed-path>]
 daemon** that takes a high-level `debate_request` and runs the whole debate —
 plan then execute — on behalf of a sandboxed `debate-router`; see
 [watch](#watch-the-plan--execute-daemon).
+`watch --planner` is accepted as a compatibility flag and must name an allowlisted
+planner-capable provider, but a request's `planner_provider` / `providers[0]`
+decides the actual planner for that request.
 
 `run` prints a single **result JSON** object to stdout and exits non-zero if the
 request was rejected or the child failed. `run-batch` runs N requests in parallel
@@ -355,14 +358,15 @@ prompts; the daemon produces those.
 | `repo` | string | absolute; `realpath` must resolve under an allowed repo root |
 | `language` | string | optional; the human's language (workers + answer use it) |
 | `fast` | bool | optional. **The skill always writes it `true`** (lean flow: skip the planner and run a fixed lean 2-phase shape, 2 parallel reviewers → 1 arbiter); `false` runs the full planner debate (use only on an explicit serious/thorough request). **Daemon default when the field is omitted is `false`** (conservative full-planner path — a hand-crafted request must set `true` for the lean path). Does NOT control turbo (codex always turbo) |
-| `planner_provider` | string | optional, only with `fast: false`. `"claude"` or `"codex"`; must be in allowlist `providers`. Overrides the daemon's `--planner` default for this one request. |
+| `planner_provider` | string | optional, only with `fast: false`. `"claude"` or `"codex"`; must be in allowlist `providers` and inside the effective request `providers` (omitted `providers` defaults to `["codex"]`). Overrides the default planner for this one request. |
+| `providers` | string[] | optional request-level provider set for **all** daemon-launched CLIs: planner, workers, fast path, and fallback. If omitted, it defaults to `["codex"]`, so every role is codex by default. It only narrows the allowlist, never widens it. You can add multiple providers, e.g. `["codex", "claude"]`; order controls the planner default. With `fast: false`, the planner defaults to the first entry unless `planner_provider` is set, so put `claude` or `codex` first or specify `planner_provider`. Fallback preference remains the allowlist's `fallback.order`, filtered to the request's providers. |
 
 ### How the daemon runs a debate
 
 **No agent ever spawns another agent** — only the daemon (code) spawns, and every
 CLI it spawns (the planner and every worker) is **read-only**.
 
-> **Fast path (the default) skips step 1 entirely.** When `fast` is `true` the
+> **Fast path (the debate-router skill default) skips step 1 entirely.** When `fast` is `true` the
 > daemon does **not** call the planner — it builds a fixed lean 2-phase plan in code
 > (two parallel reviewers → one arbiter, `debate.ts buildFastPlan`, mirroring the
 > debate-router FAST workflow) and goes straight to step 2. That is much faster and
@@ -370,8 +374,9 @@ CLI it spawns (the planner and every worker) is **read-only**.
 > full `fast: false` debate.
 
 1. **Plan (one-shot, with retry).** The daemon spawns a **planner** CLI
-   (`--planner claude|codex`, default `claude`; a request may override it with
-   `planner_provider` when `fast: false`) that loads the `debate-router` skill's
+   (a request may select it with `planner_provider` when `fast: false`; otherwise
+   the first effective `providers` entry is used, and omitted `providers` defaults
+   to codex) that loads the `debate-router` skill's
    STRATEGY and designs this debate. The daemon constrains the output with
    the CLI's **native JSON-Schema** structured output as a first line (claude
    `--output-format json --json-schema`, reading the result from the envelope's
@@ -395,12 +400,13 @@ CLI it spawns (the planner and every worker) is **read-only**.
 
    ```json
    {
+     "complexity": "simple",
      "phases": [
        { "name": "proposal_generation",
-         "launches": [ { "id": "P1", "provider": "codex",  "prompt": "<worker prompt>" },
-                       { "id": "P2", "provider": "claude", "prompt": "<worker prompt>" } ] },
+         "launches": [ { "id": "P1", "provider": "codex",  "effort": "xhigh", "prompt": "<worker prompt>" },
+                       { "id": "P2", "provider": "claude", "effort": "high",  "prompt": "<worker prompt>" } ] },
        { "name": "arbitration",
-         "launches": [ { "id": "A1", "provider": "claude",
+         "launches": [ { "id": "A1", "provider": "claude", "effort": "high",
            "prompt": "Proposals:\n{{P1.output}}\n{{P2.output}}\nDecide and write the final answer." } ] }
      ],
      "answer_item": "A1"
@@ -481,6 +487,13 @@ The split is deliberate and preserves the runner's invariants:
   request API. When switching engines the per-launch `effort` is dropped to the
   new provider's default (e.g. claude `max` is invalid for codex). If every
   provider for a launch fails, it degrades as before.
+- A `debate_request.providers` field narrows this same provider set for one
+  request. If omitted, it defaults to `["codex"]`, so the planner (if any), every
+  worker, the fast-path fixed roles, and fallback use only codex. To allow other
+  engines, list them explicitly, e.g. `providers: ["codex", "claude"]`; the
+  planner defaults to the first entry unless `planner_provider` is set. Fallback
+  still follows the allowlist's `fallback.order`, filtered to the request's
+  provider set.
 
 Tuning (allowlist, hot-reloaded per request):
 
@@ -497,8 +510,9 @@ Tuning (allowlist, hot-reloaded per request):
 
 1. **Static argv.** The runner builds the child command itself from a fixed
    per-provider template (`src/launch.ts`). The request contributes only
-   validated, allowlisted fields plus the stdin prompt. No request value is ever
-   spliced into `argv` as a flag.
+   validated, allowlisted fields plus the stdin prompt. `planner_provider` and
+   `providers` only choose among fixed provider templates; omitted `providers`
+   becomes `["codex"]`. No request value is ever spliced into `argv` as a flag.
 2. **realpath cwd.** `repo` is resolved with `realpath` and must sit under an
    allowed repo root after resolution, defeating symlink and `..` escapes. The
    child runs with `cwd` set to that resolved path.
@@ -703,6 +717,10 @@ CLI on PATH:
   boundary — **planner retry** (an invalid plan first, then valid), **multi-phase
   `{{id.output}}` substitution** (phase-1 output embedded in phase-2's prompt),
   read-only argv on the spawned children, and the cleared `processing/` entry;
+- request-level provider controls across the real daemon boundary:
+  omitted `providers` defaults the whole request to codex, multiple providers are
+  honored for planner selection via first-entry default, and `planner_provider`
+  can override that first-provider planner default;
 - **timeout + process-group kill**: a stub backgrounds a grandchild whose marker
   file never appears, proving the whole group is signalled;
 - `install.sh` frozen vs `--symlink`, then invoking the installed launcher —

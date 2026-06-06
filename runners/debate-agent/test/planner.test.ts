@@ -13,7 +13,7 @@ import { ExecResult } from "../src/runner";
 import { cleanup, makeAllowlist, makeTempDir } from "./helpers";
 
 test("extracts structured_output from a claude json envelope", () => {
-  const plan = { phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "x" }] }], answer_item: "P1" };
+  const plan = { complexity: "simple", phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", effort: "xhigh", prompt: "x" }] }], answer_item: "P1" };
   const env = JSON.stringify({ type: "result", subtype: "success", result: "ignore this text", structured_output: plan });
   assert.deepEqual(JSON.parse(extractClaudeStructuredOutput(env)), plan);
 });
@@ -30,7 +30,8 @@ test("falls back to raw stdout when the output is not an envelope", () => {
 // --- CLI planner provider rotation on provider failure (injected exec) -------
 
 const VALID_PLAN = JSON.stringify({
-  phases: [{ name: "proposal_generation", launches: [{ id: "P1", provider: "codex", prompt: "do the task" }] }],
+  complexity: "simple",
+  phases: [{ name: "proposal_generation", launches: [{ id: "P1", provider: "codex", effort: "xhigh", prompt: "do the task" }] }],
   answer_item: "P1",
 });
 const RL_PATTERNS = { claude: compilePatterns(["usage limit", "\\b429\\b"]), codex: compilePatterns(["usage limit", "\\b429\\b"]) };
@@ -47,7 +48,7 @@ const CERT_ERROR: ExecResult = {
 const ok = (stdout: string): ExecResult => ({ status: "completed", errorCategory: null, returncode: 0, elapsedSeconds: 0, stdout, stderr: "" });
 
 function plannerReq(repo: string): DebateRequest {
-  return { id: "d1", prompt: "decide", repo, repoRoot: repo, language: null, fast: false, plannerProvider: null };
+  return { id: "d1", prompt: "decide", repo, repoRoot: repo, language: null, fast: false, plannerProvider: null, providers: ["codex"] };
 }
 
 test("planner rotates to the next provider when the primary is rate-limited", async () => {

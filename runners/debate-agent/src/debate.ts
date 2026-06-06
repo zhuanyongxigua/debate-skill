@@ -9,7 +9,7 @@
 // a response (never throws): a planning failure or step error becomes
 // `error`/`degraded` so the caller never hangs.
 
-import { Allowlist, VALID_PHASES } from "./allowlist";
+import { Allowlist, DEFAULT_EFFORT, VALID_PHASES } from "./allowlist";
 import { isFallbackEligible } from "./fallback";
 import { DebateRequest } from "./mailbox";
 import { Plan, substitute } from "./plan";
@@ -105,6 +105,19 @@ function errorResponse(id: string, message: string): DebateResponse {
   };
 }
 
+export function narrowAllowlistForRequest(allow: Allowlist, req: DebateRequest): Allowlist {
+  const providerSet = new Set(req.providers);
+  const fallbackOrder = allow.fallback.order.length ? allow.fallback.order : allow.providers;
+  return {
+    ...allow,
+    providers: req.providers.filter((p) => allow.providers.includes(p)),
+    fallback: {
+      ...allow.fallback,
+      order: fallbackOrder.filter((p) => providerSet.has(p) && allow.providers.includes(p)),
+    },
+  };
+}
+
 /** Next provider to try for a failed launch: the first entry in the fallback
  * order that is allowlisted and not yet tried for this launch. Returns null
  * when every available provider has been tried (the launch then degrades). */
@@ -124,6 +137,10 @@ function pickFallbackProvider(allow: Allowlist, tried: Set<string>): string | nu
 // see it in both the log and the trace's planned_provider.
 function capabilityRank(provider: string): number {
   return provider === "codex" ? 2 : 1;
+}
+
+function defaultEffort(provider: string): string {
+  return DEFAULT_EFFORT[provider] ?? DEFAULT_EFFORT.claude!;
 }
 
 /** The hardcoded FAST debate shape used when a request is `fast`: skip the planner
@@ -160,17 +177,18 @@ function buildFastPlan(req: DebateRequest, allow: Allowlist): Plan {
       {
         name: "proposal_generation",
         launches: [
-          { id: "P1", provider: r1, prompt: reviewer },
-          { id: "P2", provider: r2, prompt: reviewer },
+          { id: "P1", provider: r1, effort: defaultEffort(r1), prompt: reviewer },
+          { id: "P2", provider: r2, effort: defaultEffort(r2), prompt: reviewer },
         ],
       },
-      { name: "arbitration", launches: [{ id: "A1", provider: arb, prompt: arbiter }] },
+      { name: "arbitration", launches: [{ id: "A1", provider: arb, effort: defaultEffort(arb), prompt: arbiter }] },
     ],
     answerItem: "A1",
   };
 }
 
 export async function runDebate(req: DebateRequest, allow: Allowlist, deps: DebateDeps): Promise<DebateResponse> {
+  allow = narrowAllowlistForRequest(allow, req);
   const runItems = deps.runItems ?? runPreparedItems;
   const readOutput = deps.readOutput ?? defaultReadOutput;
   const log = deps.log;
@@ -182,7 +200,8 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
   let plan: Plan;
   if (req.fast) {
     plan = buildFastPlan(req, allow);
-    log?.(`fast mode: planner skipped — fixed lean 2-phase shape (P1 codex, P2 claude, A1 claude)`);
+    const shape = plan.phases.flatMap((p) => p.launches.map((l) => `${l.id} ${l.provider}`)).join(", ");
+    log?.(`fast mode: planner skipped — fixed lean 2-phase shape (${shape})`);
   } else {
     try {
       plan = await planWithRetry(req, allow, deps.planner, deps.maxPlanAttempts, log);

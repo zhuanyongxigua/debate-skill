@@ -22,8 +22,11 @@ expensive. If the debate cannot run, record the concrete blocker in the
 `DebateRecord`.
 
 If the caller uses explicit discussion or debate signals such as "discuss",
-"debate", "argue about", "讨论", or "辩论", that selects a multi-CLI debate. This
-skill runs in one of **three modes** (see `Execution Path`):
+"debate", "argue about", "讨论", or "辩论", that selects an external
+CLI-backed debate. Provider choice defaults to **codex only** in every execution
+path; use multiple providers only when the caller explicitly asks for
+heterogeneous / multi-provider CLI debate. This skill runs in one of **three
+modes** (see `Execution Path`):
 
 - **Mode 2 — emit a request file (DEFAULT).** You are sandboxed and cannot spawn
   a CLI, so you only write ONE high-level `debate_request` to
@@ -420,28 +423,41 @@ Pick a unique `<id>` (`YYYYMMDD-HHMMSS-slug`).
   (e.g. from the cwd); a relative path or one outside the roots comes back rejected.
 - `language`: the language the human is using; the debate answers in it. Omit if
   unsure.
-- `fast`: **default `true`** — controls whether the flow is lean. When `true`, the
-  daemon **skips the planner entirely** and runs a fixed lean 2-phase shape (two
-  independent reviewers in parallel, then one arbiter), which is much faster and
-  cheaper but **shallower** (generic worker prompts, no planner-designed debate).
-  Set **`fast: false`** ONLY when the human explicitly asks for a serious / heavy /
-  thorough debate — signals like "认真", "重度", "彻底", "深入", "详尽", "严谨",
-  "全面", "thorough", "comprehensive", "rigorous", "in-depth", "deep dive",
-  "exhaustive" or equivalent — which runs the **planner-designed debate**: the
+- `fast`: **this skill's default is `true`** — write it explicitly for the lean
+  flow. When `true`, the daemon **skips the planner entirely** and runs a fixed
+  lean 2-phase shape (two independent reviewers in parallel, then one arbiter),
+  which is much faster and cheaper but **shallower** (generic worker prompts, no
+  planner-designed debate). Set **`fast: false`** ONLY when the human explicitly
+  asks for a serious / heavy / thorough debate — signals like "认真", "重度",
+  "彻底", "深入", "详尽", "严谨", "全面", "thorough", "comprehensive", "rigorous",
+  "in-depth", "deep dive", "exhaustive" or equivalent — which runs the
+  **planner-designed debate**: the
   planner judges complexity and designs the phases (the full proposal → critique →
   cross-review → arbitration for a substantial task; it may still choose a leaner
   shape for one it judges genuinely simple). `fast` is purely about flow leanness;
-  it does **not** control codex/claude turbo (codex always runs turbo).
+  it does **not** control codex/claude turbo (codex always runs turbo). The raw
+  daemon default when a hand-written request omits `fast` is conservative
+  `false`, so this skill must write `fast: true` for default quick debates.
 - `planner_provider`: optional; use only when the human explicitly asks to choose
   the planner CLI for a full debate. Set `fast: false` and then set
-  `"planner_provider": "claude"` or `"codex"`. The daemon rejects it with
-  `fast: true`, because fast requests skip the planner entirely.
+  `"planner_provider": "claude"` or `"codex"`. The value must also be in the
+  effective `providers` list (omitted `providers` defaults to `["codex"]`). The
+  daemon rejects it with `fast: true`, because fast requests skip the planner
+  entirely.
+- `providers`: optional. Normally omit it: omitted means `["codex"]`, so every
+  daemon-launched role is codex by default. Use it only when the human explicitly
+  asks for heterogeneous / multi-provider CLI debate or a non-codex engine is
+  needed. It can only narrow the daemon's allowlist. Add multiple providers when
+  needed, for example `"providers": ["codex", "claude"]`. In full mode
+  (`fast: false`), the planner defaults to the first provider unless
+  `planner_provider` is set. If you also set `planner_provider`, it must be
+  included in `providers`.
 
 > **Exactly these fields, nothing else.** The request has ONLY
-> `schema_version, id, kind, prompt, repo, language, fast, planner_provider`. Do
-> **not** add any other field — a common mistake is a stale `output_contract`; the
-> daemon rejects unknown fields. Put any required **output format / template**
-> inside `prompt`.
+> `schema_version, id, kind, prompt, repo, language, fast, planner_provider,
+> providers`. Do **not** add any other field — a common mistake is a stale
+> `output_contract`; the daemon rejects unknown fields. Put any required
+> **output format / template** inside `prompt`.
 
 **Step 1b — Check the request file.** After writing it, validate the format with
 this skill's bundled checker (it catches the field mistake above before the daemon
@@ -501,11 +517,14 @@ Rules in this mode:
 
 - **Judge complexity first** and set `complexity`. **Simple** task (focused
   question, small/single-area change, clearly-scoped review) → emit the **FAST
-  workflow**: Phase 1 = two independent reviewers in parallel (1 `codex` at
-  `xhigh`, 1 `claude` at `high`); Phase 2 = one `claude` (`high`) arbiter
-  that reads `{{P1.output}}`+`{{P2.output}}` and writes the final answer. No
-  separate critique/cross-review for a simple task — that lean shape mirrors
+  workflow**: Phase 1 = two independent reviewers in parallel; Phase 2 = one
+  arbiter that reads `{{P1.output}}`+`{{P2.output}}` and writes the final answer.
+  No separate critique/cross-review for a simple task — that lean shape mirrors
   `parallel_positions` + arbitration and is the whole point of going fast.
+  Provider allocation still follows the request provider constraint: default
+  codex-only means P1/P2/A1 are all `codex` at `xhigh`; if the caller explicitly
+  requested heterogeneous providers and the constraint includes them, allocate
+  across those providers.
   **Complex** task → design the full bounded debate (proposal → normalization →
   critique → cross-review → arbitration).
 - **Pick `effort` per launch** (the daemon no longer hardcodes it). A launch has
@@ -545,9 +564,10 @@ run the whole bounded debate yourself and spawn the selected CLIs directly throu
 `cli-launch`. Here `debate-router` owns the full flow — entry case, candidate
 freeze, roles, provider allocation, proposal generation, critique, cross-review,
 and arbitration — and the `CLI Topology`, `Phase Concurrency`, and workflow
-sections below apply. **Allocate providers yourself** (e.g. four agents = two
-`codex` + two `claude`); `cli-launch` only launches what this skill decides and
-never balances providers.
+sections below apply. **Allocate providers yourself**: default every CLI role to
+`codex`; add `claude` or other providers only for an explicit heterogeneous
+request. `cli-launch` only launches what this skill decides and never balances
+providers.
 
 ## CLI Topology
 
@@ -559,10 +579,13 @@ never balances providers.
 
 When the human has explicitly asked to run the debate in-session:
 
-- Discussion/debate signals select `heterogeneous_cli_agents`. Plan two or more
-  external CLI agents and spawn them through `cli-launch`. Prefer the locally
-  configured debate CLIs, and record any unavailable selected CLI as blocked
-  instead of silently falling back to current-session debate.
+- Discussion/debate signals select external CLI-backed debate, but the default
+  provider set is **codex only**. Plan codex roles by default and spawn them
+  through `cli-launch`. Select `heterogeneous_cli_agents` and add multiple
+  providers (for example codex + claude) only when the human explicitly asks for
+  heterogeneous / multi-provider CLI debate, or names additional CLIs. Record any
+  unavailable selected CLI as blocked instead of silently falling back to
+  current-session debate.
 - If no external CLI agents are selected, run the bounded debate in the current
   session or same runtime.
 - Record each selected or attempted CLI in `DebateRecord.cli_participation`.
@@ -631,9 +654,11 @@ those into `DebateRecord.cli_participation` rows.
 **Rate-limit fallback — same task, swap engine.** A subscription can run out of
 quota mid-debate. When a result comes back `error_category: "rate_limited"`, do
 **not** treat it as an ordinary failure and degrade: re-run the *same task* on the
-next available engine (claude's task → codex, and vice versa), because the work
-still needs doing — only the engine changed. Build the alternate spec yourself
-(you hold the prompt) and hand it to `cli-launch` as a pre-built fallback:
+next available selected engine, because the work still needs doing — only the
+engine changed. In the default codex-only posture there is no alternate provider;
+fallback applies only when the human selected multiple providers. Build the
+alternate spec yourself (you hold the prompt) and hand it to `cli-launch` as a
+pre-built fallback:
 `cli-launch.run_specs_parallel_with_fallback` consumes each `ParallelSpec.fallbacks`
 in order, swapping only on `rate_limited` and branching on status alone — never on
 a child's text. Drop a provider-specific `effort` when you switch (claude `max`
@@ -672,14 +697,16 @@ would make concurrent calls counterproductive. Record the reason in
    using the selected current-session, same-runtime, or external CLI agents,
    then freeze them.
    If the trigger was a discussion/debate signal, use the selected external CLI
-   agents as proposers before normalization.
+   agents as proposers before normalization; by default that selected set is
+   codex-only unless the human explicitly requested heterogeneous providers.
    When two or more external CLI proposers are selected, fan them out in
    parallel via `cli-launch.run_specs_parallel`. See `Phase Concurrency`.
 5. For the other entry cases, freeze the user-provided proposal, candidates, or
    judgments before critique.
 6. Run one independent critique round. If the trigger was a discussion/debate
-   signal, run this round through the selected external CLI agents. When two
-   or more external critics are selected, fan them out in parallel via
+   signal, run this round through the selected external CLI agents; by default
+   that selected set is codex-only. When two or more external critics are selected,
+   fan them out in parallel via
    `cli-launch.run_specs_parallel`. See `Phase Concurrency`.
 7. Run one cross-review round. This round must remain serial across critics —
    each cross-reviewer reads the completed independent critique findings
@@ -707,7 +734,7 @@ would make concurrent calls counterproductive. Record the reason in
 - Treating `debate-router` as a general entry gate.
 - Asking "is debate needed?" after the skill was explicitly invoked.
 - Treating "讨论", "辩论", "discuss", or "debate" as permission to stay in the
-  current session when external CLIs are available.
+  current session when Codex CLI/external CLI execution is available.
 - Leading the visible output with a full `DebateRoute:` or `DebateRecord:` YAML
   block when a human-first `Decision` / `Rationale` and final `Trace` would
   serve the caller better. The YAML belongs in
@@ -748,9 +775,10 @@ would make concurrent calls counterproductive. Record the reason in
 - Fanning out `cross_review`, `arbitration`, `proposal_normalization`, final
   rendering, or any shared-state mutation through `run_specs_parallel` —
   those depend on prior outputs or single-writer state and must stay serial.
-- Treating a `rate_limited` result as an ordinary failure and degrading the
-  debate, instead of re-running the same task on another available engine
-  (claude ↔ codex). Only a launch with no un-rate-limited engine left degrades.
+- Treating a `rate_limited` result as an ordinary failure when another selected
+  provider is available. Default codex-only debates have no alternate provider;
+  heterogeneous debates should re-run the same task on another selected engine.
+  Only a launch with no un-rate-limited selected engine left degrades.
 
 ## References
 

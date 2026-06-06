@@ -27,7 +27,17 @@ beforeEach(() => {
 afterEach(() => cleanup(root));
 
 function req(overrides: Partial<DebateRequest> = {}): DebateRequest {
-  return { id: "d1", prompt: "debate this", repo, repoRoot: repo, language: null, fast: false, plannerProvider: null, ...overrides };
+  return {
+    id: "d1",
+    prompt: "debate this",
+    repo,
+    repoRoot: repo,
+    language: null,
+    fast: false,
+    plannerProvider: null,
+    providers: ["codex", "claude"],
+    ...overrides,
+  };
 }
 
 /** Stub workers: capture the prepared items and complete each. */
@@ -47,13 +57,14 @@ function stubRun(): { runItems: DebateDeps["runItems"]; calls: PreparedItem[][] 
 const readOutput = (r: BatchItemResult): string => `OUT[${r.item_id}]`;
 
 const twoPhasePlan = JSON.stringify({
+  complexity: "simple",
   phases: [
     { name: "proposal_generation", launches: [
-      { id: "P1", provider: "codex", prompt: "propose A" },
-      { id: "P2", provider: "claude", prompt: "propose B" },
+      { id: "P1", provider: "codex", effort: "xhigh", prompt: "propose A" },
+      { id: "P2", provider: "claude", effort: "high", prompt: "propose B" },
     ] },
     { name: "arbitration", launches: [
-      { id: "A1", provider: "claude", prompt: "Proposals:\n{{P1.output}}\n---\n{{P2.output}}\nDecide and write the final answer." },
+      { id: "A1", provider: "claude", effort: "high", prompt: "Proposals:\n{{P1.output}}\n---\n{{P2.output}}\nDecide and write the final answer." },
     ] },
   ],
   answer_item: "A1",
@@ -126,7 +137,8 @@ test("a worker that does not complete degrades the debate (branch on status, not
 
 test("a plan with a non-allowlisted provider rejects that launch and degrades", async () => {
   const badPlan = JSON.stringify({
-    phases: [{ name: "proposal_generation", launches: [{ id: "P1", provider: "copilot", prompt: "x" }] }],
+    complexity: "simple",
+    phases: [{ name: "proposal_generation", launches: [{ id: "P1", provider: "copilot", effort: "high", prompt: "x" }] }],
     answer_item: "P1",
   });
   // provider not in the allowlist => validatePlan rejects the whole plan => retry => error
@@ -140,7 +152,8 @@ test("a plan with a non-allowlisted provider rejects that launch and degrades", 
 // --- provider fallback: same task, swap engine ------------------------------
 
 const onePhaseClaudePlan = JSON.stringify({
-  phases: [{ name: "proposal_generation", launches: [{ id: "P1", provider: "claude", prompt: "do the task" }] }],
+  complexity: "simple",
+  phases: [{ name: "proposal_generation", launches: [{ id: "P1", provider: "claude", effort: "high", prompt: "do the task" }] }],
   answer_item: "P1",
 });
 
@@ -259,6 +272,18 @@ test("the fast plan picks allowlisted providers (a narrowed allowlist degrades g
   const resp = await runDebate(req({ fast: true }), claudeOnly, { planner, runItems, readOutput });
   assert.equal(resp.status, "completed");
   assert.deepEqual(resp.trace.map((t) => `${t.item}:${t.provider}`), ["P1:claude", "P2:claude", "A1:claude"]);
+});
+
+test("runDebate honors a codex-only request provider set even with a wider allowlist", async () => {
+  const planner: PlannerFn = async () => {
+    throw new Error("planner must NOT be called for a fast request");
+  };
+  const { runItems, calls } = stubRun();
+  const resp = await runDebate(req({ fast: true, providers: ["codex"] }), allow, { planner, runItems, readOutput });
+  assert.equal(resp.status, "completed");
+  assert.deepEqual(resp.trace.map((t) => `${t.item}:${t.provider}`), ["P1:codex", "P2:codex", "A1:codex"]);
+  assert.deepEqual(calls.flat().map((it) => it.req!.provider), ["codex", "codex", "codex"]);
+  assert.deepEqual(calls.flat().map((it) => it.req!.effort), ["xhigh", "xhigh", "xhigh"]);
 });
 
 test("the fast plan escapes {{...}} in the user prompt (not mangled by substitute)", async () => {

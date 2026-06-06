@@ -17,7 +17,7 @@ export interface PlanLaunch {
   id: string;
   provider: string;
   prompt: string; // a template; may contain `{{<id>.output}}` referencing earlier launches
-  effort?: string; // thinking depth the planner picked (per provider's valid set)
+  effort: string; // thinking depth the planner picked (per provider's valid set)
 }
 
 export interface PlanPhase {
@@ -28,7 +28,7 @@ export interface PlanPhase {
 export interface Plan {
   phases: PlanPhase[];
   answerItem: string; // the launch id whose output is the final answer
-  complexity?: string; // the planner's "simple" | "complex" judgment (audit metadata)
+  complexity: "simple" | "complex"; // the planner's judgment (audit metadata)
 }
 
 // The plan's JSON Schema — the SHAPE only. Passed to the planner CLI's native
@@ -40,7 +40,7 @@ export interface Plan {
 export const PLAN_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["phases", "answer_item"],
+  required: ["complexity", "phases", "answer_item"],
   properties: {
     phases: {
       type: "array",
@@ -57,7 +57,7 @@ export const PLAN_JSON_SCHEMA = {
             items: {
               type: "object",
               additionalProperties: false,
-              required: ["id", "provider", "prompt"],
+              required: ["id", "provider", "effort", "prompt"],
               properties: {
                 id: { type: "string" },
                 provider: { type: "string" },
@@ -138,6 +138,9 @@ export function validatePlan(raw: unknown, allow: Allowlist): Plan {
   const obj = raw as Record<string, unknown>;
   const unknown = Object.keys(obj).filter((k) => !ALLOWED_PLAN_FIELDS.has(k));
   if (unknown.length) bad(`unknown plan field(s): ${JSON.stringify(unknown.sort())}`);
+  if (obj.complexity !== "simple" && obj.complexity !== "complex") {
+    bad('complexity must be "simple" or "complex"');
+  }
 
   if (!Array.isArray(obj.phases) || obj.phases.length === 0) bad("phases must be a non-empty array");
   const rawPhases = obj.phases as unknown[];
@@ -185,16 +188,13 @@ export function validatePlan(raw: unknown, allow: Allowlist): Plan {
         bad(`phases[${pi}].launches[${li}].prompt exceeds max_prompt_chars (${allow.maxPromptChars})`);
       }
 
-      let effort: string | undefined;
-      if (launch.effort !== undefined && launch.effort !== null) {
-        const allowed = validEffortsFor(provider as string);
-        if (typeof launch.effort !== "string" || !allowed.includes(launch.effort)) {
-          bad(`launch ${id} effort ${JSON.stringify(launch.effort)} not allowed for provider "${provider}"; allowed: ${JSON.stringify(allowed)}`);
-        }
-        effort = launch.effort as string;
+      const effort = launch.effort;
+      const allowed = validEffortsFor(provider as string);
+      if (typeof effort !== "string" || !allowed.includes(effort)) {
+        bad(`launch ${id} effort ${JSON.stringify(effort)} not allowed for provider "${provider}"; allowed: ${JSON.stringify(allowed)}`);
       }
 
-      return { id: id as string, provider: provider as string, prompt: prompt as string, effort };
+      return { id: id as string, provider: provider as string, prompt: prompt as string, effort: effort as string };
     });
     phases.push({ name: phase.name as string, launches });
   });
@@ -217,11 +217,5 @@ export function validatePlan(raw: unknown, allow: Allowlist): Plan {
     bad(`answer_item ${JSON.stringify(answerItem)} must be one of the launch ids`);
   }
 
-  let complexity: string | undefined;
-  if (obj.complexity !== undefined && obj.complexity !== null) {
-    if (typeof obj.complexity !== "string") bad("complexity must be a string");
-    complexity = obj.complexity as string;
-  }
-
-  return { phases, answerItem: answerItem as string, complexity };
+  return { phases, answerItem: answerItem as string, complexity: obj.complexity as "simple" | "complex" };
 }

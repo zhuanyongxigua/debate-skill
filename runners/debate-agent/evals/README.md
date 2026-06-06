@@ -10,17 +10,22 @@ the planner CLI). The strict plan format and its validation live in the runner.
 
 ## Prerequisites
 
-- `claude` on PATH and logged in (the default planner; and a worker).
-- `codex` on PATH and logged in (a worker the planner may allocate).
+- `codex` on PATH and logged in (the default when the sample request omits
+  `providers`).
+- Any other provider explicitly listed in your request file, such as `claude`, on
+  PATH and logged in.
 
 ## Run
 
 ```bash
 cd runners/debate-agent
-npm run eval                     # real CLIs; default planner = claude
-npm run eval -- --planner codex  # use codex as the planner
+npm run eval                     # real CLIs; sample request defaults to codex-only
 npm run build && node dist/evals/run-eval.js path/to/your-request.json
 ```
+
+The request file controls providers. Omitted `providers` means `["codex"]`; add
+other engines explicitly in the request, and set `planner_provider` there if a
+full debate should use a non-first planner.
 
 Offline wiring check (no real CLI — scripted planner + stubbed workers, to prove
 the mailbox + plan + execute plumbing):

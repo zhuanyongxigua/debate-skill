@@ -47,7 +47,8 @@ function writeRequestFile(id: string, overrides: Record<string, unknown> = {}): 
 }
 
 const onePhasePlan = JSON.stringify({
-  phases: [{ name: "proposal_generation", launches: [{ id: "P1", provider: "codex", prompt: "go" }] }],
+  complexity: "simple",
+  phases: [{ name: "proposal_generation", launches: [{ id: "P1", provider: "codex", effort: "xhigh", prompt: "go" }] }],
   answer_item: "P1",
 });
 
@@ -77,6 +78,7 @@ test("validateDebateRequest accepts a good request and defaults", () => {
   assert.equal(r.language, null);
   assert.equal(r.fast, false);
   assert.equal(r.plannerProvider, null);
+  assert.deepEqual(r.providers, ["codex"]);
 });
 
 test("validateDebateRequest accepts language + fast + planner_provider, rejects bad shapes", () => {
@@ -93,13 +95,33 @@ test("validateDebateRequest accepts language + fast + planner_provider, rejects 
   assert.throws(() => validateDebateRequest({ ...base, planner_provider: "copilot" }, allow), /planner_provider must be one of/);
   assert.throws(
     () => validateDebateRequest({ ...base, planner_provider: "codex" }, makeAllowlist(repo, { providers: ["claude"] })),
-    /planner_provider codex is not in the allowlist/,
+    /providers entry "codex" is not in the allowlist/,
   );
   assert.throws(() => validateDebateRequest({ ...base, fast: true, planner_provider: "codex" }, allow), /planner_provider requires fast=false/);
   assert.throws(() => validateDebateRequest({ ...base, kind: "run_batch_request" }, allow), /kind must be/);
   assert.throws(() => validateDebateRequest({ ...base, oops: 1 }, allow), MailboxRequestRejected);
   assert.throws(() => validateDebateRequest({ ...base, repo: "/etc" }, allow), MailboxRequestRejected);
   assert.throws(() => validateDebateRequest({ ...base, id: "../escape" }, allow), MailboxRequestRejected);
+});
+
+test("validateDebateRequest accepts providers and rejects invalid provider sets", () => {
+  const base = { schema_version: 1, id: "r1", kind: "debate_request", prompt: "x", repo: realpathSync(repo) };
+  const multi = validateDebateRequest({ ...base, providers: ["codex", "claude"], planner_provider: "codex" }, allow);
+  assert.deepEqual(multi.providers, ["codex", "claude"]);
+  assert.equal(multi.plannerProvider, "codex");
+  assert.throws(() => validateDebateRequest({ ...base, providers: "codex" }, allow), /providers must be an array/);
+  assert.throws(() => validateDebateRequest({ ...base, providers: [] }, allow), /non-empty array/);
+  assert.throws(() => validateDebateRequest({ ...base, providers: ["codex", "codex"] }, allow), /duplicate/);
+  assert.throws(() => validateDebateRequest({ ...base, providers: ["copilot"] }, allow), /not in the allowlist/);
+  assert.throws(() => validateDebateRequest({ ...base, providers: ["codex"], planner_provider: "claude" }, allow), /not in request providers/);
+  assert.throws(() => validateDebateRequest(base, makeAllowlist(repo, { providers: ["claude"] })), /providers entry "codex" is not in the allowlist/);
+
+  const withCopilot = makeAllowlist(repo, { providers: ["copilot", "codex"] });
+  assert.throws(() => validateDebateRequest({ ...base, providers: ["copilot", "codex"] }, withCopilot), /planner defaults to first providers entry/);
+  const copilotWithPlanner = validateDebateRequest({ ...base, providers: ["copilot", "codex"], planner_provider: "codex" }, withCopilot);
+  assert.deepEqual(copilotWithPlanner.providers, ["copilot", "codex"]);
+  const fastCopilot = validateDebateRequest({ ...base, fast: true, providers: ["copilot"] }, withCopilot);
+  assert.deepEqual(fastCopilot.providers, ["copilot"]);
 });
 
 test("payload id mismatching the file name becomes an error response", async () => {

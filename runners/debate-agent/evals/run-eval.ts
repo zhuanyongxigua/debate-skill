@@ -2,11 +2,12 @@
 // self-contained local mailbox and runs the whole flow — plan (real planner CLI)
 // then execute (real worker CLIs) — then prints the response.
 //
-//   npm run build && node dist/evals/run-eval.js [--planner claude|codex] [path/to/request.json]
+//   npm run build && node dist/evals/run-eval.js [path/to/request.json]
 //   node dist/evals/run-eval.js --mock        # offline wiring check, no real CLI
 //
 // The planner reuses the debate-router skill's strategy (install it for the
-// planner CLI). Real runs require `claude`/`codex` on PATH and logged in.
+// planner CLI). Request providers decide the planner; real runs require the
+// selected CLIs on PATH and logged in.
 
 import { readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -25,7 +26,7 @@ const mailboxDir = join(EVALS, "mailbox"); // scratch; never ~/.debate-router
 function parseArgs(argv: string[]) {
   const mock = argv.includes("--mock");
   const pi = argv.indexOf("--planner");
-  const plannerProvider = pi >= 0 ? argv[pi + 1]! : "claude";
+  const plannerProvider = pi >= 0 ? argv[pi + 1]! : undefined;
   const reqArg = argv.find((a) => a.endsWith(".json"));
   const reqPath = reqArg ?? join(EVALS, "requests", "sample-debate.json");
   return { mock, plannerProvider, reqPath };
@@ -34,13 +35,14 @@ function parseArgs(argv: string[]) {
 /** Fully stubbed deps for offline plumbing checks (scripted plan + stub workers). */
 function mockDeps(): () => DebateDeps {
   const plan = JSON.stringify({
+    complexity: "simple",
     phases: [
       { name: "proposal_generation", launches: [
-        { id: "P1", provider: "codex", prompt: "argue for in-house auth" },
-        { id: "P2", provider: "claude", prompt: "argue for a managed provider" },
+        { id: "P1", provider: "codex", effort: "xhigh", prompt: "argue for in-house auth" },
+        { id: "P2", provider: "codex", effort: "xhigh", prompt: "argue for a managed provider" },
       ] },
       { name: "arbitration", launches: [
-        { id: "A1", provider: "claude", prompt: "Proposals:\n{{P1.output}}\n{{P2.output}}\nDecide." },
+        { id: "A1", provider: "codex", effort: "xhigh", prompt: "Proposals:\n{{P1.output}}\n{{P2.output}}\nDecide." },
       ] },
     ],
     answer_item: "A1",
@@ -69,8 +71,10 @@ async function main(): Promise<void> {
   const mb = openMailbox();
   writeFileSync(join(mb.requestsDir, `${raw.id}.json`), JSON.stringify(raw, null, 2));
 
-  const opts = mock ? { makeDeps: mockDeps() } : { plannerProvider };
-  process.stderr.write(`Running debate "${raw.id}" (${mock ? "MOCK" : `real CLIs, planner=${plannerProvider}`}); mailbox ${mailboxDir}\n`);
+  const opts = mock ? { makeDeps: mockDeps() } : plannerProvider ? { plannerProvider } : {};
+  process.stderr.write(
+    `Running debate "${raw.id}" (${mock ? "MOCK" : `real CLIs, planner from request providers${plannerProvider ? `; legacy --planner=${plannerProvider}` : ""}`}); mailbox ${mailboxDir}\n`,
+  );
 
   const processed = await processNewRequests(mb, new Set<string>(), allow, opts);
   for (const id of processed) {

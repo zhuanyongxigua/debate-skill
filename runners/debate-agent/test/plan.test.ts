@@ -22,13 +22,14 @@ const allow: Allowlist = {
 
 function goodPlan(): unknown {
   return {
+    complexity: "simple",
     phases: [
       { name: "proposal_generation", launches: [
-        { id: "P1", provider: "codex", prompt: "propose A" },
-        { id: "P2", provider: "claude", prompt: "propose B" },
+        { id: "P1", provider: "codex", effort: "xhigh", prompt: "propose A" },
+        { id: "P2", provider: "claude", effort: "high", prompt: "propose B" },
       ] },
       { name: "arbitration", launches: [
-        { id: "A1", provider: "claude", prompt: "Proposals:\n{{P1.output}}\n{{P2.output}}\nDecide." },
+        { id: "A1", provider: "claude", effort: "high", prompt: "Proposals:\n{{P1.output}}\n{{P2.output}}\nDecide." },
       ] },
     ],
     answer_item: "A1",
@@ -71,33 +72,42 @@ test("validatePlan accepts a good plan", () => {
 
 test("validatePlan rejects unknown field / empty phases / dup id", () => {
   assert.throws(() => validatePlan({ ...(goodPlan() as object), oops: 1 }, allow), /unknown plan field/);
-  assert.throws(() => validatePlan({ phases: [], answer_item: "x" }, allow), /non-empty array/);
-  const dup = { phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "a" }, { id: "P1", provider: "codex", prompt: "b" }] }], answer_item: "P1" };
+  assert.throws(() => validatePlan({ complexity: "simple", phases: [], answer_item: "x" }, allow), /non-empty array/);
+  const dup = {
+    complexity: "simple",
+    phases: [{ name: "p", launches: [
+      { id: "P1", provider: "codex", effort: "xhigh", prompt: "a" },
+      { id: "P1", provider: "codex", effort: "xhigh", prompt: "b" },
+    ] }],
+    answer_item: "P1",
+  };
   assert.throws(() => validatePlan(dup, allow), /duplicate launch id/);
 });
 
 test("validatePlan rejects non-allowlisted provider and empty prompt", () => {
-  const badProv = { phases: [{ name: "p", launches: [{ id: "P1", provider: "gemini", prompt: "a" }] }], answer_item: "P1" };
+  const badProv = { complexity: "simple", phases: [{ name: "p", launches: [{ id: "P1", provider: "gemini", effort: "high", prompt: "a" }] }], answer_item: "P1" };
   assert.throws(() => validatePlan(badProv, allow), /not in allowlist/);
-  const blank = { phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "  " }] }], answer_item: "P1" };
+  const blank = { complexity: "simple", phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", effort: "xhigh", prompt: "  " }] }], answer_item: "P1" };
   assert.throws(() => validatePlan(blank, allow), /non-empty string/);
 });
 
 test("validatePlan rejects forward / same-phase output references", () => {
   // same phase: C2 references C1 which runs in parallel with it
   const samePhase = {
+    complexity: "simple",
     phases: [{ name: "critique", launches: [
-      { id: "C1", provider: "codex", prompt: "a" },
-      { id: "C2", provider: "claude", prompt: "see {{C1.output}}" },
+      { id: "C1", provider: "codex", effort: "xhigh", prompt: "a" },
+      { id: "C2", provider: "claude", effort: "high", prompt: "see {{C1.output}}" },
     ] }],
     answer_item: "C1",
   };
   assert.throws(() => validatePlan(samePhase, allow), /same or a later phase/);
   // forward: phase 1 references phase 2's output
   const forward = {
+    complexity: "simple",
     phases: [
-      { name: "p1", launches: [{ id: "P1", provider: "codex", prompt: "see {{A1.output}}" }] },
-      { name: "p2", launches: [{ id: "A1", provider: "claude", prompt: "decide" }] },
+      { name: "p1", launches: [{ id: "P1", provider: "codex", effort: "xhigh", prompt: "see {{A1.output}}" }] },
+      { name: "p2", launches: [{ id: "A1", provider: "claude", effort: "high", prompt: "decide" }] },
     ],
     answer_item: "A1",
   };
@@ -105,12 +115,15 @@ test("validatePlan rejects forward / same-phase output references", () => {
 });
 
 test("validatePlan rejects unknown reference and bad answer_item", () => {
-  const unknownRef = { phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "see {{ZZ.output}}" }] }], answer_item: "P1" };
+  const unknownRef = { complexity: "simple", phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", effort: "xhigh", prompt: "see {{ZZ.output}}" }] }], answer_item: "P1" };
   assert.throws(() => validatePlan(unknownRef, allow), /unknown output/);
-  assert.throws(() => validatePlan({ phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "a" }] }], answer_item: "nope" }, allow), /answer_item/);
+  assert.throws(
+    () => validatePlan({ complexity: "simple", phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", effort: "xhigh", prompt: "a" }] }], answer_item: "nope" }, allow),
+    /answer_item/,
+  );
 });
 
-test("validatePlan accepts per-launch effort + complexity, rejects bad effort and unknown fields", () => {
+test("validatePlan requires per-launch effort + complexity, rejects bad effort and unknown fields", () => {
   const ok = {
     complexity: "simple",
     phases: [{ name: "p", launches: [
@@ -123,16 +136,24 @@ test("validatePlan accepts per-launch effort + complexity, rejects bad effort an
   assert.equal(plan.complexity, "simple");
   assert.equal(plan.phases[0]!.launches[0]!.effort, "xhigh");
   assert.equal(plan.phases[0]!.launches[1]!.effort, "max"); // max valid for claude
+  assert.throws(
+    () => validatePlan({ phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", effort: "xhigh", prompt: "x" }] }], answer_item: "P1" }, allow),
+    /complexity/,
+  );
+  assert.throws(
+    () => validatePlan({ complexity: "simple", phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "x" }] }], answer_item: "P1" }, allow),
+    /effort .* not allowed/,
+  );
   // 'max' is NOT valid for codex
-  const badCodex = { phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "x", effort: "max" }] }], answer_item: "P1" };
+  const badCodex = { complexity: "simple", phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "x", effort: "max" }] }], answer_item: "P1" };
   assert.throws(() => validatePlan(badCodex, allow), /effort .* not allowed for provider "codex"/);
   // the retired per-launch `fast` field is now an UNKNOWN field => rejected
   // (codex always runs turbo, so there is nothing to toggle per launch)
-  const badFast = { phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "x", fast: true }] }], answer_item: "P1" };
+  const badFast = { complexity: "simple", phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "x", effort: "xhigh", fast: true }] }], answer_item: "P1" };
   assert.throws(() => validatePlan(badFast, allow), /unknown field/);
 });
 
 test("validatePlan enforces per-phase launch cap (max_batch_items)", () => {
-  const launches = Array.from({ length: allow.maxBatchItems + 1 }, (_v, i) => ({ id: `P${i}`, provider: "codex", prompt: "x" }));
-  assert.throws(() => validatePlan({ phases: [{ name: "p", launches }], answer_item: "P0" }, allow), /exceeds max_batch_items/);
+  const launches = Array.from({ length: allow.maxBatchItems + 1 }, (_v, i) => ({ id: `P${i}`, provider: "codex", effort: "xhigh", prompt: "x" }));
+  assert.throws(() => validatePlan({ complexity: "simple", phases: [{ name: "p", launches }], answer_item: "P0" }, allow), /exceeds max_batch_items/);
 });

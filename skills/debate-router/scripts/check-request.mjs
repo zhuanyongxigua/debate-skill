@@ -17,9 +17,11 @@
 
 import { readFileSync } from "node:fs";
 
-const ALLOWED = ["schema_version", "id", "kind", "prompt", "repo", "language", "fast", "planner_provider"];
+const ALLOWED = ["schema_version", "id", "kind", "prompt", "repo", "language", "fast", "planner_provider", "providers"];
 const REQUIRED = ["schema_version", "id", "kind", "prompt", "repo"];
 const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,128}$/;
+const SUPPORTED_PROVIDERS = ["claude", "codex", "copilot"];
+const PLANNER_PROVIDERS = ["claude", "codex"];
 
 function check(raw) {
   const errs = [];
@@ -51,13 +53,34 @@ function check(raw) {
     errs.push("language must be a string or null");
   }
   if ("fast" in raw && typeof raw.fast !== "boolean") errs.push("fast must be a boolean");
+  let effectiveProviders = ["codex"];
+  if ("providers" in raw && raw.providers !== null) {
+    if (!Array.isArray(raw.providers) || !raw.providers.every((p) => typeof p === "string")) {
+      errs.push("providers must be an array of strings");
+    } else {
+      if (raw.providers.length === 0) errs.push("providers must be a non-empty array");
+      effectiveProviders = raw.providers;
+      const seen = new Set();
+      for (const p of effectiveProviders) {
+        if (!SUPPORTED_PROVIDERS.includes(p)) errs.push(`providers entry ${JSON.stringify(p)} is not supported by the daemon`);
+        if (seen.has(p)) errs.push(`providers has duplicate entry ${JSON.stringify(p)}`);
+        seen.add(p);
+      }
+    }
+  }
   if ("planner_provider" in raw) {
     if (typeof raw.planner_provider !== "string") {
       errs.push("planner_provider must be a string");
-    } else if (!["claude", "codex"].includes(raw.planner_provider)) {
+    } else if (!PLANNER_PROVIDERS.includes(raw.planner_provider)) {
       errs.push('planner_provider must be "claude" or "codex"');
+    } else if (!effectiveProviders.includes(raw.planner_provider)) {
+      errs.push("planner_provider must be included in providers (omitted providers defaults to codex)");
     }
     if (raw.fast === true) errs.push("planner_provider requires fast=false because fast requests skip the planner");
+  }
+  const defaultPlanner = typeof raw.planner_provider === "string" ? raw.planner_provider : effectiveProviders[0];
+  if (raw.fast !== true && !PLANNER_PROVIDERS.includes(defaultPlanner)) {
+    errs.push("planner defaults to the first providers entry; put claude/codex first or set planner_provider");
   }
   return errs;
 }

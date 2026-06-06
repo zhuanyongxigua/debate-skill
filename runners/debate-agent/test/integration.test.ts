@@ -297,7 +297,7 @@ test("watch daemon: real bin subprocess — planner retry + multi-phase template
   const argsFile = join(ctx.root, "claude_args");
   const planCounter = join(ctx.root, "plan_calls");
   const plan =
-    '{"phases":[{"name":"proposal_generation","launches":[{"id":"P1","provider":"claude","prompt":"propose"}]},{"name":"arbitration","launches":[{"id":"A1","provider":"claude","prompt":"context {{P1.output}} decide"}]}],"answer_item":"A1"}';
+    '{"complexity":"simple","phases":[{"name":"proposal_generation","launches":[{"id":"P1","provider":"claude","effort":"high","prompt":"propose"}]},{"name":"arbitration","launches":[{"id":"A1","provider":"claude","effort":"high","prompt":"context {{P1.output}} decide"}]}],"answer_item":"A1"}';
   // Route planner vs worker by ARGV (--json-schema is present on every planner
   // call, fresh or --resume) rather than by a stdin marker — the resume prompt no
   // longer repeats "You are the PLANNER", so argv is the robust discriminator.
@@ -335,7 +335,7 @@ test("watch daemon: real bin subprocess — planner retry + multi-phase template
     const id = "20260531-itest-debate";
     writeFileSync(
       join(mailbox, "requests", `${id}.json`),
-      JSON.stringify({ schema_version: 1, id, kind: "debate_request", prompt: "should we X or Y?", repo: realpathSync(ctx.repo) }),
+      JSON.stringify({ schema_version: 1, id, kind: "debate_request", prompt: "should we X or Y?", repo: realpathSync(ctx.repo), providers: ["claude"] }),
     );
 
     const respPath = join(mailbox, "responses", `${id}.json`);
@@ -412,7 +412,7 @@ test("watch daemon: a failed planner AND worker fall back to the other engine", 
       "exit 1\n",
   );
   const plan =
-    '{"phases":[{"name":"proposal_generation","launches":[{"id":"P1","provider":"claude","prompt":"propose something"}]}],"answer_item":"P1"}';
+    '{"complexity":"simple","phases":[{"name":"proposal_generation","launches":[{"id":"P1","provider":"claude","effort":"high","prompt":"propose something"}]}],"answer_item":"P1"}';
   makeStub(
     ctx.binDir,
     "codex",
@@ -437,7 +437,7 @@ test("watch daemon: a failed planner AND worker fall back to the other engine", 
     const id = "20260531-itest-failure-fallback";
     writeFileSync(
       join(mailbox, "requests", `${id}.json`),
-      JSON.stringify({ schema_version: 1, id, kind: "debate_request", prompt: "decide X", repo: realpathSync(ctx.repo) }),
+      JSON.stringify({ schema_version: 1, id, kind: "debate_request", prompt: "decide X", repo: realpathSync(ctx.repo), providers: ["claude", "codex"] }),
     );
 
     const respPath = join(mailbox, "responses", `${id}.json`);
@@ -473,12 +473,12 @@ test("watch daemon: a failed planner AND worker fall back to the other engine", 
   }
 });
 
-test("watch daemon: request planner_provider overrides the daemon default planner", async () => {
+test("watch daemon: request planner_provider overrides the first providers entry", async () => {
   const ctx = setup();
   const claudeArgs = join(ctx.root, "claude_args");
   const codexArgs = join(ctx.root, "codex_args");
   const plan =
-    '{"phases":[{"name":"proposal_generation","launches":[{"id":"P1","provider":"claude","prompt":"worker prompt"}]}],"answer_item":"P1"}';
+    '{"complexity":"simple","phases":[{"name":"proposal_generation","launches":[{"id":"P1","provider":"claude","effort":"high","prompt":"worker prompt"}]}],"answer_item":"P1"}';
   makeStub(
     ctx.binDir,
     "claude",
@@ -515,7 +515,8 @@ test("watch daemon: request planner_provider overrides the daemon default planne
   let daemon: ReturnType<typeof spawn> | undefined;
   try {
     let stderr = "";
-    // Start with a claude default, then override it per request with planner_provider.
+    // The legacy daemon --planner is present, but this request explicitly picks
+    // codex through planner_provider.
     daemon = spawn(process.execPath, [BIN, "--config", ctx.cfg, "watch", "--planner", "claude"], { env, detached: true });
     daemon.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
     daemon.on("error", (e) => (stderr += `spawn error: ${String(e)}`));
@@ -531,6 +532,7 @@ test("watch daemon: request planner_provider overrides the daemon default planne
         prompt: "decide X",
         repo: realpathSync(ctx.repo),
         fast: false,
+        providers: ["claude", "codex"],
         planner_provider: "codex",
       }),
     );
@@ -561,19 +563,351 @@ test("watch daemon: request planner_provider overrides the daemon default planne
   }
 });
 
-test("watch daemon: a fast request skips the planner and runs the fixed 2-phase shape", async () => {
+test("watch daemon: first request provider beats legacy daemon --planner", async () => {
   const ctx = setup();
-  // No planner runs in fast mode: the daemon builds a fixed 2-phase plan in code.
-  // The stubs serve ONLY as workers (no `--json-schema` planner call ever reaches
-  // them). codex echoes CODEX[...], claude echoes CLAUDE[...]; the arbiter (A1
-  // claude) embeds both worker outputs, proving the shape + substitution e2e.
-  const argsFile = join(ctx.root, "claude_args");
-  makeStub(ctx.binDir, "codex", "#!/usr/bin/env bash\ninput=$(cat)\nprintf 'CODEX[%s]\\n' \"$input\"\n");
+  const claudeArgs = join(ctx.root, "claude_args");
+  const codexArgs = join(ctx.root, "codex_args");
+  const plan =
+    '{"complexity":"simple","phases":[{"name":"proposal_generation","launches":[{"id":"P1","provider":"claude","effort":"high","prompt":"worker prompt"}]}],"answer_item":"P1"}';
   makeStub(
     ctx.binDir,
     "claude",
-    "#!/usr/bin/env bash\n" + `echo "$@" >> ${JSON.stringify(argsFile)}\n` + "input=$(cat)\nprintf 'CLAUDE[%s]\\n' \"$input\"\n",
+    "#!/usr/bin/env bash\n" +
+      `echo "$@" >> ${JSON.stringify(claudeArgs)}\n` +
+      'if printf "%s" "$*" | grep -q -- "--json-schema"; then\n' +
+      "  printf 'claude should not be the planner when providers[0] is codex\\n' >&2\n" +
+      "  exit 9\n" +
+      "fi\n" +
+      "input=$(cat)\n" +
+      "printf 'CLAUDE_WORKER[%s]\\n' \"$input\"\n",
   );
+  makeStub(
+    ctx.binDir,
+    "codex",
+    "#!/usr/bin/env bash\n" +
+      `echo "$@" >> ${JSON.stringify(codexArgs)}\n` +
+      "input=$(cat)\n" +
+      'out=""\n' +
+      'prev=""\n' +
+      'for arg in "$@"; do\n' +
+      '  if [ "$prev" = "-o" ]; then out="$arg"; fi\n' +
+      '  prev="$arg"\n' +
+      "done\n" +
+      'if printf "%s" "$input" | grep -q "You are the PLANNER"; then\n' +
+      `  [ -n "$out" ] && printf '%s\\n' ${JSON.stringify(plan)} > "$out"\n` +
+      `  printf '%s\\n' ${JSON.stringify(plan)}\n` +
+      "else\n" +
+      "  printf 'CODEX_WORKER[%s]\\n' \"$input\"\n" +
+      "fi\n",
+  );
+  const mailbox = join(ctx.root, "mailbox");
+  const env = cliEnv(ctx, { DEBATE_AGENT_MAILBOX: mailbox });
+  let daemon: ReturnType<typeof spawn> | undefined;
+  try {
+    let stderr = "";
+    daemon = spawn(process.execPath, [BIN, "--config", ctx.cfg, "watch", "--planner", "claude"], { env, detached: true });
+    daemon.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
+    daemon.on("error", (e) => (stderr += `spawn error: ${String(e)}`));
+    await waitFor(() => stderr.includes("polling every"), 8000, `daemon banner (stderr so far: ${stderr})`);
+
+    const id = "20260606-itest-first-provider-planner";
+    writeFileSync(
+      join(mailbox, "requests", `${id}.json`),
+      JSON.stringify({
+        schema_version: 1,
+        id,
+        kind: "debate_request",
+        prompt: "decide X",
+        repo: realpathSync(ctx.repo),
+        fast: false,
+        providers: ["codex", "claude"],
+      }),
+    );
+
+    const respPath = join(mailbox, "responses", `${id}.json`);
+    await waitFor(() => existsSync(respPath), 15000, `response ${id}.json (stderr: ${stderr})`);
+
+    const resp = JSON.parse(readFileSync(respPath, "utf8"));
+    assert.equal(resp.status, "completed", JSON.stringify(resp));
+    assert.match(resp.answer_markdown, /CLAUDE_WORKER\[worker prompt\]/);
+    assert.match(readFileSync(codexArgs, "utf8"), /--output-schema/, "providers[0] codex should be the planner");
+    assert.ok(!readFileSync(claudeArgs, "utf8").includes("--json-schema"), "legacy --planner must not override providers[0]");
+  } finally {
+    if (daemon?.pid !== undefined) {
+      try {
+        process.kill(-daemon.pid, "SIGKILL");
+      } catch {
+        try {
+          daemon.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+    cleanup(ctx.root);
+  }
+});
+
+test("watch daemon: request providers can force every role to codex", async () => {
+  const ctx = setup();
+  const claudeArgs = join(ctx.root, "claude_args");
+  const codexArgs = join(ctx.root, "codex_args");
+  const plan =
+    '{"complexity":"simple","phases":[{"name":"proposal_generation","launches":[{"id":"P1","provider":"codex","effort":"xhigh","prompt":"worker prompt"}]}],"answer_item":"P1"}';
+  makeStub(
+    ctx.binDir,
+    "claude",
+    "#!/usr/bin/env bash\n" +
+      `echo "$@" >> ${JSON.stringify(claudeArgs)}\n` +
+      "cat >/dev/null\n" +
+      "printf 'claude should not be launched for providers=[codex]\\n' >&2\n" +
+      "exit 9\n",
+  );
+  makeStub(
+    ctx.binDir,
+    "codex",
+    "#!/usr/bin/env bash\n" +
+      `echo "$@" >> ${JSON.stringify(codexArgs)}\n` +
+      "input=$(cat)\n" +
+      'out=""\n' +
+      'prev=""\n' +
+      'for arg in "$@"; do\n' +
+      '  if [ "$prev" = "-o" ]; then out="$arg"; fi\n' +
+      '  prev="$arg"\n' +
+      "done\n" +
+      'if printf "%s" "$input" | grep -q "You are the PLANNER"; then\n' +
+      `  [ -n "$out" ] && printf '%s\\n' ${JSON.stringify(plan)} > "$out"\n` +
+      `  printf '%s\\n' ${JSON.stringify(plan)}\n` +
+      "else\n" +
+      "  printf 'CODEX_WORKER[%s]\\n' \"$input\"\n" +
+      "fi\n",
+  );
+  const mailbox = join(ctx.root, "mailbox");
+  const env = cliEnv(ctx, { DEBATE_AGENT_MAILBOX: mailbox });
+  let daemon: ReturnType<typeof spawn> | undefined;
+  try {
+    let stderr = "";
+    // Legacy daemon --planner is claude, but this request narrows all launched
+    // providers to codex. That affects planner, workers, and fallback membership.
+    daemon = spawn(process.execPath, [BIN, "--config", ctx.cfg, "watch", "--planner", "claude"], { env, detached: true });
+    daemon.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
+    daemon.on("error", (e) => (stderr += `spawn error: ${String(e)}`));
+    await waitFor(() => stderr.includes("polling every"), 8000, `daemon banner (stderr so far: ${stderr})`);
+
+    const id = "20260606-itest-request-providers-codex";
+    writeFileSync(
+      join(mailbox, "requests", `${id}.json`),
+      JSON.stringify({
+        schema_version: 1,
+        id,
+        kind: "debate_request",
+        prompt: "decide X",
+        repo: realpathSync(ctx.repo),
+        fast: false,
+        providers: ["codex"],
+      }),
+    );
+
+    const respPath = join(mailbox, "responses", `${id}.json`);
+    await waitFor(() => existsSync(respPath), 15000, `response ${id}.json (stderr: ${stderr})`);
+
+    const resp = JSON.parse(readFileSync(respPath, "utf8"));
+    assert.equal(resp.status, "completed", JSON.stringify(resp));
+    assert.match(resp.answer_markdown, /CODEX_WORKER\[worker prompt\]/);
+    assert.deepEqual(
+      resp.trace.map((t: { item: string; provider: string; status: string }) => `${t.item}:${t.provider}:${t.status}`),
+      ["P1:codex:completed"],
+    );
+    assert.match(readFileSync(codexArgs, "utf8"), /--output-schema/, "codex should be the planner");
+    assert.ok(!existsSync(claudeArgs), "claude should not be launched for planner or worker");
+    const archived = JSON.parse(readFileSync(join(mailbox, "archive", `${id}.json`), "utf8"));
+    assert.deepEqual(archived.providers, ["codex"]);
+  } finally {
+    if (daemon?.pid !== undefined) {
+      try {
+        process.kill(-daemon.pid, "SIGKILL");
+      } catch {
+        try {
+          daemon.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+    cleanup(ctx.root);
+  }
+});
+
+test("watch daemon: codex-only provider set cannot fall back to claude", async () => {
+  const ctx = setup();
+  const claudeArgs = join(ctx.root, "claude_args");
+  const codexArgs = join(ctx.root, "codex_args");
+  makeStub(
+    ctx.binDir,
+    "claude",
+    "#!/usr/bin/env bash\n" +
+      `echo "$@" >> ${JSON.stringify(claudeArgs)}\n` +
+      "cat >/dev/null\n" +
+      "printf 'claude must not be used as fallback for providers=[codex]\\n' >&2\n" +
+      "exit 9\n",
+  );
+  makeStub(
+    ctx.binDir,
+    "codex",
+    "#!/usr/bin/env bash\n" +
+      `echo "$@" >> ${JSON.stringify(codexArgs)}\n` +
+      "cat >/dev/null\n" +
+      "printf 'codex unavailable\\n' >&2\n" +
+      "exit 7\n",
+  );
+  const mailbox = join(ctx.root, "mailbox");
+  const env = cliEnv(ctx, { DEBATE_AGENT_MAILBOX: mailbox });
+  let daemon: ReturnType<typeof spawn> | undefined;
+  try {
+    let stderr = "";
+    daemon = spawn(process.execPath, [BIN, "--config", ctx.cfg, "watch"], { env, detached: true });
+    daemon.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
+    daemon.on("error", (e) => (stderr += `spawn error: ${String(e)}`));
+    await waitFor(() => stderr.includes("polling every"), 8000, `daemon banner (stderr so far: ${stderr})`);
+
+    const id = "20260606-itest-codex-only-no-claude-fallback";
+    writeFileSync(
+      join(mailbox, "requests", `${id}.json`),
+      JSON.stringify({
+        schema_version: 1,
+        id,
+        kind: "debate_request",
+        prompt: "decide X",
+        repo: realpathSync(ctx.repo),
+        fast: true,
+        providers: ["codex"],
+      }),
+    );
+
+    const respPath = join(mailbox, "responses", `${id}.json`);
+    await waitFor(() => existsSync(respPath), 15000, `response ${id}.json (stderr: ${stderr})`);
+
+    const resp = JSON.parse(readFileSync(respPath, "utf8"));
+    assert.equal(resp.status, "degraded", JSON.stringify(resp));
+    assert.ok(resp.trace.length > 0, "failed codex launches should still be traced");
+    assert.deepEqual([...new Set(resp.trace.map((t: { provider: string }) => t.provider))], ["codex"]);
+    assert.ok(!existsSync(claudeArgs), "claude should not launch as fallback outside request providers");
+    assert.ok(readFileSync(codexArgs, "utf8").length > 0, "codex should have been attempted");
+  } finally {
+    if (daemon?.pid !== undefined) {
+      try {
+        process.kill(-daemon.pid, "SIGKILL");
+      } catch {
+        try {
+          daemon.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+    cleanup(ctx.root);
+  }
+});
+
+test("watch daemon: codex-only full plan rejects a claude worker from the planner", async () => {
+  const ctx = setup();
+  const claudeArgs = join(ctx.root, "claude_args");
+  const codexArgs = join(ctx.root, "codex_args");
+  const plan =
+    '{"complexity":"simple","phases":[{"name":"proposal_generation","launches":[{"id":"P1","provider":"claude","effort":"high","prompt":"worker prompt"}]}],"answer_item":"P1"}';
+  makeStub(
+    ctx.binDir,
+    "claude",
+    "#!/usr/bin/env bash\n" +
+      `echo "$@" >> ${JSON.stringify(claudeArgs)}\n` +
+      "cat >/dev/null\n" +
+      "printf 'claude worker must not launch for providers=[codex]\\n' >&2\n" +
+      "exit 9\n",
+  );
+  makeStub(
+    ctx.binDir,
+    "codex",
+    "#!/usr/bin/env bash\n" +
+      `echo "$@" >> ${JSON.stringify(codexArgs)}\n` +
+      "input=$(cat)\n" +
+      'out=""\n' +
+      'prev=""\n' +
+      'for arg in "$@"; do\n' +
+      '  if [ "$prev" = "-o" ]; then out="$arg"; fi\n' +
+      '  prev="$arg"\n' +
+      "done\n" +
+      'if printf "%s" "$input" | grep -q "You are the PLANNER"; then\n' +
+      `  [ -n "$out" ] && printf '%s\\n' ${JSON.stringify(plan)} > "$out"\n` +
+      `  printf '%s\\n' ${JSON.stringify(plan)}\n` +
+      "else\n" +
+      "  printf 'CODEX_WORKER[%s]\\n' \"$input\"\n" +
+      "fi\n",
+  );
+  const mailbox = join(ctx.root, "mailbox");
+  const env = cliEnv(ctx, { DEBATE_AGENT_MAILBOX: mailbox });
+  let daemon: ReturnType<typeof spawn> | undefined;
+  try {
+    let stderr = "";
+    daemon = spawn(process.execPath, [BIN, "--config", ctx.cfg, "watch"], { env, detached: true });
+    daemon.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
+    daemon.on("error", (e) => (stderr += `spawn error: ${String(e)}`));
+    await waitFor(() => stderr.includes("polling every"), 8000, `daemon banner (stderr so far: ${stderr})`);
+
+    const id = "20260606-itest-codex-only-rejects-claude-plan";
+    writeFileSync(
+      join(mailbox, "requests", `${id}.json`),
+      JSON.stringify({
+        schema_version: 1,
+        id,
+        kind: "debate_request",
+        prompt: "decide X",
+        repo: realpathSync(ctx.repo),
+        fast: false,
+        providers: ["codex"],
+      }),
+    );
+
+    const respPath = join(mailbox, "responses", `${id}.json`);
+    await waitFor(() => existsSync(respPath), 15000, `response ${id}.json (stderr: ${stderr})`);
+
+    const resp = JSON.parse(readFileSync(respPath, "utf8"));
+    assert.equal(resp.status, "error", JSON.stringify(resp));
+    assert.match(resp.status_reason, /provider .*claude.*not in allowlist/);
+    assert.match(readFileSync(codexArgs, "utf8"), /--output-schema/, "codex should have run as planner");
+    assert.ok(!existsSync(claudeArgs), "invalid claude worker plan must be rejected before launch");
+  } finally {
+    if (daemon?.pid !== undefined) {
+      try {
+        process.kill(-daemon.pid, "SIGKILL");
+      } catch {
+        try {
+          daemon.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+    cleanup(ctx.root);
+  }
+});
+
+test("watch daemon: a fast request skips the planner and runs the fixed 2-phase shape", async () => {
+  const ctx = setup();
+  // No planner runs in fast mode: the daemon builds a fixed 2-phase plan in code.
+  // With providers omitted, the request defaults to codex-only, so every worker
+  // is codex and no claude process should launch.
+  const claudeArgs = join(ctx.root, "claude_args");
+  const codexArgs = join(ctx.root, "codex_args");
+  makeStub(
+    ctx.binDir,
+    "claude",
+    "#!/usr/bin/env bash\n" +
+      `echo "$@" >> ${JSON.stringify(claudeArgs)}\n` +
+      "cat >/dev/null\n" +
+      "printf 'claude should not launch for omitted providers default\\n' >&2\n" +
+      "exit 9\n",
+  );
+  makeStub(ctx.binDir, "codex", "#!/usr/bin/env bash\n" + `echo "$@" >> ${JSON.stringify(codexArgs)}\n` + "input=$(cat)\nprintf 'CODEX[%s]\\n' \"$input\"\n");
   const mailbox = join(ctx.root, "mailbox");
   const env = cliEnv(ctx, { DEBATE_AGENT_MAILBOX: mailbox });
   let daemon: ReturnType<typeof spawn> | undefined;
@@ -595,18 +929,18 @@ test("watch daemon: a fast request skips the planner and runs the fixed 2-phase 
 
     const resp = JSON.parse(readFileSync(respPath, "utf8"));
     assert.equal(resp.status, "completed", JSON.stringify(resp));
-    // fixed shape: P1 codex + P2 claude (proposal_generation), then A1 claude (arbitration)
+    // omitted providers defaults to codex-only: P1/P2/A1 all run on codex.
     assert.deepEqual(
       resp.trace.map((t: { item: string; provider: string }) => `${t.item}:${t.provider}`),
-      ["P1:codex", "P2:claude", "A1:claude"],
+      ["P1:codex", "P2:codex", "A1:codex"],
     );
     // the arbiter answer embeds BOTH workers' outputs (mechanical substitution)
     assert.match(resp.answer_markdown, /CODEX\[/);
-    assert.match(resp.answer_markdown, /CLAUDE\[/);
     // PROOF the planner was skipped: no planner stream file, and no --json-schema
-    // (the planner's structured-output flag) ever reached the claude stub
+    // (the planner's structured-output flag) ever reached any worker stub.
     assert.ok(!existsSync(join(mailbox, "responses", `${id}.streams`, "planner-1.log")), "no planner stream in fast mode");
-    assert.ok(!readFileSync(argsFile, "utf8").includes("--json-schema"), "no planner call (no --json-schema)");
+    assert.ok(!existsSync(claudeArgs), "claude should not launch when providers is omitted");
+    assert.ok(!readFileSync(codexArgs, "utf8").includes("--output-schema"), "no planner call (no --output-schema)");
   } finally {
     if (daemon?.pid !== undefined) {
       try {

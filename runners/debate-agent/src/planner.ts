@@ -93,8 +93,9 @@ const PLAN_FORMAT = `Output ONLY one JSON object — no prose, no markdown, no c
 Rules you MUST follow:
 - "complexity": FIRST judge the task. SIMPLE = a focused question, a small/single-area change, or a clearly-scoped review. COMPLEX = broad, contentious, large, or spanning multiple subsystems.
   - If SIMPLE, emit the FAST workflow (keep it short, this is the whole point):
-      Phase 1 "proposal_generation": TWO independent reviewers in PARALLEL — P1 codex (effort xhigh) and P2 claude (effort high) — each independently does the task/review.
-      Phase 2 "arbitration": ONE claude (effort high) arbiter that reads {{P1.output}} and {{P2.output}} and writes the final answer, noting any disagreement. answer_item = that arbiter.
+      Phase 1 "proposal_generation": TWO independent reviewers in PARALLEL — normally P1 codex (effort xhigh) and P2 claude (effort high) — each independently does the task/review.
+      Phase 2 "arbitration": ONE arbiter (normally claude effort high) that reads {{P1.output}} and {{P2.output}} and writes the final answer, noting any disagreement. answer_item = that arbiter.
+      If this request restricts allowed providers (see "Provider constraint" below), keep the same two-reviewer -> one-arbiter shape but use ONLY allowed providers; for example, codex-only means P1/P2/A1 are all codex effort xhigh.
       Do NOT add separate critique / cross-review phases for a simple task.
   - If COMPLEX, design the full bounded debate (proposal_generation -> normalization -> critique -> cross_review -> arbitration), allocating providers and effort per the task.
 - "effort" (per launch, the planner's choice — DO set it):
@@ -111,6 +112,7 @@ Rules you MUST follow:
 
 function buildPlannerPrompt(req: DebateRequest, lastError: string | null): string {
   const lang = req.language ? `Write every worker prompt AND the final answer in this language: ${req.language}.` : "";
+  const providerConstraint = `Provider constraint for this request: use ONLY these worker providers in the plan, in this preference order: ${req.providers.join(", ")}. Do not use any provider outside this list.`;
   // The planner only runs for NON-fast (full) debates — a fast request skips it for
   // a hardcoded lean shape (see debate.ts buildFastPlan) — so there is no "fast"
   // leanness hint here.
@@ -126,6 +128,7 @@ function buildPlannerPrompt(req: DebateRequest, lastError: string | null): strin
     "",
     `Target repository (workers run read-only here): ${req.repo}`,
     lang,
+    providerConstraint,
     "",
     PLAN_FORMAT,
     retry,
