@@ -359,7 +359,7 @@ prompts; the daemon produces those.
 | `language` | string | optional; the human's language (workers + answer use it) |
 | `fast` | bool | optional. **The skill always writes it `true`** (lean flow: skip the planner and run a fixed lean 2-phase shape, 2 parallel reviewers → 1 arbiter); `false` runs the full planner debate (use only on an explicit serious/thorough request). **Daemon default when the field is omitted is `false`** (conservative full-planner path — a hand-crafted request must set `true` for the lean path). Does NOT control turbo (codex always turbo) |
 | `planner_provider` | string | optional, only with `fast: false`. `"claude"` or `"codex"`; must be in allowlist `providers` and inside the effective request `providers` (omitted `providers` defaults to `["codex"]`). Overrides the default planner for this one request. |
-| `providers` | string[] | optional request-level provider set for **all** daemon-launched CLIs: planner, workers, fast path, and fallback. If omitted, it defaults to `["codex"]`, so every role is codex by default. It only narrows the allowlist, never widens it. You can add multiple providers, e.g. `["codex", "claude"]`; order controls the planner default. With `fast: false`, the planner defaults to the first entry unless `planner_provider` is set, so put `claude` or `codex` first or specify `planner_provider`. Fallback preference remains the allowlist's `fallback.order`, filtered to the request's providers. |
+| `providers` | string[] | optional request-level provider set for **all** daemon-launched CLIs: planner, workers, fast path, and fallback. If omitted, it defaults to `["codex"]`, so every role is codex by default. It only narrows the allowlist, never widens it. In the fast path, fixed roles consume provider order directly: `P1 = providers[0]`, `P2 = providers[1] ?? providers[0]`, `A1 = providers[2] ?? providers[0]`; entries after the first three are ignored by the fixed role assignment. With `fast: false`, the planner defaults to the first entry unless `planner_provider` is set. Fallback preference remains the allowlist's `fallback.order`, filtered to the request's providers. |
 
 ### How the daemon runs a debate
 
@@ -370,8 +370,11 @@ CLI it spawns (the planner and every worker) is **read-only**.
 > daemon does **not** call the planner — it builds a fixed lean 2-phase plan in code
 > (two parallel reviewers → one arbiter, `debate.ts buildFastPlan`, mirroring the
 > debate-router FAST workflow) and goes straight to step 2. That is much faster and
-> cheaper but shallower (generic worker prompts). Step 1 below runs only for the
-> full `fast: false` debate.
+> cheaper but shallower (generic worker prompts). Provider assignment is positional:
+> `providers[0]` runs `P1`, `providers[1]` runs `P2` when present otherwise `P1`'s
+> provider is reused, and `providers[2]` runs `A1` when present otherwise `P1`'s
+> provider is reused; extra providers are not assigned to fixed roles. Step 1 below
+> runs only for the full `fast: false` debate.
 
 1. **Plan (one-shot, with retry).** The daemon spawns a **planner** CLI
    (a request may select it with `planner_provider` when `fast: false`; otherwise
@@ -490,10 +493,11 @@ The split is deliberate and preserves the runner's invariants:
 - A `debate_request.providers` field narrows this same provider set for one
   request. If omitted, it defaults to `["codex"]`, so the planner (if any), every
   worker, the fast-path fixed roles, and fallback use only codex. To allow other
-  engines, list them explicitly, e.g. `providers: ["codex", "claude"]`; the
-  planner defaults to the first entry unless `planner_provider` is set. Fallback
-  still follows the allowlist's `fallback.order`, filtered to the request's
-  provider set.
+  engines, list them explicitly. In fast mode the first three entries are assigned
+  positionally to `P1`, `P2`, and `A1`; missing positions reuse `providers[0]`,
+  and later entries are ignored by the fixed shape. In full mode the planner
+  defaults to the first entry unless `planner_provider` is set. Fallback still
+  follows the allowlist's `fallback.order`, filtered to the request's provider set.
 
 Tuning (allowlist, hot-reloaded per request):
 
@@ -719,8 +723,9 @@ CLI on PATH:
   read-only argv on the spawned children, and the cleared `processing/` entry;
 - request-level provider controls across the real daemon boundary:
   omitted `providers` defaults the whole request to codex, multiple providers are
-  honored for planner selection via first-entry default, and `planner_provider`
-  can override that first-provider planner default;
+  assigned positionally to the fast fixed roles, the full planner uses the first
+  provider by default, and `planner_provider` can override that first-provider
+  planner default;
 - **timeout + process-group kill**: a stub backgrounds a grandchild whose marker
   file never appears, proving the whole group is signalled;
 - `install.sh` frozen vs `--symlink`, then invoking the installed launcher —

@@ -156,13 +156,14 @@ function buildFastPlan(req: DebateRequest, allow: Allowlist): Plan {
   // fills the daemon's own {{P1.output}}/{{P2.output}} below — cannot accidentally
   // mangle a literal placeholder the user happened to write in their prompt.
   const task = req.prompt.replace(/\{\{/g, "{ {");
-  // Pick real allowlisted providers — prefer the canonical codex+claude reviewers
-  // and a claude arbiter, but fall back to whatever IS allowlisted so a narrowed
-  // allowlist degrades to a working provider instead of a rejected/empty reviewer.
-  const pick = (...prefs: string[]) => prefs.find((p) => allow.providers.includes(p)) ?? allow.providers[0] ?? "claude";
-  const r1 = pick("codex", "claude");
-  const r2 = pick("claude", "codex");
-  const arb = pick("claude", "codex");
+  // Assign the fixed fast-path roles from the request's effective provider
+  // order. If fewer than three providers were selected, reuse the first one;
+  // if more were selected, the fast shape intentionally consumes only the first
+  // three roles (P1, P2, A1).
+  const firstProvider = allow.providers[0] ?? "codex";
+  const r1 = allow.providers[0] ?? firstProvider;
+  const r2 = allow.providers[1] ?? firstProvider;
+  const arb = allow.providers[2] ?? firstProvider;
   const reviewer =
     `${task}\n\nIndependently complete the task above. If it concerns this repository, read the ` +
     `affected code AND its callers/dependents to judge impact — do not restrict yourself to only a diff, ` +

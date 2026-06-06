@@ -82,14 +82,18 @@ plus one optional execution adapter:
    all. This is a speed/token-vs-depth tradeoff: the fast path is shallower (no
    planner-designed, task-specific prompts). The hardcoded shape MIRRORS
    debate-router's FAST workflow **by hand** (same pattern as `launch.ts`
-   mirroring `cli-launch`); keep them in sync. The **full** planner path (one
-   planning call + mechanical execution, per (c)) still runs for `fast: false`,
-   used only when the human explicitly asks for a serious/thorough debate. For
-   hand-authored daemon requests, the raw omitted-field default remains
-   conservative `fast: false`; the skill must write `fast: true` when it wants the
-   lean default. Also: **codex always runs turbo (`service_tier=fast` /
-   `fast_mode`) at xhigh** as its default posture — fully decoupled from the
-   `fast` field; there is no per-request/per-launch turbo toggle.
+   mirroring `cli-launch`); keep them in sync. The fixed roles consume the
+   effective request `providers` order positionally: P1 uses `providers[0]`, P2
+   uses `providers[1]` or falls back to `providers[0]`, A1 uses `providers[2]` or
+   falls back to `providers[0]`; extra providers are ignored by this fixed role
+   assignment. The **full** planner path (one planning call + mechanical
+   execution, per (c)) still runs for `fast: false`, used only when the human
+   explicitly asks for a serious/thorough debate. For hand-authored daemon
+   requests, the raw omitted-field default remains conservative `fast: false`; the
+   skill must write `fast: true` when it wants the lean default. Also: **codex
+   always runs turbo (`service_tier=fast` / `fast_mode`) at xhigh** as its default
+   posture — fully decoupled from the `fast` field; there is no
+   per-request/per-launch turbo toggle.
 4. **The runner is closed by default and fails closed.** No `repo_roots` ⇒ every
    request rejected. Malformed config raises at startup; the daemon's per-request
    allowlist reload instead keeps the last-good config and warns — neither path

@@ -236,11 +236,12 @@ test("a fast request skips the planner and runs the fixed lean 2-phase shape", a
   const resp = await runDebate(req({ fast: true, prompt: "REVIEW THIS TASK" }), allow, { planner, runItems, readOutput });
 
   assert.equal(resp.status, "completed");
-  // fixed shape: phase 1 = P1 codex + P2 claude in parallel; phase 2 = A1 claude
-  assert.deepEqual(resp.trace.map((t) => `${t.item}:${t.provider}`), ["P1:codex", "P2:claude", "A1:claude"]);
+  // fixed shape: phase 1 = P1/P2 from providers[0]/[1], phase 2 = A1 from
+  // providers[2] if present, otherwise providers[0].
+  assert.deepEqual(resp.trace.map((t) => `${t.item}:${t.provider}`), ["P1:codex", "P2:claude", "A1:codex"]);
   assert.equal(calls.length, 2);
   assert.deepEqual(calls[0]!.map((it) => it.req!.provider), ["codex", "claude"]);
-  assert.deepEqual(calls[1]!.map((it) => it.req!.provider), ["claude"]);
+  assert.deepEqual(calls[1]!.map((it) => it.req!.provider), ["codex"]);
   // the generic reviewer prompt embeds the human's task verbatim
   assert.match(calls[0]![0]!.req!.prompt, /REVIEW THIS TASK/);
   // the arbiter prompt embeds both reviewers' outputs (mechanical {{id.output}})
@@ -272,6 +273,27 @@ test("the fast plan picks allowlisted providers (a narrowed allowlist degrades g
   const resp = await runDebate(req({ fast: true }), claudeOnly, { planner, runItems, readOutput });
   assert.equal(resp.status, "completed");
   assert.deepEqual(resp.trace.map((t) => `${t.item}:${t.provider}`), ["P1:claude", "P2:claude", "A1:claude"]);
+});
+
+test("the fast plan assigns roles from provider order and ignores providers after the first three", async () => {
+  const threeProviders = makeAllowlist(repo, {
+    providers: ["claude", "codex", "copilot"],
+    profiles: { claude: [], codex: [], copilot: [] },
+    fallback: { enabled: true, order: ["claude", "codex", "copilot"] },
+  });
+  const planner: PlannerFn = async () => {
+    throw new Error("planner must NOT be called for a fast request");
+  };
+  const { runItems, calls } = stubRun();
+  const resp = await runDebate(
+    req({ fast: true, providers: ["claude", "codex", "copilot"] }),
+    threeProviders,
+    { planner, runItems, readOutput },
+  );
+  assert.equal(resp.status, "completed");
+  assert.deepEqual(resp.trace.map((t) => `${t.item}:${t.provider}`), ["P1:claude", "P2:codex", "A1:copilot"]);
+  assert.deepEqual(calls.flat().map((it) => it.req!.provider), ["claude", "codex", "copilot"]);
+  assert.deepEqual(calls.flat().map((it) => it.req!.effort), ["high", "xhigh", "high"]);
 });
 
 test("runDebate honors a codex-only request provider set even with a wider allowlist", async () => {

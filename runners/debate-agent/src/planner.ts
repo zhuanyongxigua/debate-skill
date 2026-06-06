@@ -93,18 +93,19 @@ const PLAN_FORMAT = `Output ONLY one JSON object — no prose, no markdown, no c
 Rules you MUST follow:
 - "complexity": FIRST judge the task. SIMPLE = a focused question, a small/single-area change, or a clearly-scoped review. COMPLEX = broad, contentious, large, or spanning multiple subsystems.
   - If SIMPLE, emit the FAST workflow (keep it short, this is the whole point):
-      Phase 1 "proposal_generation": TWO independent reviewers in PARALLEL — normally P1 codex (effort xhigh) and P2 claude (effort high) — each independently does the task/review.
-      Phase 2 "arbitration": ONE arbiter (normally claude effort high) that reads {{P1.output}} and {{P2.output}} and writes the final answer, noting any disagreement. answer_item = that arbiter.
-      If this request restricts allowed providers (see "Provider constraint" below), keep the same two-reviewer -> one-arbiter shape but use ONLY allowed providers; for example, codex-only means P1/P2/A1 are all codex effort xhigh.
+      Phase 1 "proposal_generation": TWO independent reviewers in PARALLEL; Phase 2 "arbitration": ONE arbiter that reads {{P1.output}} and {{P2.output}} and writes the final answer, noting any disagreement. answer_item = that arbiter.
+      Use the request provider order positionally: P1 = providers[0], P2 = providers[1] if present otherwise providers[0], A1 = providers[2] if present otherwise providers[0]. Ignore providers after the first three for this simple shape. For example, codex-only means P1/P2/A1 are all codex effort xhigh.
       Do NOT add separate critique / cross-review phases for a simple task.
   - If COMPLEX, design the full bounded debate (proposal_generation -> normalization -> critique -> cross_review -> arbitration), allocating providers and effort per the task.
 - "effort" (per launch, the planner's choice — DO set it):
     codex: generally "xhigh" (codex is fast/cheap and always runs in turbo mode).
     claude: usually "high" is enough; use "xhigh" or "max" ONLY when that launch needs deep reasoning.
-    valid values — claude: low|medium|high|xhigh|max ; codex: low|medium|high|xhigh.
+    copilot: use "high" (the runner ignores effort for copilot, but the plan must still include one).
+    valid values — claude: low|medium|high|xhigh|max ; codex: low|medium|high|xhigh ; copilot: low|medium|high|xhigh|max.
 - Provider capabilities (allocate accordingly):
     claude worker = can Read/Grep/Glob and run READ-ONLY git (git diff/log/show/status/blame), but NOT arbitrary shell.
     codex worker = read-only OS sandbox; can run any read-only command. Give tasks needing shell beyond git (build, tests, broad inspection) to codex.
+    copilot worker = plan-mode reviewer; useful as an extra independent opinion when the request explicitly includes it.
 - Each launch is one independent read-only worker; its "prompt" must be a COMPLETE, self-contained instruction (the worker does NOT run any skill — it only answers the prompt you give). Give it a concrete anchor (what artifact / which change to look at) and tell it to read the affected code AND its callers/dependents to judge impact — do NOT write "explore the whole repo", and do NOT artificially restrict it to only the diff.
 - Launches within the same phase run in PARALLEL and must NOT depend on each other. A later phase's prompt may embed an EARLIER launch's output with {{<id>.output}} (only earlier phases). Write the surrounding framing yourself.
 - "id" values are unique slugs across the whole plan. "answer_item" is the launch whose output is the final, human-facing answer — its prompt must instruct that worker to write the final answer in the required layout and language.

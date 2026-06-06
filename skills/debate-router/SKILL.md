@@ -448,10 +448,13 @@ Pick a unique `<id>` (`YYYYMMDD-HHMMSS-slug`).
   daemon-launched role is codex by default. Use it only when the human explicitly
   asks for heterogeneous / multi-provider CLI debate or a non-codex engine is
   needed. It can only narrow the daemon's allowlist. Add multiple providers when
-  needed, for example `"providers": ["codex", "claude"]`. In full mode
+  needed, for example `"providers": ["claude", "codex", "copilot"]`. In fast mode,
+  the fixed roles use provider order exactly: `P1 = providers[0]`,
+  `P2 = providers[1] ?? providers[0]`, `A1 = providers[2] ?? providers[0]`; ignore
+  entries after the first three for fixed role assignment. In full mode
   (`fast: false`), the planner defaults to the first provider unless
-  `planner_provider` is set. If you also set `planner_provider`, it must be
-  included in `providers`.
+  `planner_provider` is set. If you also set `planner_provider`, it must be included
+  in `providers`.
 
 > **Exactly these fields, nothing else.** The request has ONLY
 > `schema_version, id, kind, prompt, repo, language, fast, planner_provider,
@@ -521,10 +524,11 @@ Rules in this mode:
   arbiter that reads `{{P1.output}}`+`{{P2.output}}` and writes the final answer.
   No separate critique/cross-review for a simple task — that lean shape mirrors
   `parallel_positions` + arbitration and is the whole point of going fast.
-  Provider allocation still follows the request provider constraint: default
-  codex-only means P1/P2/A1 are all `codex` at `xhigh`; if the caller explicitly
-  requested heterogeneous providers and the constraint includes them, allocate
-  across those providers.
+  Provider allocation is positional from the effective request provider constraint:
+  default codex-only means P1/P2/A1 are all `codex` at `xhigh`; otherwise assign
+  P1 to `providers[0]`, P2 to `providers[1]` if present or `providers[0]` if not,
+  and A1 to `providers[2]` if present or `providers[0]` if not. Ignore providers
+  after the first three for this fixed shape.
   **Complex** task → design the full bounded debate (proposal → normalization →
   critique → cross-review → arbitration).
 - **Pick `effort` per launch** (the daemon no longer hardcodes it). A launch has

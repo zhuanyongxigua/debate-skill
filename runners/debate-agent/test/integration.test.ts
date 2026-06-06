@@ -957,6 +957,81 @@ test("watch daemon: a fast request skips the planner and runs the fixed 2-phase 
   }
 });
 
+test("watch daemon: fast request assigns P1/P2/A1 from the first three providers in request order", async () => {
+  const ctx = setup();
+  const claudeArgs = join(ctx.root, "claude_args");
+  const codexArgs = join(ctx.root, "codex_args");
+  const copilotArgs = join(ctx.root, "copilot_args");
+  writeFileSync(
+    ctx.cfg,
+    JSON.stringify({
+      repo_roots: [ctx.repo],
+      modes: ["debate-proposal"],
+      providers: ["claude", "codex", "copilot"],
+      profiles: { claude: [], codex: [], copilot: [] },
+      capabilities: ["read_only_review"],
+    }),
+  );
+  makeStub(
+    ctx.binDir,
+    "claude",
+    "#!/usr/bin/env bash\n" + `echo "$@" >> ${JSON.stringify(claudeArgs)}\n` + "input=$(cat)\nprintf 'CLAUDE[%s]\\n' \"$input\"\n",
+  );
+  makeStub(ctx.binDir, "codex", "#!/usr/bin/env bash\n" + `echo "$@" >> ${JSON.stringify(codexArgs)}\n` + "input=$(cat)\nprintf 'CODEX[%s]\\n' \"$input\"\n");
+  makeStub(ctx.binDir, "copilot", "#!/usr/bin/env bash\n" + `echo "$@" >> ${JSON.stringify(copilotArgs)}\n` + "printf 'COPILOT[%s]\\n' \"$*\"\n");
+  const mailbox = join(ctx.root, "mailbox");
+  const env = cliEnv(ctx, { DEBATE_AGENT_MAILBOX: mailbox });
+  let daemon: ReturnType<typeof spawn> | undefined;
+  try {
+    let stderr = "";
+    daemon = spawn(process.execPath, [BIN, "--config", ctx.cfg, "watch"], { env, detached: true });
+    daemon.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
+    daemon.on("error", (e) => (stderr += `spawn error: ${String(e)}`));
+    await waitFor(() => stderr.includes("polling every"), 8000, `daemon banner (stderr so far: ${stderr})`);
+
+    const id = "20260606-itest-fast-provider-order";
+    writeFileSync(
+      join(mailbox, "requests", `${id}.json`),
+      JSON.stringify({
+        schema_version: 1,
+        id,
+        kind: "debate_request",
+        prompt: "decide provider order",
+        repo: realpathSync(ctx.repo),
+        fast: true,
+        providers: ["claude", "codex", "copilot"],
+      }),
+    );
+
+    const respPath = join(mailbox, "responses", `${id}.json`);
+    await waitFor(() => existsSync(respPath), 15000, `response ${id}.json (stderr: ${stderr})`);
+
+    const resp = JSON.parse(readFileSync(respPath, "utf8"));
+    assert.equal(resp.status, "completed", JSON.stringify(resp));
+    assert.deepEqual(
+      resp.trace.map((t: { item: string; provider: string }) => `${t.item}:${t.provider}`),
+      ["P1:claude", "P2:codex", "A1:copilot"],
+    );
+    assert.ok(existsSync(claudeArgs), "P1 should launch claude");
+    assert.ok(existsSync(codexArgs), "P2 should launch codex");
+    assert.ok(existsSync(copilotArgs), "A1 should launch copilot");
+    assert.ok(!existsSync(join(mailbox, "responses", `${id}.streams`, "planner-1.log")), "no planner stream in fast mode");
+  } finally {
+    if (daemon?.pid !== undefined) {
+      try {
+        process.kill(-daemon.pid, "SIGKILL");
+      } catch {
+        try {
+          daemon.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+    cleanup(ctx.root);
+  }
+});
+
 test("timeout kills process group", async () => {
   const ctx = setup();
   try {
