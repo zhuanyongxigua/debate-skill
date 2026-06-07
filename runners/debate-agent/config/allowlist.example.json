@@ -41,5 +41,13 @@
   "fallback": {
     "enabled": true,
     "order": ["claude", "codex"]
+  },
+
+  "_delegate_note": "High-level cli-delegator mailbox support is OFF by default. Enable only if you want sandboxed parents to submit ~/.cli-delegator/requests/*.json for this daemon to execute. First implementation supports mode=once only; supervised_loop/control remain future work. workspace_write delegate runs are capped separately because they open a larger blast radius.",
+  "delegate": {
+    "enabled": false,
+    "modes": ["once"],
+    "max_minutes": 30,
+    "max_workspace_write_minutes": 30
   }
 }

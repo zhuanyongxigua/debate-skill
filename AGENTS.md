@@ -14,8 +14,10 @@ plus one optional execution adapter:
   agent CLIs.
 - `runners/debate-agent` — an optional, separately-permissioned thin execution
   adapter (TypeScript/Node). Its `watch` daemon runs **outside** the sandbox and
-  launches `claude`/`codex` on behalf of the sandboxed parent agent (which cannot
-  spawn them itself). **This is the only runtime in the repo.**
+  launches `claude`/`codex` on behalf of sandboxed parent agents (which cannot
+  spawn them themselves). It handles `debate-router`'s `debate_request` mailbox
+  and the first `cli-delegator` `delegate_request` mailbox slice. **This is the
+  only runtime in the repo.**
 - `evals/` — paired evals for the routing/boundary behavior.
 
 ## Core invariants (do not break)
@@ -24,15 +26,15 @@ plus one optional execution adapter:
    Installing or changing the runner never changes a skill's behavior on its
    own — the SKILL.md must say so. Keep that in mind when wiring new behavior.
 2. **The mailbox/daemon split exists to bypass the parent's top-level command
-   reviewer.** `debate-router` runs inside a sandboxed parent whose top-level
-   reviewer (e.g. Codex Rules / execpolicy) kills any attempt to spawn a process.
-   So the skill (in the sandbox) may **only write a high-level `debate_request`
-   file and reason in-context — it must never spawn a CLI or execute the debate.**
+   reviewer.** `debate-router` and `cli-delegator` can run inside a sandboxed
+   parent whose top-level reviewer (e.g. Codex Rules / execpolicy) kills any
+   attempt to spawn a process. So sandboxed skills may **only write high-level
+   request files and reason in-context — they must never spawn a CLI directly.**
    ALL execution happens in the separately-whitelisted `debate-agent` daemon,
-   **outside** the sandbox, reached only through the file mailbox under
-   `~/.debate-router/`. The daemon plans and runs the whole debate; the skill just
-   submits the request and presents the result. Do not have the skill invoke a CLI
-   directly.
+   **outside** the sandbox, reached only through file mailboxes under
+   `~/.debate-router/` (`debate_request`) and `~/.cli-delegator/`
+   (`delegate_request`, currently `mode: "once"` only). The daemon plans and runs
+   debates; the skills submit requests and present results.
 3. **Debate STRATEGY lives in the skill; debate FORMAT and execution live in the
    daemon.** The daemon may run a **one-shot planner** — a CLI that loads
    `debate-router`'s strategy (its planner mode) to design the debate — then
@@ -113,13 +115,18 @@ plus one optional execution adapter:
 4. **The runner is closed by default and fails closed.** No `repo_roots` ⇒ every
    request rejected. Malformed config raises at startup; the daemon's per-request
    allowlist reload instead keeps the last-good config and warns — neither path
-   ever silently widens. Unknown request/batch fields are rejected. Default
-   `capability` is `read_only_review`. Preserve these when editing.
+   ever silently widens. Unknown request/batch/delegate fields are rejected.
+   Default `capability` is `read_only_review`. `delegate_request` support is
+   additionally gated by `allowlist.delegate.enabled`, which defaults to false.
+   Preserve these when editing.
 5. **Static argv only.** No request value is ever spliced into a child `argv` as
    a flag; the prompt goes on stdin. Capability/profile and the optional
    `debate_request.planner_provider` / `debate_request.providers` select among
-   fixed safe templates. Omitted `debate_request.providers` defaults to
-   `["codex"]`; add other engines explicitly in that array. Keep it that way.
+   fixed safe templates. `delegate_request.provider` / `profile` /
+   `capability` / `mode` also only select among fixed templates and allowlist
+   policy; `skill_hint` is prompt-only and must never become argv. Omitted
+   `debate_request.providers` defaults to `["codex"]`; add other engines
+   explicitly in that array. Keep it that way.
    Child env is also rebuilt from a small allowlist. The only credential exception
    is Claude provider env loaded by the runner itself from a regular-file
    `<repo>/.debate-agent/env` or `~/.config/debate-agent/env`, injecting only
@@ -155,15 +162,14 @@ plus one optional execution adapter:
   repo gates flow changes.)
 - Do not commit `dist/` or `node_modules/`.
 
-### Testing the watch daemon (plan + execute)
+### Testing the watch daemon (mailbox handlers)
 
 The execution core (`run` / `run-batch`) is tested with **stub CLI binaries**
 (a fake `claude`/`codex` that echoes argv/stdin) — keep that.
 
-The **daemon** (`watch`: read a `debate_request`, **plan** via a one-shot planner
-CLI, then **execute** the plan's worker batches, write `responses/`) is tested by
-**injecting a scripted planner and stub workers** so the whole flow runs without a
-real model:
+The **daemon** (`watch`: read high-level mailbox requests, dispatch to a handler,
+write `responses/`) is tested by **injecting a scripted planner and stub workers**
+so the debate flow runs without a real model:
 - `test/plan.test.ts` — the plan parser + validator (the one strict-format
   surface): JSON extraction from prose/fences, unique ids, allowlisted providers,
   and that every `{{id.output}}` references a STRICTLY earlier phase.
@@ -179,10 +185,14 @@ real model:
 - `test/watch-e2e.test.ts` — scripted planner but **REAL worker subprocess spawns**
   (a bash stub CLI): asserts the answer = worker stdout, the claimed→cleared
   `processing/` entry, the live `<id>.log`, and the read-only argv on the child.
+- `test/delegate.test.ts` — `delegate_request` validation: disabled by default,
+  no argv/env fields, bounded `once` windows.
 - `test/integration.test.ts` — the real `bin/debate-agent watch` subprocess,
   where one stub CLI serves as both planner and worker, driving a
   `debate_request` end-to-end across the process boundary, including orphan
-  resume from persisted intermediates.
+  resume from persisted intermediates. It also covers the `~/.cli-delegator`
+  mailbox first slice: `delegate_request` `mode: "once"` launches a stub worker
+  and writes compatibility artifacts.
 
 Keep these deterministic seams: `runDebate(req, allow, deps)` takes an injectable
 `planner: PlannerFn`, `runItems` (defaults to the real `runPreparedItems`), and

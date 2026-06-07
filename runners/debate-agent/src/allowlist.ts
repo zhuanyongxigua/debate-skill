@@ -88,6 +88,16 @@ export interface FallbackPolicy {
   order: string[];
 }
 
+export const VALID_DELEGATE_MODES = ["once", "supervised_loop"] as const;
+export type DelegateMode = (typeof VALID_DELEGATE_MODES)[number];
+
+export interface DelegatePolicy {
+  enabled: boolean;
+  modes: string[];
+  maxMinutes: number;
+  maxWorkspaceWriteMinutes: number;
+}
+
 export interface Allowlist {
   // Absolute, realpath-resolved roots. A request repo must resolve under one.
   repoRoots: string[];
@@ -108,6 +118,9 @@ export interface Allowlist {
   // provider launch/completion failure. Empty for a provider => detection off for it.
   rateLimitPatterns: Record<string, RegExp[]>;
   fallback: FallbackPolicy;
+  // High-level cli-delegator mailbox support. Disabled by default so adding a
+  // second mailbox does not silently widen who can ask the daemon to spawn CLIs.
+  delegate: DelegatePolicy;
 }
 
 /** Default per-provider rate-limit signatures (the same conservative set for
@@ -134,6 +147,7 @@ export const DEFAULT_ALLOWLIST: Allowlist = {
   rateLimitPatterns: defaultRateLimitPatterns(),
   // Swap engines on provider failure by default; order follows `providers`.
   fallback: { enabled: true, order: ["claude", "codex"] },
+  delegate: { enabled: false, modes: ["once"], maxMinutes: 30, maxWorkspaceWriteMinutes: 30 },
 };
 
 export function repoRootMatch(allow: Allowlist, resolvedRepo: string): string | null {
@@ -242,6 +256,41 @@ function parseFallback(raw: unknown, providers: string[]): FallbackPolicy {
   return { enabled, order };
 }
 
+function parseDelegate(raw: unknown, base: DelegatePolicy): DelegatePolicy {
+  if (raw === undefined) return { ...base, modes: [...base.modes] };
+  const obj = expectObject(raw, "delegate");
+  const extra = Object.keys(obj).filter(
+    (k) => !["enabled", "modes", "max_minutes", "max_workspace_write_minutes"].includes(k),
+  );
+  if (extra.length) throw new AllowlistError(`delegate has unknown field(s): ${JSON.stringify(extra.sort())}`);
+  const enabled = obj.enabled === undefined ? base.enabled : expectBoolean(obj.enabled, "delegate.enabled");
+  const modes = obj.modes === undefined ? [...base.modes] : expectStringArray(obj.modes, "delegate.modes");
+  for (const mode of modes) {
+    if (!(VALID_DELEGATE_MODES as readonly string[]).includes(mode)) {
+      throw new AllowlistError(
+        `delegate.modes entry ${JSON.stringify(mode)} is not supported ` +
+          `(supported: ${VALID_DELEGATE_MODES.join(", ")})`,
+      );
+    }
+  }
+  const maxMinutes =
+    obj.max_minutes === undefined ? base.maxMinutes : expectNumber(obj.max_minutes, "delegate.max_minutes");
+  const maxWorkspaceWriteMinutes =
+    obj.max_workspace_write_minutes === undefined
+      ? base.maxWorkspaceWriteMinutes
+      : expectNumber(obj.max_workspace_write_minutes, "delegate.max_workspace_write_minutes");
+  if (!Number.isInteger(maxMinutes) || maxMinutes < 1) {
+    throw new AllowlistError("delegate.max_minutes must be a positive integer");
+  }
+  if (!Number.isInteger(maxWorkspaceWriteMinutes) || maxWorkspaceWriteMinutes < 1) {
+    throw new AllowlistError("delegate.max_workspace_write_minutes must be a positive integer");
+  }
+  if (maxWorkspaceWriteMinutes > maxMinutes) {
+    throw new AllowlistError("delegate.max_workspace_write_minutes must be <= delegate.max_minutes");
+  }
+  return { enabled, modes, maxMinutes, maxWorkspaceWriteMinutes };
+}
+
 /**
  * Load an Allowlist from a JSON file, falling back to conservative defaults.
  *
@@ -316,6 +365,7 @@ export function loadAllowlist(configPath: string | null | undefined): Allowlist 
 
   const rateLimitPatterns = parseRateLimitPatterns(obj.rate_limit_patterns);
   const fallback = parseFallback(obj.fallback, providers);
+  const delegate = parseDelegate(obj.delegate, base.delegate);
 
   return {
     repoRoots,
@@ -329,6 +379,7 @@ export function loadAllowlist(configPath: string | null | undefined): Allowlist 
     maxParallelPerProvider: limit("max_parallel_per_provider", base.maxParallelPerProvider),
     rateLimitPatterns,
     fallback,
+    delegate,
   };
 }
 

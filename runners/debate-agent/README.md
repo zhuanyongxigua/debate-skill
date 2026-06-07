@@ -3,13 +3,12 @@
 An **optional, thin execution adapter** that runs already-decided CLI launch
 requests outside a parent agent sandbox, under a narrow allowlist.
 
-It exists so that `debate-router` can run `claude` and `codex` CLIs as debate
-participants even though it lives in a **sandboxed parent agent whose top-level
-reviewer (e.g. Codex Rules) would kill a direct spawn**. The skill never spawns:
-it only writes request files. This separately-whitelisted daemon does the
-spawning **outside** the sandbox, reached only through the file mailbox — without
-granting the parent agent broad `bash`, `node`, `python`, `claude`, or `codex`
-access. (See AGENTS.md invariant #2.)
+It exists so that sandboxed skills can ask for local CLI work without spawning
+directly. `debate-router` writes `debate_request` files, and the first
+`cli-delegator` slice writes `delegate_request` files. Both are handled by this
+separately-whitelisted daemon **outside** the sandbox, reached only through file
+mailboxes — without granting the parent agent broad `bash`, `node`, `python`,
+`claude`, or `codex` access. (See AGENTS.md invariant #2.)
 
 This is **not** a framework, an orchestrator, or a second router. The skill
 layer in `skills/` stays runtime-free and framework-free. This runner is the
@@ -30,8 +29,9 @@ design debate (`~/.debate-router/20260530-165017-external-debate-agent-design/au
 | Layer | Owner | Responsibility |
 | --- | --- | --- |
 | Debate protocol | `skills/debate-router` | entry-case classification, candidate freeze, critique/cross-review/arbitration, `DebateRecord`, `DebateSummary` |
+| Delegation policy | `skills/cli-delegator` | when to outsource, run ids, user-facing start/status/tail/stop semantics |
 | Launch conventions | `skills/cli-launch` | provider command shape, non-interactive flags, profiles, phase-aware timeout defaults |
-| **Execution boundary** | **`runners/debate-agent` (this)** | allowlist enforcement, `realpath` cwd, static argv construction, env allowlist, timeout, process-group kill, **execution audit** |
+| **Execution boundary** | **`runners/debate-agent` (this)** | mailbox claim/recover/respond, allowlist enforcement, `realpath` cwd, static argv construction, env allowlist, timeout, process-group kill, **execution audit** |
 
 The runner **must never**:
 
@@ -39,6 +39,7 @@ The runner **must never**:
   `argv` / `env`;
 - interpret debate roles, freeze candidates, generate or edit `DebateRecord`,
   or decide topology/strategy;
+- decide when delegation is appropriate, or accept arbitrary delegated argv/env;
 - import `cli-launch` as a generic "run any launch spec" executor. It keeps
   its **own static provider→argv mapping** (`src/launch.ts`) and only *declares*
   that the mapping follows `cli-launch` Provider Defaults. Keep the two in
@@ -74,9 +75,10 @@ debate-agent print-rules [--path <installed-path>]
 ```
 
 `run` / `run-batch` are the low-level executors. `watch` is the **mailbox
-daemon** that takes a high-level `debate_request` and runs the whole debate —
-plan then execute — on behalf of a sandboxed `debate-router`; see
-[watch](#watch-the-plan--execute-daemon).
+daemon** that takes high-level request files. It handles `debate_request` from
+`debate-router`, and the first `delegate_request` implementation from
+`cli-delegator` (`mode: "once"` only); see
+[watch](#watch-the-mailbox-daemon).
 `watch --planner` is accepted as a compatibility flag and must name an allowlisted
 planner-capable provider, but a request's `planner_provider` / `providers[0]`
 decides the actual planner for that request.
@@ -123,7 +125,7 @@ listed here.
 | `timeout_seconds` | int | a positive integer ≤ `86400` (fixed internal sanity cap, not configurable); if omitted, the phase-aware default is used |
 
 There is no low-level `fast` request field. The high-level `debate_request.fast`
-field only controls debate-flow leanness (see [watch](#watch-the-plan--execute-daemon)):
+field only controls debate-flow leanness (see [watch](#watch-the-mailbox-daemon)):
 it does not add Codex `service_tier`, `fast_mode`, or reasoning-effort overrides.
 Codex workers run with `--json` so their event stream can be tailed live; the
 runner extracts the final answer before writing the audit stdout.
@@ -283,15 +285,20 @@ swap a failed launch onto another engine — see
 [Provider failure fallback](#provider-failure-fallback) — but `run-batch` itself
 never does.)
 
-## watch (the plan + execute daemon)
+## watch (the mailbox daemon)
 
-`watch` is the out-of-sandbox engine for the file mailbox under
-`~/.debate-router/` (override with `$DEBATE_AGENT_MAILBOX`). The sandboxed
-`debate-router` skill writes ONE high-level `debate_request` (the task + repo);
-the daemon then **plans** the debate (a one-shot planner CLI) and **executes** it
-(read-only worker CLIs), and writes the final answer. This is what lets a
-sandboxed parent get a multi-CLI debate without ever spawning a CLI itself — its
-top-level reviewer would kill that (see AGENTS.md invariant #2).
+`watch` is the out-of-sandbox engine for file mailboxes. It watches
+`~/.debate-router/` (override with `$DEBATE_AGENT_MAILBOX`) for
+`debate_request` and `~/.cli-delegator/` (override with
+`$DEBATE_AGENT_DELEGATE_MAILBOX`) for `delegate_request`.
+
+For debate requests, the sandboxed `debate-router` skill writes ONE high-level
+request (the task + repo); the daemon then **plans** the debate (a one-shot
+planner CLI) and **executes** it (read-only worker CLIs), and writes the final
+answer. For delegate requests, the first implementation supports a bounded
+`mode: "once"` run only. This is what lets a sandboxed parent get CLI work
+without ever spawning a CLI itself — its top-level reviewer would kill that (see
+AGENTS.md invariant #2).
 
 ```
 ~/.debate-router/
@@ -301,6 +308,17 @@ top-level reviewer would kill that (see AGENTS.md invariant #2).
     <id>.intermediates.json  canonical plan + clean per-step outputs
     <id>.streams/  per-launch live CLI debug streams (tail -f a slow worker)
   archive/     finished requests are MOVED here (durable record), never deleted
+
+~/.cli-delegator/
+  requests/    cli-delegator writes <id>.json (a delegate_request) here
+  processing/  daemon claims a request by atomic rename
+  responses/   daemon writes <id>.json result + <id>.log progress here
+  archive/     finished requests are MOVED here
+  <id>/         compatibility artifacts for once runs
+    config.json
+    state.json
+    observations.md
+    current.log
 ```
 
 Each worker (and each planner attempt) streams its raw CLI output **live** to
@@ -327,14 +345,18 @@ item/phase/provider lineage matches the persisted plan. This works for both
 `fast: true` (the fixed plan is persisted before workers run) and `fast: false`
 (the validated planner plan is persisted before workers run). If no usable
 sidecar exists, or validation rejects it,
-recovery simply starts from the earliest safe missing state. After recovery, the daemon **snapshots existing
+recovery simply starts from the earliest safe missing state. Delegate recovery
+currently re-runs unfinished `once` requests; long-running supervised process
+recovery is not implemented yet. After recovery, the daemon **snapshots existing
 requests and ignores them** (submit after the daemon is up). It then polls
-`requests/`, and for each NEW request: claims it (atomic rename into
-`processing/`), runs the whole debate, atomically writes `responses/<id>.json`,
-and **moves the request into `archive/`** — `requests/` stays a clean work queue,
-but every request is preserved (prompt and all). One debate at a time. The
-claim-rename is also the exactly-once guard (a second claim of the same id fails)
-and the crash-recovery marker.
+each mailbox's `requests/`, and for each NEW request: claims it (atomic rename
+into `processing/`), runs the matching handler, atomically writes
+`responses/<id>.json`, and **moves the request into `archive/`** — `requests/`
+stays a clean work queue, but every request is preserved (prompt and all). The
+current daemon processes one claimed request at a time; per-handler resource
+slots are part of the handler contract but not yet used for concurrent
+scheduling. The claim-rename is also the exactly-once guard (a second claim of
+the same id fails) and the crash-recovery marker.
 
 The allowlist is **re-read for each new request**, so config edits (e.g. adding a
 `repo_root`) apply to the next debate without restarting the daemon. A
@@ -373,6 +395,44 @@ prompts; the daemon produces those.
 | `fast` | bool | optional. **The skill always writes it `true`** (lean flow: skip the planner and run a fixed lean 2-phase shape, 2 parallel reviewers → 1 arbiter); `false` runs the full planner debate (use only on an explicit serious/thorough request). **Daemon default when the field is omitted is `false`** (conservative full-planner path — a hand-crafted request must set `true` for the lean path). Does NOT control Codex model/reasoning/service-tier settings |
 | `planner_provider` | string | optional, only with `fast: false`. `"claude"` or `"codex"`; must be in allowlist `providers` and inside the effective request `providers` (omitted `providers` defaults to `["codex"]`). Overrides the default planner for this one request. |
 | `providers` | string[] | optional request-level provider set for **all** daemon-launched CLIs: planner, workers, fast path, and fallback. If omitted, it defaults to `["codex"]`, so every role is codex by default. It only narrows the allowlist, never widens it. In the fast path, fixed roles consume provider order directly: `P1 = providers[0]`, `P2 = providers[1] ?? providers[0]`, `A1 = providers[2] ?? providers[0]`; entries after the first three are ignored by the fixed role assignment. With `fast: false`, the planner defaults to the first entry unless `planner_provider` is set. Fallback preference remains the allowlist's `fallback.order`, filtered to the request's providers. |
+
+### The delegate request (written by cli-delegator)
+
+The first cli-delegator mailbox slice supports a bounded one-shot delegation.
+It is disabled unless `allowlist.delegate.enabled` is true.
+
+```json
+{
+  "schema_version": 1,
+  "id": "delegate-example",
+  "kind": "delegate_request",
+  "repo": "/Users/you/Code/app",
+  "provider": "codex",
+  "capability": "read_only_review",
+  "mode": "once",
+  "skill_hint": "optional local skill name or SKILL.md path",
+  "task": "Inspect the run logs and summarize the failure.",
+  "max_minutes": 20
+}
+```
+
+| Field | Type | Validation |
+| --- | --- | --- |
+| `id` | string | safe slug; response/log/artifacts are named from it |
+| `repo` | string | absolute; `realpath` must resolve under an allowed repo root |
+| `provider` | string | optional; defaults to `codex`; must be allowlisted |
+| `profile` | string \| null | optional; only Codex profiles are supported and must be allowlisted |
+| `capability` | string | optional; defaults to `read_only_review`; `workspace_write` requires both allowlist opt-in and the tighter delegate write-time cap |
+| `mode` | string | optional; only `once` is implemented in this slice. `supervised_loop` is a reserved future mode and is rejected today |
+| `skill_hint` | string | optional prompt-only hint. It never becomes argv and is named `skill_hint` to avoid implying executable routing |
+| `task` | string | non-empty delegated task prompt; transported through stdin for stdin-capable providers |
+| `max_minutes` | int | optional; defaults to `allowlist.delegate.max_minutes`; capped by `delegate.max_minutes`, and by `delegate.max_workspace_write_minutes` for `workspace_write` |
+
+Unknown fields are rejected. In particular, `argv`, `env`, shell strings, and
+request-controlled process ids are not accepted. A successful `once` response is
+a `delegate_result` under `~/.cli-delegator/responses/<id>.json`, and the daemon
+also writes compatibility artifacts under `~/.cli-delegator/<id>/`
+(`config.json`, `state.json`, `observations.md`, `current.log`).
 
 ### How the daemon runs a debate
 
@@ -694,6 +754,7 @@ through it, all of the following must be in place. This is the full list.
    | `limits.max_parallel_per_provider` | per-provider concurrency | 2 |
    | `rate_limit_patterns` | `provider -> [regex]` limit signatures (tune to your CLIs) | conservative built-ins per provider |
    | `fallback` | `{enabled, order}` for provider failure engine swap | `{enabled: true, order: providers}` |
+   | `delegate` | `{enabled, modes, max_minutes, max_workspace_write_minutes}` for the cli-delegator mailbox | disabled; `once` reserved but inactive |
 
 3. **Codex Rules** at `~/.codex/rules/default.rules` allowing **only** the fixed
    runner path (see Install). `decision = "prompt"` asks each time;
@@ -761,7 +822,10 @@ runners/debate-agent/
     launch.ts               # static provider->argv mapping + env allowlist
     audit.ts                # execution audit writer (~/.debate-agent/<run-id>/)
     runner.ts               # validate -> build -> exec (process group) -> audit -> result; run-batch
-    mailbox.ts              # file mailbox + debate_request validation
+    handler.ts              # generic mailbox handler/resource-budget contracts
+    mailbox.ts              # file mailbox primitives + debate_request validation
+    mailbox_service.ts      # generic claim/run/respond/recover loop for handlers
+    delegate.ts             # cli-delegator delegate_request validation + once handler
     plan.ts                 # the plan schema: parse + validate + {{id.output}} substitution
     planner.ts              # one-shot planner CLI + plan-format prompt + retry
     debate.ts               # orchestrator: plan-with-retry -> mechanical templated execution

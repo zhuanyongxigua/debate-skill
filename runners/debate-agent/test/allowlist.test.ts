@@ -162,6 +162,37 @@ test("default allowlist is read-only and carries batch limits", () => {
   assert.deepEqual(DEFAULT_ALLOWLIST.capabilities, ["read_only_review"]);
   assert.equal(DEFAULT_ALLOWLIST.maxBatchItems, 8);
   assert.equal(DEFAULT_ALLOWLIST.maxParallelPerProvider, 2);
+  assert.equal(DEFAULT_ALLOWLIST.delegate.enabled, false);
+  assert.deepEqual(DEFAULT_ALLOWLIST.delegate.modes, ["once"]);
+});
+
+test("delegate policy is explicit and bounded", () => {
+  const d = makeTempDir();
+  try {
+    const cfg = join(d, "allowlist.json");
+    writeFileSync(
+      cfg,
+      JSON.stringify({
+        repo_roots: [d],
+        delegate: { enabled: true, modes: ["once", "supervised_loop"], max_minutes: 45, max_workspace_write_minutes: 15 },
+      }),
+    );
+    const allow = loadAllowlist(cfg);
+    assert.equal(allow.delegate.enabled, true);
+    assert.deepEqual(allow.delegate.modes, ["once", "supervised_loop"]);
+    assert.equal(allow.delegate.maxMinutes, 45);
+    assert.equal(allow.delegate.maxWorkspaceWriteMinutes, 15);
+  } finally {
+    cleanup(d);
+  }
+});
+
+test("delegate policy rejects unknown modes and invalid write bounds", () => {
+  expectShapeError({ delegate: { modes: ["shell"] } }, /delegate\.modes entry/);
+  expectShapeError(
+    { delegate: { max_minutes: 10, max_workspace_write_minutes: 11 } },
+    /max_workspace_write_minutes must be <=/,
+  );
 });
 
 test("copilot is opt-in: not in default providers", () => {

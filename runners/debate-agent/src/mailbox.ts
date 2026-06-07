@@ -27,8 +27,12 @@ export function mailboxRoot(): string {
   return override ? expandUser(override) : join(homedir(), ".debate-router");
 }
 
-export function openMailbox(): Mailbox {
-  const root = mailboxRoot();
+export function delegateMailboxRoot(): string {
+  const override = process.env.DEBATE_AGENT_DELEGATE_MAILBOX;
+  return override ? expandUser(override) : join(homedir(), ".cli-delegator");
+}
+
+export function openMailboxAt(root: string): Mailbox {
   const mb: Mailbox = {
     root,
     requestsDir: join(root, "requests"),
@@ -38,6 +42,14 @@ export function openMailbox(): Mailbox {
   };
   for (const d of [mb.requestsDir, mb.processingDir, mb.responsesDir, mb.archiveDir]) ensurePrivateDir(d);
   return mb;
+}
+
+export function openMailbox(): Mailbox {
+  return openMailboxAt(mailboxRoot());
+}
+
+export function openDelegateMailbox(): Mailbox {
+  return openMailboxAt(delegateMailboxRoot());
 }
 
 function ensurePrivateDir(path: string): void {

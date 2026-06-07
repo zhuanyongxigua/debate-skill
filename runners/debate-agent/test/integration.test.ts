@@ -1240,6 +1240,151 @@ test("watch daemon: codex-only full plan rejects a claude worker from the planne
   }
 });
 
+test("watch daemon: delegate once request is handled through the cli-delegator mailbox", async () => {
+  const ctx = setup();
+  const codexArgs = join(ctx.root, "codex_args");
+  makeStub(
+    ctx.binDir,
+    "codex",
+    "#!/usr/bin/env bash\n" +
+      `echo "$@" >> ${JSON.stringify(codexArgs)}\n` +
+      "input=$(cat)\n" +
+      "printf 'DELEGATED[%s]\\n' \"$input\"\n",
+  );
+  writeFileSync(
+    ctx.cfg,
+    JSON.stringify({
+      repo_roots: [ctx.repo],
+      modes: ["debate-proposal"],
+      providers: ["codex"],
+      profiles: { claude: [], codex: [], copilot: [] },
+      capabilities: ["read_only_review"],
+      delegate: { enabled: true, modes: ["once"], max_minutes: 5, max_workspace_write_minutes: 1 },
+    }),
+  );
+  const debateMailbox = join(ctx.root, "debate-mailbox");
+  const delegateMailbox = join(ctx.root, "delegate-mailbox");
+  const env = cliEnv(ctx, { DEBATE_AGENT_MAILBOX: debateMailbox, DEBATE_AGENT_DELEGATE_MAILBOX: delegateMailbox });
+  let daemon: ReturnType<typeof spawn> | undefined;
+  try {
+    let stderr = "";
+    daemon = spawn(process.execPath, [BIN, "--config", ctx.cfg, "watch"], { env, detached: true });
+    daemon.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
+    daemon.on("error", (e) => (stderr += `spawn error: ${String(e)}`));
+    await waitFor(() => stderr.includes("delegate mailbox"), 8000, `daemon delegate banner (stderr so far: ${stderr})`);
+
+    const id = "20260607-itest-delegate-once";
+    writeFileSync(
+      join(delegateMailbox, "requests", `${id}.json`),
+      JSON.stringify({
+        schema_version: 1,
+        id,
+        kind: "delegate_request",
+        repo: realpathSync(ctx.repo),
+        provider: "codex",
+        mode: "once",
+        task: "TASK-MARKER-DELEGATE",
+        max_minutes: 2,
+      }),
+    );
+
+    const respPath = join(delegateMailbox, "responses", `${id}.json`);
+    await waitFor(() => existsSync(respPath), 15000, `delegate response ${id}.json (stderr: ${stderr})`);
+
+    const resp = JSON.parse(readFileSync(respPath, "utf8"));
+    assert.equal(resp.kind, "delegate_result");
+    assert.equal(resp.status, "completed", JSON.stringify(resp));
+    assert.match(resp.answer_markdown, /DELEGATED\[/);
+    assert.match(resp.answer_markdown, /TASK-MARKER-DELEGATE/);
+    assert.equal(typeof resp.artifacts_dir, "string");
+    assert.ok(existsSync(join(resp.artifacts_dir, "state.json")), "delegate state artifact written");
+    assert.ok(existsSync(join(resp.artifacts_dir, "observations.md")), "delegate observations artifact written");
+
+    const argv = readFileSync(codexArgs, "utf8");
+    assert.ok(!argv.includes("TASK-MARKER-DELEGATE"), "delegate task must go through stdin, not argv");
+    assert.ok(existsSync(join(delegateMailbox, "archive", `${id}.json`)), "delegate request archived");
+  } finally {
+    if (daemon?.pid !== undefined) {
+      try {
+        process.kill(-daemon.pid, "SIGKILL");
+      } catch {
+        try {
+          daemon.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+    cleanup(ctx.root);
+  }
+});
+
+test("watch daemon: disabled delegate mailbox rejects without launching a child", async () => {
+  const ctx = setup();
+  const marker = join(ctx.root, "codex-launched.marker");
+  makeMarkerStub(ctx.binDir, "codex", marker);
+  writeFileSync(
+    ctx.cfg,
+    JSON.stringify({
+      repo_roots: [ctx.repo],
+      providers: ["codex"],
+      profiles: { claude: [], codex: [], copilot: [] },
+      capabilities: ["read_only_review"],
+      delegate: { enabled: false, modes: ["once"], max_minutes: 5, max_workspace_write_minutes: 1 },
+    }),
+  );
+  const debateMailbox = join(ctx.root, "debate-mailbox");
+  const delegateMailbox = join(ctx.root, "delegate-mailbox");
+  const env = cliEnv(ctx, { DEBATE_AGENT_MAILBOX: debateMailbox, DEBATE_AGENT_DELEGATE_MAILBOX: delegateMailbox });
+  let daemon: ReturnType<typeof spawn> | undefined;
+  try {
+    let stderr = "";
+    daemon = spawn(process.execPath, [BIN, "--config", ctx.cfg, "watch"], { env, detached: true });
+    daemon.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
+    daemon.on("error", (e) => (stderr += `spawn error: ${String(e)}`));
+    await waitFor(() => stderr.includes("delegate mailbox"), 8000, `daemon delegate banner (stderr so far: ${stderr})`);
+
+    const id = "20260607-itest-delegate-disabled";
+    writeFileSync(
+      join(delegateMailbox, "requests", `${id}.json`),
+      JSON.stringify({
+        schema_version: 1,
+        id,
+        kind: "delegate_request",
+        repo: realpathSync(ctx.repo),
+        provider: "codex",
+        mode: "once",
+        task: "TASK-MUST-NOT-LAUNCH",
+        max_minutes: 2,
+      }),
+    );
+
+    const respPath = join(delegateMailbox, "responses", `${id}.json`);
+    await waitFor(() => existsSync(respPath), 15000, `delegate rejection response ${id}.json (stderr: ${stderr})`);
+
+    const resp = JSON.parse(readFileSync(respPath, "utf8"));
+    assert.equal(resp.kind, "delegate_result");
+    assert.equal(resp.status, "error", JSON.stringify(resp));
+    assert.match(resp.status_reason, /delegate mailbox is not enabled/);
+    assert.equal(resp.artifacts_dir, null);
+    assert.ok(!existsSync(marker), "disabled delegate request must not launch codex");
+    assert.ok(existsSync(join(delegateMailbox, "archive", `${id}.json`)), "rejected delegate request archived");
+  } finally {
+    if (daemon?.pid !== undefined) {
+      try {
+        process.kill(-daemon.pid, "SIGKILL");
+      } catch {
+        try {
+          daemon.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+    cleanup(ctx.root);
+  }
+});
+
 test("watch daemon: a fast request skips the planner and runs the fixed 2-phase shape", async () => {
   const ctx = setup();
   // No planner runs in fast mode: the daemon builds a fixed 2-phase plan in code.
