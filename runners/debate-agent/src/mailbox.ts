@@ -2,14 +2,17 @@
 // (writes responses). Lives under ~/.debate-router/ by default; override with
 // $DEBATE_AGENT_MAILBOX. Requests and responses correlate by id.
 
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
 import { Allowlist, PLANNER_PROVIDERS, repoRootMatch } from "./allowlist";
 import { expandUser, realpathLenient } from "./paths";
+import { computeDigest } from "./schema";
 
 const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,128}$/;
+const PRIVATE_DIR_MODE = 0o700;
+const PRIVATE_FILE_MODE = 0o600;
 
 export interface Mailbox {
   root: string;
@@ -33,10 +36,20 @@ export function openMailbox(): Mailbox {
     responsesDir: join(root, "responses"),
     archiveDir: join(root, "archive"),
   };
-  for (const d of [mb.requestsDir, mb.processingDir, mb.responsesDir, mb.archiveDir]) {
-    mkdirSync(d, { recursive: true });
-  }
+  for (const d of [mb.requestsDir, mb.processingDir, mb.responsesDir, mb.archiveDir]) ensurePrivateDir(d);
   return mb;
+}
+
+function ensurePrivateDir(path: string): void {
+  mkdirSync(path, { recursive: true, mode: PRIVATE_DIR_MODE });
+  chmodSync(path, PRIVATE_DIR_MODE);
+}
+
+function writePrivateJsonAtomic(path: string, tmpPath: string, value: Record<string, unknown>): string {
+  writeFileSync(tmpPath, JSON.stringify(value, null, 2), { mode: PRIVATE_FILE_MODE });
+  chmodSync(tmpPath, PRIVATE_FILE_MODE);
+  renameSync(tmpPath, path);
+  return path;
 }
 
 /** Request ids already present in the inbox (ignored per "process only new"). */
@@ -91,9 +104,20 @@ export function archiveProcessing(mb: Mailbox, id: string): void {
 export function writeResponse(mb: Mailbox, id: string, response: Record<string, unknown>): string {
   const finalPath = join(mb.responsesDir, `${id}.json`);
   const tmpPath = join(mb.responsesDir, `.${id}.json.tmp`);
-  writeFileSync(tmpPath, JSON.stringify(response, null, 2));
-  renameSync(tmpPath, finalPath);
-  return finalPath;
+  return writePrivateJsonAtomic(finalPath, tmpPath, response);
+}
+
+export function responseIntermediatesPath(mb: Mailbox, id: string): string {
+  return join(mb.responsesDir, `${id}.intermediates.json`);
+}
+
+/** Atomically write the human-readable intermediate worker outputs. The response
+ * only points at this sidecar so the main result stays small, while P1/P2/etc.
+ * remain easy to inspect without digging through raw stream logs. */
+export function writeIntermediates(mb: Mailbox, id: string, record: Record<string, unknown>): string {
+  const finalPath = responseIntermediatesPath(mb, id);
+  const tmpPath = join(mb.responsesDir, `.${id}.intermediates.json.tmp`);
+  return writePrivateJsonAtomic(finalPath, tmpPath, record);
 }
 
 /** Per-request folder for live, streamed CLI debug output (one file per launch).
@@ -102,7 +126,7 @@ export function writeResponse(mb: Mailbox, id: string, response: Record<string, 
  * worker — separate from the answer path. Can grow large; it is debug-only. */
 export function requestStreamDir(mb: Mailbox, id: string): string {
   const dir = join(mb.responsesDir, `${id}.streams`);
-  mkdirSync(dir, { recursive: true });
+  ensurePrivateDir(dir);
   return dir;
 }
 
@@ -110,7 +134,9 @@ export function requestStreamDir(mb: Mailbox, id: string): string {
  * so another agent can `tail -f` a debate while it runs. Lines are timestamped;
  * logging never throws (a logging failure must not break the debate). */
 export function openResponseLog(mb: Mailbox, id: string): { log: (line: string) => void; close: () => void } {
-  const fd = openSync(join(mb.responsesDir, `${id}.log`), "a");
+  const path = join(mb.responsesDir, `${id}.log`);
+  const fd = openSync(path, "a", PRIVATE_FILE_MODE);
+  chmodSync(path, PRIVATE_FILE_MODE);
   return {
     log: (line: string) => {
       try {
@@ -147,7 +173,7 @@ export interface DebateRequest {
   language: string | null; // the human's primary language; the debate answers in it
   // Lean flow: when true the daemon SKIPS the planner and runs a fixed lean 2-phase
   // shape (see debate.ts buildFastPlan); when false it runs the full planner debate.
-  // It does NOT control codex/claude turbo (codex always runs turbo regardless).
+  // It does NOT control child CLI model/reasoning/service-tier settings.
   fast: boolean;
   // Optional per-request primary planner provider for the full (fast=false) flow.
   // Validated against allowlist + PLANNER_PROVIDERS; ignored nowhere.
@@ -157,6 +183,9 @@ export interface DebateRequest {
   // never widen it. Order controls the planner default; fallback preference
   // remains the allowlist's fallback.order, filtered to this request's providers.
   providers: string[];
+  // Digest of the normalized effective request. Persisted intermediates must
+  // match this before the daemon can resume from them.
+  requestDigest: string;
 }
 
 // The exact accepted fields. Exported so the debate-router skill's request-file
@@ -178,6 +207,20 @@ export function loadRequestObject(path: string): Record<string, unknown> {
     throw new MailboxRequestRejected("request must be a JSON object");
   }
   return raw as Record<string, unknown>;
+}
+
+function computeDebateRequestDigest(req: Omit<DebateRequest, "requestDigest">): string {
+  return computeDigest({
+    schema_version: 1,
+    kind: "debate_request",
+    id: req.id,
+    prompt: req.prompt,
+    repo: req.repo,
+    language: req.language,
+    fast: req.fast,
+    planner_provider: req.plannerProvider,
+    providers: req.providers,
+  });
 }
 
 export function validateDebateRequest(raw: Record<string, unknown>, allow: Allowlist): DebateRequest {
@@ -253,5 +296,6 @@ export function validateDebateRequest(raw: Record<string, unknown>, allow: Allow
     `planner defaults to first providers entry (${providers[0]}); set planner_provider to ${PLANNER_PROVIDERS.join(" or ")} or put a planner-capable provider first`,
   );
 
-  return { id: id as string, prompt: prompt as string, repo: resolved, repoRoot: root as string, language, fast, plannerProvider, providers };
+  const normalized = { id: id as string, prompt: prompt as string, repo: resolved, repoRoot: root as string, language, fast, plannerProvider, providers };
+  return { ...normalized, requestDigest: computeDebateRequestDigest(normalized) };
 }

@@ -8,11 +8,11 @@
 // and presents the result; all execution (planner + workers) is here, out of
 // sandbox, so it bypasses the parent's top-level command reviewer.
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { Allowlist, PLANNER_PROVIDERS } from "./allowlist";
-import { DebateDeps, DebateResponse, narrowAllowlistForRequest, runDebate } from "./debate";
+import { DebateDeps, DebateResponse, IntermediateStore, PersistedDebateState, narrowAllowlistForRequest, runDebate } from "./debate";
 import {
   DebateRequest,
   Mailbox,
@@ -23,10 +23,12 @@ import {
   openMailbox,
   openResponseLog,
   processingIds,
+  responseIntermediatesPath,
   requestIds,
   requestStreamDir,
   snapshotRequestIds,
   validateDebateRequest,
+  writeIntermediates,
   writeResponse,
 } from "./mailbox";
 import { makeCliPlanner } from "./planner";
@@ -96,8 +98,88 @@ function errorResponse(id: string, message: string): DebateResponse {
     status_reason: message,
     answer_markdown: "",
     trace: [],
+    intermediate_outputs: [],
     finished_at: new Date().toISOString(),
   };
+}
+
+function fileIntermediateStore(mb: Mailbox, id: string): IntermediateStore {
+  const path = responseIntermediatesPath(mb, id);
+  return {
+    path,
+    load: () => {
+      if (!existsSync(path)) return null;
+      try {
+        return JSON.parse(readFileSync(path, "utf8")) as PersistedDebateState;
+      } catch {
+        return null;
+      }
+    },
+    save: (state) => {
+      writeIntermediates(mb, id, state as unknown as Record<string, unknown>);
+    },
+  };
+}
+
+function writeDebateArtifacts(mb: Mailbox, id: string, response: DebateResponse, requestDigest: string): void {
+  const { intermediate_outputs: intermediateOutputs, ...responseBody } = response;
+  const intermediatesPath = responseIntermediatesPath(mb, id);
+  if (response.status === "error" || !existsSync(intermediatesPath)) {
+    writeIntermediates(mb, id, {
+      schema_version: RESULT_SCHEMA_VERSION,
+      request_id: id,
+      request_digest: requestDigest,
+      kind: "debate_intermediates",
+      plan: null,
+      outputs: intermediateOutputs,
+      updated_at: response.finished_at,
+      finished_at: response.finished_at,
+    });
+  }
+  writeResponse(mb, id, { ...responseBody, intermediates_path: intermediatesPath });
+}
+
+async function processClaimedRequest(
+  mb: Mailbox,
+  id: string,
+  allow: Allowlist,
+  opts: WatchOptions,
+  resume: boolean,
+): Promise<void> {
+  const { log, close } = openResponseLog(mb, id);
+  let response: DebateResponse;
+  let requestDigest = "invalid-request";
+  try {
+    if (resume) log("daemon restarted while this request was in flight — attempting resume from intermediates");
+    // Re-read the allowlist per request (if a reloader is configured) so config
+    // edits take effect without a restart; one consistent snapshot per debate.
+    const allowNow = opts.reloadAllow ? opts.reloadAllow() : allow;
+    const req = validateDebateRequest(loadRequestObject(join(mb.processingDir, `${id}.json`)), allowNow);
+    const allowForReq = narrowAllowlistForRequest(allowNow, req);
+    // The file name is the id callers poll by; a payload id that disagrees
+    // would write the response under a name the caller never watches.
+    if (req.id !== id) throw new MailboxRequestRejected(`request id "${req.id}" does not match file name "${id}"`);
+    requestDigest = req.requestDigest;
+    // The planner is a launched CLI too: re-check the request-selected provider
+    // against the current allowlist. Fast requests skip the planner entirely.
+    const plannerProvider = req.plannerProvider ?? req.providers[0]! ?? "codex";
+    if (!opts.makeDeps && !req.fast) {
+      validatePlannerProvider(plannerProvider, allowForReq);
+    }
+    const streamDir = requestStreamDir(mb, id);
+    const deps = opts.makeDeps ? opts.makeDeps(req) : defaultDeps(req, opts, streamDir, allowForReq);
+    deps.log = log;
+    deps.streamDir = streamDir;
+    deps.intermediateStore = fileIntermediateStore(mb, id);
+    response = await runDebate(req, allowForReq, deps);
+  } catch (err) {
+    log(`error: ${String(err)}`);
+    response = errorResponse(id, String(err));
+  } finally {
+    close();
+  }
+  writeDebateArtifacts(mb, id, response, requestDigest);
+  archiveProcessing(mb, id); // finished: move the request into archive/ (durable record); processing/ holds only live requests
 }
 
 /**
@@ -117,56 +199,20 @@ export async function processNewRequests(
     ignore.add(id); // claim-once: never retry, even if this run fails
     if (claimRequest(mb, id) === null) continue; // someone else took it / it vanished
 
-    const { log, close } = openResponseLog(mb, id);
-    let response: DebateResponse;
-    try {
-      // Re-read the allowlist per request (if a reloader is configured) so config
-      // edits take effect without a restart; one consistent snapshot per debate.
-      const allowNow = opts.reloadAllow ? opts.reloadAllow() : allow;
-      const req = validateDebateRequest(loadRequestObject(join(mb.processingDir, `${id}.json`)), allowNow);
-      const allowForReq = narrowAllowlistForRequest(allowNow, req);
-      // The file name is the id callers poll by; a payload id that disagrees
-      // would write the response under a name the caller never watches.
-      if (req.id !== id) throw new MailboxRequestRejected(`request id "${req.id}" does not match file name "${id}"`);
-      // The planner is a launched CLI too: re-check the request-selected provider
-      // against the current allowlist. Fast requests skip the planner entirely.
-      const plannerProvider = req.plannerProvider ?? req.providers[0]! ?? "codex";
-      if (!opts.makeDeps && !req.fast) {
-        validatePlannerProvider(plannerProvider, allowForReq);
-      }
-      const streamDir = requestStreamDir(mb, id);
-      const deps = opts.makeDeps ? opts.makeDeps(req) : defaultDeps(req, opts, streamDir, allowForReq);
-      deps.log = log;
-      deps.streamDir = streamDir;
-      response = await runDebate(req, allowForReq, deps);
-    } catch (err) {
-      log(`error: ${String(err)}`);
-      response = errorResponse(id, String(err));
-    } finally {
-      close();
-    }
-    writeResponse(mb, id, response as unknown as Record<string, unknown>);
-    archiveProcessing(mb, id); // finished: move the request into archive/ (durable record); processing/ holds only live requests
+    await processClaimedRequest(mb, id, allow, opts, false);
     processed.push(id);
   }
   return processed;
 }
 
-/** Recover requests left in processing/ by a previous crash/restart: if no
- * response exists, write an error response so the caller stops waiting; then
- * clear the stale processing entry either way. Returns the recovered ids. */
-export function recoverOrphans(mb: Mailbox): string[] {
+/** Recover requests left in processing/ by a previous crash/restart. If no final
+ * response exists, resume the request through the normal plan→execute path, using
+ * persisted intermediates to skip completed work. Returns the recovered ids. */
+export async function recoverOrphans(mb: Mailbox, allow: Allowlist, opts: WatchOptions): Promise<string[]> {
   const recovered: string[] = [];
   for (const id of processingIds(mb)) {
     if (!existsSync(join(mb.responsesDir, `${id}.json`))) {
-      const { log, close } = openResponseLog(mb, id);
-      log("daemon restarted while this request was in flight — abandoned");
-      close();
-      writeResponse(
-        mb,
-        id,
-        errorResponse(id, "daemon restarted while this request was in flight; resubmit if still needed") as unknown as Record<string, unknown>,
-      );
+      await processClaimedRequest(mb, id, allow, opts, true);
       recovered.push(id);
     }
     archiveProcessing(mb, id); // keep the request in archive/ either way
@@ -185,7 +231,7 @@ export async function watchLoop(allow: Allowlist, opts: WatchOptions = {}): Prom
     if (opts.plannerProvider !== undefined) validatePlannerProvider(opts.plannerProvider, allow);
   }
   const mb = openMailbox();
-  const recovered = recoverOrphans(mb);
+  const recovered = await recoverOrphans(mb, allow, opts);
   const ignore = snapshotRequestIds(mb);
   const interval = opts.intervalMs ?? 1000;
   process.stderr.write(

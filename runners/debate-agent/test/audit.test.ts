@@ -1,7 +1,7 @@
 // Audit integrity tests: uniqueness and root containment.
 
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync, realpathSync, symlinkSync } from "node:fs";
+import { readFileSync, readdirSync, realpathSync, statSync, symlinkSync } from "node:fs";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 
@@ -19,6 +19,10 @@ afterEach(() => {
   delete process.env.DEBATE_AGENT_AUDIT_HOME;
   cleanup(auditHome);
 });
+
+function modeOf(path: string): number {
+  return statSync(path).mode & 0o777;
+}
 
 test("same-second launches are distinct and both survive", () => {
   const p1 = writeExecutionAudit({
@@ -83,4 +87,21 @@ test("stdout/stderr share unique stem with yaml", () => {
   assert.equal(readFileSync(p.stdout_path, "utf8"), "OUT");
   const stem = basename(p.audit_path).replace(/\.yaml$/, "");
   assert.ok(basename(p.stdout_path).startsWith(stem));
+});
+
+test("audit directory and child stdout/stderr are private", () => {
+  const p = writeExecutionAudit({
+    runId: "r1",
+    record: { x: 1 },
+    stdout: "OUT",
+    stderr: "ERR",
+    phase: "critique",
+    provider: "claude",
+  });
+  assert.equal(modeOf(auditHome), 0o700);
+  assert.equal(modeOf(join(auditHome, "r1")), 0o700);
+  assert.equal(modeOf(p.audit_path), 0o600);
+  assert.ok(p.stdout_path && p.stderr_path);
+  assert.equal(modeOf(p.stdout_path), 0o600);
+  assert.equal(modeOf(p.stderr_path), 0o600);
 });

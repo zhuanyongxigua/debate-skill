@@ -118,19 +118,20 @@ listed here.
 | `repo` | string | absolute path; `realpath` must resolve under an allowed repo root and be an existing directory |
 | `profile` | string \| null | `null`, or in the profile allowlist for that provider. **Only Codex has profiles the runner can honor** — Claude profiles (strips `CLAUDE_CONFIG_DIR`) and Copilot profiles are rejected |
 | `capability` | string | `read_only_review` (default) or `workspace_write`; must be in the `capabilities` allowlist. Controls the child sandbox posture (see below) |
-| `effort` | string | optional thinking depth (`--effort` / `model_reasoning_effort`). claude: `low\|medium\|high\|xhigh\|max` (default `high`); codex: `low\|medium\|high\|xhigh` (default `xhigh`). The planner picks this per launch |
+| `effort` | string | optional thinking override (`--effort` / `model_reasoning_effort`). claude: `low\|medium\|high\|xhigh\|max` (omitted defaults to `high` in the runner because Claude has no Codex-style profile knob); codex: `low\|medium\|high\|xhigh` (omitted means use the user's Codex config/profile). The planner may pick this per launch, but should omit it when the profile should decide |
 | `prompt` | string | non-empty, length ≤ `max_prompt_chars`; transported to the child via **stdin only** |
 | `timeout_seconds` | int | a positive integer ≤ `86400` (fixed internal sanity cap, not configurable); if omitted, the phase-aware default is used |
 
-There is no `fast` request field: **codex always runs in turbo mode**
-(`-c service_tier="fast" -c features.fast_mode=true`) at `xhigh` as its default
-posture — claude and copilot have no turbo (their fast mode needs an API token the
-runner strips). Turbo is decoupled from the high-level `debate_request.fast`, which
-only controls debate-flow leanness (see [watch](#watch-the-plan--execute-daemon)).
+There is no low-level `fast` request field. The high-level `debate_request.fast`
+field only controls debate-flow leanness (see [watch](#watch-the-plan--execute-daemon)):
+it does not add Codex `service_tier`, `fast_mode`, or reasoning-effort overrides.
+Codex workers run with `--json` so their event stream can be tailed live; the
+runner extracts the final answer before writing the audit stdout.
 
-Thinking effort is **per-launch** (the planner picks it): codex generally `xhigh`,
-claude usually `high` (xhigh/max only when a launch needs deep reasoning). The
-planner itself always runs `xhigh`.
+Thinking effort is an optional **per-launch override**. Omit it for Codex when
+the user's Codex profile/config should decide. Claude defaults to `high` when
+omitted. The Claude planner itself runs `xhigh`; the Codex planner follows the
+user's Codex config/profile unless an explicit effort is supplied.
 
 `provider` selects the binary. `mode` is only a coarse allowlisted intent label
 recorded in the audit — it never selects a different binary or alters argv.
@@ -207,6 +208,8 @@ redacted in `display_command`, but unlike stdin it is visible in `ps`.
   "timeout_seconds": 1800,
   "display_command": "claude --print --permission-mode default <stdin-prompt>",
   "stripped_env_keys": ["ANTHROPIC_API_KEY", "..."],
+  "provider_env_source": "/repo/.debate-agent/env",
+  "injected_env_keys": ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"],
   "stdout_path": "/Users/you/.debate-agent/<run-id>/exec-...stdout.txt",
   "stderr_path": "/Users/you/.debate-agent/<run-id>/exec-...stderr.txt",
   "audit_path": "/Users/you/.debate-agent/<run-id>/exec-....yaml"
@@ -295,6 +298,7 @@ top-level reviewer would kill that (see AGENTS.md invariant #2).
   requests/    debate-router writes <id>.json (a debate_request) here
   processing/  daemon claims a request by atomic rename (in-flight marker)
   responses/   daemon writes <id>.json result + <id>.log progress here
+    <id>.intermediates.json  canonical plan + clean per-step outputs
     <id>.streams/  per-launch live CLI debug streams (tail -f a slow worker)
   archive/     finished requests are MOVED here (durable record), never deleted
 ```
@@ -302,8 +306,9 @@ top-level reviewer would kill that (see AGENTS.md invariant #2).
 Each worker (and each planner attempt) streams its raw CLI output **live** to
 `responses/<id>.streams/<launch>.log`, so you can `tail -f` a slow or hung worker
 to see what it is doing. claude workers run with `--output-format stream-json`
-for this (the runner extracts the clean final answer from the stream; the answer
-path is unchanged). These files are **debug-only** and can grow large.
+and codex workers run with `codex exec --json` for this (the runner extracts the
+clean final answer from each stream; the answer path is unchanged). These files
+are **debug-only** and can grow large.
 
 > **Audit caveat (planner).** Worker launches go through `runValidated`, so each is
 > written to the execution audit dir (`~/.debate-agent/<run-id>/`). **Planner
@@ -314,14 +319,22 @@ path is unchanged). These files are **debug-only** and can grow large.
 > provenance.
 
 On start it **recovers any orphaned `processing/` entries** (a request claimed
-before a previous crash/restart gets an `error` response so the caller stops
-waiting), then **snapshots existing requests and ignores them** (submit after the
-daemon is up). It then polls `requests/`, and for each NEW request: claims it
-(atomic rename into `processing/`), runs the whole debate, atomically writes
-`responses/<id>.json`, and **moves the request into `archive/`** — `requests/`
-stays a clean work queue, but every request is preserved (prompt and all). One
-debate at a time. The claim-rename is also the exactly-once guard (a second claim
-of the same id fails) and the crash-recovery marker.
+before a previous crash/restart). Recovery resumes the normal plan→execute path
+using `responses/<id>.intermediates.json`: the sidecar is validated against the
+current request and allowlist, including the normalized request digest. A valid
+persisted plan is reused, and any completed output row is skipped only when its
+item/phase/provider lineage matches the persisted plan. This works for both
+`fast: true` (the fixed plan is persisted before workers run) and `fast: false`
+(the validated planner plan is persisted before workers run). If no usable
+sidecar exists, or validation rejects it,
+recovery simply starts from the earliest safe missing state. After recovery, the daemon **snapshots existing
+requests and ignores them** (submit after the daemon is up). It then polls
+`requests/`, and for each NEW request: claims it (atomic rename into
+`processing/`), runs the whole debate, atomically writes `responses/<id>.json`,
+and **moves the request into `archive/`** — `requests/` stays a clean work queue,
+but every request is preserved (prompt and all). One debate at a time. The
+claim-rename is also the exactly-once guard (a second claim of the same id fails)
+and the crash-recovery marker.
 
 The allowlist is **re-read for each new request**, so config edits (e.g. adding a
 `repo_root`) apply to the next debate without restarting the daemon. A
@@ -357,7 +370,7 @@ prompts; the daemon produces those.
 | `prompt` | string | non-empty, ≤ `max_prompt_chars` — the task to debate |
 | `repo` | string | absolute; `realpath` must resolve under an allowed repo root |
 | `language` | string | optional; the human's language (workers + answer use it) |
-| `fast` | bool | optional. **The skill always writes it `true`** (lean flow: skip the planner and run a fixed lean 2-phase shape, 2 parallel reviewers → 1 arbiter); `false` runs the full planner debate (use only on an explicit serious/thorough request). **Daemon default when the field is omitted is `false`** (conservative full-planner path — a hand-crafted request must set `true` for the lean path). Does NOT control turbo (codex always turbo) |
+| `fast` | bool | optional. **The skill always writes it `true`** (lean flow: skip the planner and run a fixed lean 2-phase shape, 2 parallel reviewers → 1 arbiter); `false` runs the full planner debate (use only on an explicit serious/thorough request). **Daemon default when the field is omitted is `false`** (conservative full-planner path — a hand-crafted request must set `true` for the lean path). Does NOT control Codex model/reasoning/service-tier settings |
 | `planner_provider` | string | optional, only with `fast: false`. `"claude"` or `"codex"`; must be in allowlist `providers` and inside the effective request `providers` (omitted `providers` defaults to `["codex"]`). Overrides the default planner for this one request. |
 | `providers` | string[] | optional request-level provider set for **all** daemon-launched CLIs: planner, workers, fast path, and fallback. If omitted, it defaults to `["codex"]`, so every role is codex by default. It only narrows the allowlist, never widens it. In the fast path, fixed roles consume provider order directly: `P1 = providers[0]`, `P2 = providers[1] ?? providers[0]`, `A1 = providers[2] ?? providers[0]`; entries after the first three are ignored by the fixed role assignment. With `fast: false`, the planner defaults to the first entry unless `planner_provider` is set. Fallback preference remains the allowlist's `fallback.order`, filtered to the request's providers. |
 
@@ -406,8 +419,8 @@ CLI it spawns (the planner and every worker) is **read-only**.
      "complexity": "simple",
      "phases": [
        { "name": "proposal_generation",
-         "launches": [ { "id": "P1", "provider": "codex",  "effort": "xhigh", "prompt": "<worker prompt>" },
-                       { "id": "P2", "provider": "claude", "effort": "high",  "prompt": "<worker prompt>" } ] },
+        "launches": [ { "id": "P1", "provider": "codex",  "prompt": "<worker prompt>" },
+                      { "id": "P2", "provider": "claude", "effort": "high", "prompt": "<worker prompt>" } ] },
        { "name": "arbitration",
          "launches": [ { "id": "A1", "provider": "claude", "effort": "high",
            "prompt": "Proposals:\n{{P1.output}}\n{{P2.output}}\nDecide and write the final answer." } ] }
@@ -419,20 +432,27 @@ CLI it spawns (the planner and every worker) is **read-only**.
 2. **Execute (mechanical).** The daemon runs each phase's launches as read-only
    workers (capability **forced** `read_only_review` in code), in order. A later
    prompt may reference an EARLIER launch's output with `{{<id>.output}}`; the
-   daemon substitutes the actual text — **no LLM runs between phases**. It branches
-   only on execution **status**, never by parsing a worker's text content. The
-   `answer_item` launch's output is the final answer.
+   daemon substitutes the actual text from the persisted sidecar — **no LLM runs
+   between phases**. It branches only on execution **status**, never by parsing a
+   worker's text content. The `answer_item` launch's output is the final answer.
+   After every phase, the daemon atomically updates
+   `responses/<id>.intermediates.json`; later phases read from that same file, so
+   the state used for prompting is the same state another process can inspect.
 
-**codex always** launches in turbo mode (`service_tier`/`fast_mode`) at `xhigh` —
-its default posture, decoupled from `fast`. **claude and copilot have no turbo**
-(their fast mode needs an API token the runner strips). The `fast` request field
-controls only whether the planner is skipped (above), not turbo.
+Codex model, reasoning effort, and service tier come from the user's Codex
+config/profile by default. The runner does not inject `service_tier` or
+`features.fast_mode`; it only adds `model_reasoning_effort` when a request or
+plan explicitly supplies `effort`. Codex workers also use `--json` for live
+progress streams; planner calls still use `--output-schema/-o`. The `fast`
+request field controls only whether the planner is skipped (above).
 
 ### Response format
 
 `responses/<id>.json` is a `debate_result`. `answer_markdown` is the answer
 worker's output (already in the caller's language/layout, since the planner wrote
-that worker's prompt); `trace` is the faithful per-launch record.
+that worker's prompt); `trace` is the faithful per-launch record. The main
+response stays compact and points at a sidecar for the full clean intermediate
+worker outputs.
 
 ```json
 {
@@ -442,6 +462,7 @@ that worker's prompt); `trace` is the faithful per-launch record.
   "status": "completed",
   "status_reason": "",
   "answer_markdown": "## Decision …",
+  "intermediates_path": "/Users/you/.debate-router/responses/20260531-120000-auth-debate.intermediates.json",
   "trace": [
     { "phase": "proposal_generation", "item": "P1", "provider": "codex",  "status": "completed" },
     { "phase": "proposal_generation", "item": "P2", "provider": "codex",  "status": "completed",
@@ -452,11 +473,60 @@ that worker's prompt); `trace` is the faithful per-launch record.
 }
 ```
 
+`responses/<id>.intermediates.json` is a `debate_intermediates` sidecar. It is
+both the inspectable intermediate-output record and the daemon's resume state:
+it stores the validated plan (or the fixed fast plan) plus one output row per
+launch. The clean worker conclusion in each completed row is what downstream
+`{{id.output}}` substitution reads, and the row also carries audit/stream paths:
+
+```json
+{
+  "schema_version": 1,
+  "request_id": "20260531-120000-auth-debate",
+  "request_digest": "sha256:...",
+  "kind": "debate_intermediates",
+  "plan": {
+    "complexity": "simple",
+    "phases": [
+      { "name": "proposal_generation", "launches": [ { "id": "P1", "provider": "codex", "prompt": "..." } ] },
+      { "name": "arbitration", "launches": [ { "id": "A1", "provider": "claude", "prompt": "{{P1.output}}" } ] }
+    ],
+    "answerItem": "A1"
+  },
+  "outputs": [
+    {
+      "phase": "proposal_generation",
+      "item": "P1",
+      "provider": "codex",
+      "status": "completed",
+      "output_markdown": "P1's clean conclusion...",
+      "stdout_path": "/Users/you/.debate-agent/20260531-120000-auth-debate-P1/exec-...stdout.txt",
+      "stream_path": "/Users/you/.debate-router/responses/20260531-120000-auth-debate.streams/P1.log"
+    }
+  ],
+  "finished_at": "2026-05-31T12:00:41Z"
+}
+```
+
+Prefer this sidecar when answering follow-up questions such as "P1/P2分别说了什么".
+Use `.streams/*.log` only for live progress or raw CLI debugging; it can contain
+JSON events, reconnect noise, and other non-answer output.
+
+If the main `answer_markdown` contains only transport noise (for example
+`Reconnecting...` / timeout text) even though `trace` marks the answer item
+completed, the caller should inspect `intermediates_path` before reading any
+stream log. If the answer item's sidecar `output_markdown` is substantive, use
+that as the recovered final answer; if it is also unusable, report the formal
+answer as degraded and synthesize only from the available clean intermediate
+outputs.
+
 A `trace` row's `provider` is the engine that actually ran. After a provider
 fallback swap it carries `planned_provider` (the engine the plan assigned, when it
 differs) so the swap is visible in the response, not only the live log; a
 non-completed row carries `error_category` (e.g. `rate_limited` or `nonzero_exit`
-when every engine was exhausted).
+when every engine was exhausted). During daemon restart recovery, a skipped
+completed launch is included in `trace` with `resumed: true`, so the final
+response shows which rows came from the persisted sidecar.
 
 `status` is `completed` when every launch completed and the answer is non-empty,
 otherwise `degraded` (a failed worker substitutes as empty text; the debate still
@@ -487,8 +557,8 @@ The split is deliberate and preserves the runner's invariants:
   bounded by the provider count. The planner rotates the same way across its plan
   attempts. The decision branches **only on execution status/category** — never on
   a worker's text — so it does not become debate strategy or a `provider: auto`
-  request API. When switching engines the per-launch `effort` is dropped to the
-  new provider's default (e.g. claude `max` is invalid for codex). If every
+  request API. When switching engines the per-launch `effort` is dropped so the
+  new provider's profile/config/default applies (e.g. claude `max` is invalid for codex). If every
   provider for a launch fails, it degrades as before.
 - A `debate_request.providers` field narrows this same provider set for one
   request. If omitted, it defaults to `["codex"]`, so the planner (if any), every
@@ -523,9 +593,20 @@ Tuning (allowlist, hot-reloaded per request):
 3. **Env allowlist.** The child environment is rebuilt from scratch: only an
    allowlist of non-secret variables (`PATH`, `HOME`, `LANG`, `TERM`, `XDG_*`,
    …) is copied. Known secret-bearing variables (`ANTHROPIC_API_KEY`,
-   `OPENAI_API_KEY`, `GH_TOKEN`, `AWS_*`, `SSH_AUTH_SOCK`, …) are dropped, so
-   children authenticate with the **default logged-in account config**
-   (`~/.claude`, `~/.codex`) rather than any injected key.
+   `OPENAI_API_KEY`, `GH_TOKEN`, `AWS_*`, `SSH_AUTH_SOCK`, …) are dropped from the
+   parent environment.
+   Claude has one explicit service-level exception: after stripping parent env,
+   the runner may inject `ANTHROPIC_*` keys from a dotenv-style provider env file.
+   It reads a regular-file `<repo>/.debate-agent/env` first; if that file is
+   absent or invalid (for example a symlink or directory), it reads
+   `~/.config/debate-agent/env`; the files are not merged. A valid project file
+   with zero allowed keys still suppresses the global fallback. This applies to
+   every Claude launch, including planner attempts and workers. This is not shell
+   sourcing, so `source ~/.zshrc` is not part of daemon configuration. Unknown
+   keys, `PATH`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `OPENAI_*`, and other
+   non-`ANTHROPIC_*` entries are ignored. Worker result/audit records only the
+   source path and injected key names, never values. Codex/Copilot still use the
+   rebuilt allowlisted env only.
 4. **Process-group isolation.** Each child runs in its own process group
    (`detached`). On timeout the group gets `SIGTERM`, then `SIGKILL` after a 10s
    grace period, so no orphan model processes survive.
@@ -617,9 +698,21 @@ through it, all of the following must be in place. This is the full list.
 3. **Codex Rules** at `~/.codex/rules/default.rules` allowing **only** the fixed
    runner path (see Install). `decision = "prompt"` asks each time;
    `decision = "allow"` is unattended. Do not allow `bash`/`node`/`claude`/`codex`.
-4. **Logged-in default accounts**: `claude` and `codex` must already be
-   authenticated. The runner strips API-key env vars, so children use the default
-   account config (`~/.claude`, `~/.codex`), never an injected key.
+4. **Accounts / provider env**: `codex` uses its default account config
+   (`~/.codex`) and is not given `OPENAI_*` env secrets. `claude` may use its
+   default account config (`~/.claude`) or a service-level provider env file. Prefer
+   `~/.config/debate-agent/env` for personal/global Claude settings, and
+   a regular-file `<repo>/.debate-agent/env` only for project-specific overrides.
+   Claude receives only `ANTHROPIC_*` for both planner attempts and workers. Keep
+   env files out of git and `chmod 600` them when they contain tokens.
+
+   Example Claude provider env file:
+
+   ```dotenv
+   ANTHROPIC_BASE_URL=https://api.example.invalid
+   ANTHROPIC_API_KEY=sk-...
+   ANTHROPIC_MODEL=claude-sonnet-4-5
+   ```
 5. **Re-install after updates**: the default install is a frozen snapshot, so a
    `git pull` / edit does not take effect until you re-run `install.sh`.
 

@@ -13,7 +13,8 @@ import { accessSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, 
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
 
-import { CLAUDE_STUB, cleanup, makeMarkerStub, makeStub, makeTempDir, writeConfig, writeRequest } from "./helpers";
+import { validateDebateRequest } from "../src/mailbox";
+import { CLAUDE_STUB, cleanup, makeAllowlist, makeMarkerStub, makeStub, makeTempDir, writeConfig, writeRequest } from "./helpers";
 
 const PKG_ROOT = join(__dirname, "..", "..");
 const BIN = join(PKG_ROOT, "bin", "debate-agent");
@@ -70,6 +71,10 @@ function cliEnv(ctx: Ctx, extra: Record<string, string> = {}): NodeJS.ProcessEnv
 
 function runCli(ctx: Ctx, args: string[], env = cliEnv(ctx)) {
   return spawnSync(process.execPath, [BIN, ...args], { encoding: "utf8", env });
+}
+
+function debateRequestDigest(ctx: Ctx, raw: Record<string, unknown>): string {
+  return validateDebateRequest(raw, makeAllowlist(ctx.repo)).requestDigest;
 }
 
 /** Poll `pred` until true or the deadline; for driving the async watch daemon. */
@@ -199,6 +204,67 @@ test("child env has no secrets", () => {
   }
 });
 
+test("claude child gets project provider env before global provider env", () => {
+  const ctx = setup();
+  try {
+    makeStub(ctx.binDir, "claude", "#!/usr/bin/env bash\nenv\n");
+    mkdirSync(join(ctx.repo, ".debate-agent"), { recursive: true });
+    mkdirSync(join(ctx.root, ".config", "debate-agent"), { recursive: true });
+    writeFileSync(
+      join(ctx.repo, ".debate-agent", "env"),
+      "ANTHROPIC_API_KEY=project-key\nANTHROPIC_MODEL=project-model\nPATH=/bad\nCLAUDE_CONFIG_DIR=/bad\n",
+    );
+    writeFileSync(join(ctx.root, ".config", "debate-agent", "env"), "ANTHROPIC_API_KEY=global-key\n");
+
+    const req = join(ctx.root, "req.json");
+    writeRequest(req, ctx.repo);
+    const proc = runCli(ctx, ["--config", ctx.cfg, "run", "--request", req]);
+    assert.equal(proc.status, 0, proc.stderr);
+    const result = JSON.parse(proc.stdout);
+    assert.deepEqual(result.injected_env_keys, ["ANTHROPIC_API_KEY", "ANTHROPIC_MODEL"]);
+    assert.equal(result.provider_env_source, join(realpathSync(ctx.repo), ".debate-agent", "env"));
+
+    const childEnv = readFileSync(result.stdout_path, "utf8");
+    assert.match(childEnv, /^ANTHROPIC_API_KEY=project-key$/m);
+    assert.match(childEnv, /^ANTHROPIC_MODEL=project-model$/m);
+    assert.ok(!childEnv.includes("sk-test-should-be-stripped"));
+    assert.ok(!childEnv.includes("global-key"));
+    assert.ok(!childEnv.includes("CLAUDE_CONFIG_DIR=/bad"));
+    assert.match(childEnv, /^PATH=/m);
+    assert.ok(!childEnv.includes("PATH=/bad"));
+  } finally {
+    cleanup(ctx.root);
+  }
+});
+
+test("codex child does not receive OpenAI provider env or parent OpenAI key", () => {
+  const ctx = setup();
+  try {
+    makeStub(ctx.binDir, "codex", "#!/usr/bin/env bash\nenv\n");
+    mkdirSync(join(ctx.root, ".config", "debate-agent"), { recursive: true });
+    writeFileSync(
+      join(ctx.root, ".config", "debate-agent", "env"),
+      "ANTHROPIC_API_KEY=anthropic-global\nOPENAI_API_KEY=openai-global\n",
+    );
+
+    const req = join(ctx.root, "req.json");
+    writeRequest(req, ctx.repo, { provider: "codex" });
+    const proc = runCli(ctx, ["--config", ctx.cfg, "run", "--request", req], cliEnv(ctx, { OPENAI_API_KEY: "parent-openai" }));
+    assert.equal(proc.status, 0, proc.stderr);
+    const result = JSON.parse(proc.stdout);
+    assert.deepEqual(result.injected_env_keys, []);
+    assert.equal(result.provider_env_source, null);
+    assert.ok(result.stripped_env_keys.includes("OPENAI_API_KEY"));
+
+    const childEnv = readFileSync(result.stdout_path, "utf8");
+    assert.ok(!childEnv.includes("openai-global"));
+    assert.ok(!childEnv.includes("parent-openai"));
+    assert.ok(!childEnv.includes("anthropic-global"));
+  } finally {
+    cleanup(ctx.root);
+  }
+});
+
 test("copilot is rejected unless the allowlist opts in", () => {
   const ctx = setup(); // default config: providers = claude, codex
   try {
@@ -281,6 +347,10 @@ test("run-batch executes items in parallel and returns ordered results", () => {
     assert.equal(result.items[0].status, "completed");
     assert.equal(result.items[1].status, "completed");
     assert.equal(result.items[2].status, "rejected");
+    assert.deepEqual(result.items[0].injected_env_keys, []);
+    assert.equal(result.items[0].provider_env_source, null);
+    assert.deepEqual(result.items[1].injected_env_keys, []);
+    assert.equal(result.items[1].provider_env_source, null);
   } finally {
     cleanup(ctx.root);
   }
@@ -353,6 +423,18 @@ test("watch daemon: real bin subprocess — planner retry + multi-phase template
       resp.trace.map((t: { item: string; status: string }) => `${t.item}:${t.status}`),
       ["P1:completed", "A1:completed"],
     );
+    assert.equal(typeof resp.intermediates_path, "string");
+    assert.ok(!("intermediate_outputs" in resp), "main response should point to the sidecar, not inline every worker output");
+    const intermediates = JSON.parse(readFileSync(resp.intermediates_path, "utf8"));
+    assert.equal(intermediates.kind, "debate_intermediates");
+    assert.deepEqual(
+      intermediates.outputs.map((o: { item: string; status: string }) => `${o.item}:${o.status}`),
+      ["P1:completed", "A1:completed"],
+    );
+    assert.match(intermediates.outputs[0].output_markdown, /WORKER_GOT\[propose\]/);
+    assert.match(intermediates.outputs[1].output_markdown, /context WORKER_GOT\[propose\]/);
+    assert.equal(typeof intermediates.outputs[0].stdout_path, "string");
+    assert.equal(typeof intermediates.outputs[0].stream_path, "string");
 
     // the read-only argv reached the planner + worker spawns; prompts went on stdin
     const argv = readFileSync(argsFile, "utf8");
@@ -379,6 +461,273 @@ test("watch daemon: real bin subprocess — planner retry + multi-phase template
     assert.ok(!existsSync(join(mailbox, "processing", `${id}.json`)), "processing entry cleared");
     const archived = JSON.parse(readFileSync(join(mailbox, "archive", `${id}.json`), "utf8"));
     assert.equal(archived.prompt, "should we X or Y?", "original request preserved in archive/");
+  } finally {
+    if (daemon?.pid !== undefined) {
+      try {
+        process.kill(-daemon.pid, "SIGKILL");
+      } catch {
+        try {
+          daemon.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+    cleanup(ctx.root);
+  }
+});
+
+test("watch daemon: resumes an orphaned processing request from persisted intermediates", async () => {
+  const ctx = setup();
+  const argsFile = join(ctx.root, "claude_args");
+  makeStub(
+    ctx.binDir,
+    "claude",
+    "#!/usr/bin/env bash\n" +
+      "input=$(cat)\n" +
+      `echo "$@" >> ${JSON.stringify(argsFile)}\n` +
+      'if printf "%s" "$*" | grep -q -- "--json-schema"; then\n' +
+      "  printf 'planner should not run during persisted resume\\n' >&2\n" +
+      "  exit 7\n" +
+      "fi\n" +
+      "printf 'RESUMED_WORKER[%s]\\n' \"$input\"\n",
+  );
+  const mailbox = join(ctx.root, "mailbox");
+  for (const dir of ["requests", "processing", "responses", "archive"]) mkdirSync(join(mailbox, dir), { recursive: true });
+  const id = "20260607-itest-resume";
+  const request = {
+    schema_version: 1,
+    id,
+    kind: "debate_request",
+    prompt: "resume a partially completed debate",
+    repo: realpathSync(ctx.repo),
+    providers: ["claude"],
+    fast: false,
+  };
+  writeFileSync(join(mailbox, "processing", `${id}.json`), JSON.stringify(request));
+  writeFileSync(
+    join(mailbox, "responses", `${id}.intermediates.json`),
+    JSON.stringify({
+      schema_version: 1,
+      request_id: id,
+      request_digest: debateRequestDigest(ctx, request),
+      kind: "debate_intermediates",
+      plan: {
+        complexity: "simple",
+        phases: [
+          { name: "proposal_generation", launches: [{ id: "P1", provider: "claude", effort: "high", prompt: "propose" }] },
+          { name: "arbitration", launches: [{ id: "A1", provider: "claude", effort: "high", prompt: "resume from {{P1.output}}" }] },
+        ],
+        answerItem: "A1",
+      },
+      outputs: [{ phase: "proposal_generation", item: "P1", provider: "claude", status: "completed", output_markdown: "SAVED-P1" }],
+      updated_at: "2026-06-07T00:00:00.000Z",
+    }),
+  );
+
+  const env = cliEnv(ctx, { DEBATE_AGENT_MAILBOX: mailbox });
+  let daemon: ReturnType<typeof spawn> | undefined;
+  try {
+    let stderr = "";
+    daemon = spawn(process.execPath, [BIN, "--config", ctx.cfg, "watch"], { env, detached: true });
+    daemon.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
+    daemon.on("error", (e) => (stderr += `spawn error: ${String(e)}`));
+
+    const respPath = join(mailbox, "responses", `${id}.json`);
+    await waitFor(() => existsSync(respPath), 15000, `resume response ${id}.json (stderr: ${stderr})`);
+
+    const resp = JSON.parse(readFileSync(respPath, "utf8"));
+    assert.equal(resp.status, "completed", JSON.stringify(resp));
+    assert.match(resp.answer_markdown, /resume from SAVED-P1/);
+    assert.deepEqual(
+      resp.trace.map((t: { item: string; status: string; resumed?: boolean }) => `${t.item}:${t.status}:${t.resumed === true ? "resumed" : "ran"}`),
+      ["P1:completed:resumed", "A1:completed:ran"],
+    );
+
+    const argv = readFileSync(argsFile, "utf8");
+    assert.ok(!argv.includes("--json-schema"), "resume must not re-run the planner when the plan is persisted");
+    assert.ok(!argv.includes("propose"), "completed P1 must not be relaunched");
+
+    const sidecar = JSON.parse(readFileSync(resp.intermediates_path, "utf8"));
+    assert.deepEqual(
+      sidecar.outputs.map((o: { item: string; output_markdown: string }) => `${o.item}:${o.output_markdown}`),
+      ["P1:SAVED-P1", "A1:RESUMED_WORKER[resume from SAVED-P1]\n"],
+    );
+    assert.equal(typeof sidecar.finished_at, "string");
+    assert.ok(!existsSync(join(mailbox, "processing", `${id}.json`)), "processing entry cleared");
+    assert.ok(existsSync(join(mailbox, "archive", `${id}.json`)), "orphan request archived after resume");
+  } finally {
+    if (daemon?.pid !== undefined) {
+      try {
+        process.kill(-daemon.pid, "SIGKILL");
+      } catch {
+        try {
+          daemon.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+    cleanup(ctx.root);
+  }
+});
+
+test("watch daemon: request digest mismatch ignores stale persisted intermediates", async () => {
+  const ctx = setup();
+  const argsFile = join(ctx.root, "claude_args");
+  const plan =
+    '{"complexity":"simple","phases":[{"name":"proposal_generation","launches":[{"id":"P1","provider":"claude","effort":"high","prompt":"fresh worker prompt"}]}],"answer_item":"P1"}';
+  makeStub(
+    ctx.binDir,
+    "claude",
+    "#!/usr/bin/env bash\n" +
+      "input=$(cat)\n" +
+      `echo "$@" >> ${JSON.stringify(argsFile)}\n` +
+      'if printf "%s" "$*" | grep -q -- "--json-schema"; then\n' +
+      `  printf '%s\\n' ${JSON.stringify(`{"type":"result","subtype":"success","structured_output":${plan}}`)}\n` +
+      "else\n" +
+      "  printf 'FRESH_WORKER[%s]\\n' \"$input\"\n" +
+      "fi\n",
+  );
+  const mailbox = join(ctx.root, "mailbox");
+  for (const dir of ["requests", "processing", "responses", "archive"]) mkdirSync(join(mailbox, dir), { recursive: true });
+  const id = "20260607-itest-digest-mismatch";
+  const request = {
+    schema_version: 1,
+    id,
+    kind: "debate_request",
+    prompt: "fresh request must not use stale output",
+    repo: realpathSync(ctx.repo),
+    providers: ["claude"],
+    fast: false,
+  };
+  const oldRequest = { ...request, prompt: "old request with the same id" };
+  writeFileSync(join(mailbox, "processing", `${id}.json`), JSON.stringify(request));
+  writeFileSync(
+    join(mailbox, "responses", `${id}.intermediates.json`),
+    JSON.stringify({
+      schema_version: 1,
+      request_id: id,
+      request_digest: debateRequestDigest(ctx, oldRequest),
+      kind: "debate_intermediates",
+      plan: {
+        complexity: "simple",
+        phases: [{ name: "proposal_generation", launches: [{ id: "P1", provider: "claude", prompt: "stale prompt" }] }],
+        answerItem: "P1",
+      },
+      outputs: [{ phase: "proposal_generation", item: "P1", provider: "claude", status: "completed", output_markdown: "STALE" }],
+      updated_at: "2026-06-07T00:00:00.000Z",
+    }),
+  );
+
+  const env = cliEnv(ctx, { DEBATE_AGENT_MAILBOX: mailbox });
+  let daemon: ReturnType<typeof spawn> | undefined;
+  try {
+    let stderr = "";
+    daemon = spawn(process.execPath, [BIN, "--config", ctx.cfg, "watch"], { env, detached: true });
+    daemon.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
+    daemon.on("error", (e) => (stderr += `spawn error: ${String(e)}`));
+
+    const respPath = join(mailbox, "responses", `${id}.json`);
+    await waitFor(() => existsSync(respPath), 15000, `digest mismatch response ${id}.json (stderr: ${stderr})`);
+
+    const resp = JSON.parse(readFileSync(respPath, "utf8"));
+    assert.equal(resp.status, "completed", JSON.stringify(resp));
+    assert.match(resp.answer_markdown, /FRESH_WORKER\[fresh worker prompt\]/);
+    assert.ok(readFileSync(argsFile, "utf8").includes("--json-schema"), "stale sidecar should force a fresh planner call");
+    const logText = readFileSync(join(mailbox, "responses", `${id}.log`), "utf8");
+    assert.match(logText, /ignored persisted intermediates: request_digest does not match current request/);
+    const sidecar = JSON.parse(readFileSync(resp.intermediates_path, "utf8"));
+    assert.equal(sidecar.request_digest, debateRequestDigest(ctx, request));
+    assert.deepEqual(sidecar.outputs.map((o: { item: string; output_markdown: string }) => `${o.item}:${o.output_markdown}`), [
+      "P1:FRESH_WORKER[fresh worker prompt]\n",
+    ]);
+  } finally {
+    if (daemon?.pid !== undefined) {
+      try {
+        process.kill(-daemon.pid, "SIGKILL");
+      } catch {
+        try {
+          daemon.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+    cleanup(ctx.root);
+  }
+});
+
+test("watch daemon: invalid persisted intermediates are ignored and replanned", async () => {
+  const ctx = setup();
+  const argsFile = join(ctx.root, "claude_args");
+  const plan =
+    '{"complexity":"simple","phases":[{"name":"proposal_generation","launches":[{"id":"P1","provider":"claude","effort":"high","prompt":"fresh worker prompt"}]}],"answer_item":"P1"}';
+  makeStub(
+    ctx.binDir,
+    "claude",
+    "#!/usr/bin/env bash\n" +
+      "input=$(cat)\n" +
+      `echo "$@" >> ${JSON.stringify(argsFile)}\n` +
+      'if printf "%s" "$*" | grep -q -- "--json-schema"; then\n' +
+      `  printf '%s\\n' ${JSON.stringify(`{"type":"result","subtype":"success","structured_output":${plan}}`)}\n` +
+      "else\n" +
+      "  printf 'FRESH_WORKER[%s]\\n' \"$input\"\n" +
+      "fi\n",
+  );
+  const mailbox = join(ctx.root, "mailbox");
+  for (const dir of ["requests", "processing", "responses", "archive"]) mkdirSync(join(mailbox, dir), { recursive: true });
+  const id = "20260607-itest-invalid-resume";
+  writeFileSync(
+    join(mailbox, "processing", `${id}.json`),
+    JSON.stringify({
+      schema_version: 1,
+      id,
+      kind: "debate_request",
+      prompt: "resume with a bad sidecar",
+      repo: realpathSync(ctx.repo),
+      providers: ["claude"],
+      fast: false,
+    }),
+  );
+  writeFileSync(
+    join(mailbox, "responses", `${id}.intermediates.json`),
+    JSON.stringify({
+      schema_version: 999,
+      request_id: id,
+      request_digest: "sha256:old-request",
+      kind: "debate_intermediates",
+      plan: {
+        complexity: "simple",
+        phases: [{ name: "proposal_generation", launches: [{ id: "P1", provider: "claude", prompt: "stale prompt" }] }],
+        answerItem: "P1",
+      },
+      outputs: [{ phase: "proposal_generation", item: "P1", provider: "claude", status: "completed", output_markdown: "STALE" }],
+      updated_at: "2026-06-07T00:00:00.000Z",
+    }),
+  );
+
+  const env = cliEnv(ctx, { DEBATE_AGENT_MAILBOX: mailbox });
+  let daemon: ReturnType<typeof spawn> | undefined;
+  try {
+    let stderr = "";
+    daemon = spawn(process.execPath, [BIN, "--config", ctx.cfg, "watch"], { env, detached: true });
+    daemon.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
+    daemon.on("error", (e) => (stderr += `spawn error: ${String(e)}`));
+
+    const respPath = join(mailbox, "responses", `${id}.json`);
+    await waitFor(() => existsSync(respPath), 15000, `invalid resume response ${id}.json (stderr: ${stderr})`);
+
+    const resp = JSON.parse(readFileSync(respPath, "utf8"));
+    assert.equal(resp.status, "completed", JSON.stringify(resp));
+    assert.match(resp.answer_markdown, /FRESH_WORKER\[fresh worker prompt\]/);
+    assert.ok(readFileSync(argsFile, "utf8").includes("--json-schema"), "invalid sidecar should force a fresh planner call");
+    const logText = readFileSync(join(mailbox, "responses", `${id}.log`), "utf8");
+    assert.match(logText, /ignored persisted intermediates: schema_version 999 is not supported/);
+    const sidecar = JSON.parse(readFileSync(resp.intermediates_path, "utf8"));
+    assert.deepEqual(sidecar.outputs.map((o: { item: string; output_markdown: string }) => `${o.item}:${o.output_markdown}`), [
+      "P1:FRESH_WORKER[fresh worker prompt]\n",
+    ]);
   } finally {
     if (daemon?.pid !== undefined) {
       try {
@@ -940,7 +1289,10 @@ test("watch daemon: a fast request skips the planner and runs the fixed 2-phase 
     // (the planner's structured-output flag) ever reached any worker stub.
     assert.ok(!existsSync(join(mailbox, "responses", `${id}.streams`, "planner-1.log")), "no planner stream in fast mode");
     assert.ok(!existsSync(claudeArgs), "claude should not launch when providers is omitted");
-    assert.ok(!readFileSync(codexArgs, "utf8").includes("--output-schema"), "no planner call (no --output-schema)");
+    const codexArgv = readFileSync(codexArgs, "utf8");
+    assert.ok(!codexArgv.includes("--output-schema"), "no planner call (no --output-schema)");
+    assert.ok(!codexArgv.includes("model_reasoning_effort"), "fast workflow must not force codex effort");
+    assert.ok(!codexArgv.includes("service_tier") && !codexArgv.includes("fast_mode"), "fast workflow must not force codex turbo");
   } finally {
     if (daemon?.pid !== undefined) {
       try {

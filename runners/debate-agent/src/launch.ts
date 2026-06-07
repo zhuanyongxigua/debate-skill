@@ -13,6 +13,10 @@
 //     in the display command, though visible in `ps`);
 //   - the child env is rebuilt from an allowlist, dropping secret-bearing vars.
 
+import { lstatSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 // Non-secret environment variables that may be copied into the child. PATH and
 // HOME are required for the CLIs to find their binary and default account
 // config (~/.claude, ~/.codex). Everything else here is locale/terminal
@@ -36,8 +40,8 @@ const ENV_KEEP_EXACT = new Set([
 const ENV_KEEP_PREFIXES = ["LC_", "XDG_"];
 
 // Belt-and-suspenders denylist. The keep allowlist already excludes these, but
-// we drop them explicitly and report them so children fall back to the default
-// logged-in account config rather than any injected credential.
+// we drop them explicitly and report them. Claude provider env, if configured, is
+// injected later from a service-level file rather than inherited from the parent.
 const ENV_SECRET_DENY = new Set([
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_AUTH_TOKEN",
@@ -75,6 +79,8 @@ export interface ChildLaunch {
   cwd: string;
   env: Record<string, string>;
   strippedEnvKeys: string[];
+  providerEnvSource: string | null;
+  injectedEnvKeys: string[];
 }
 
 export function buildChildEnv(
@@ -92,6 +98,69 @@ export function buildChildEnv(
     .filter((k) => ENV_SECRET_DENY.has(k))
     .sort();
   return { env, stripped };
+}
+
+// Optional service-level Claude provider env. This is deliberately NOT shell
+// sourcing: the runner reads a small dotenv-like file and injects only
+// ANTHROPIC_* keys into Claude children. Project config wins over global config;
+// the two files are not merged. Codex uses its normal CLI login/subscription
+// configuration and does not receive OPENAI_* secrets in the worker environment.
+export const PROVIDER_ENV_PROJECT = ".debate-agent/env";
+export const PROVIDER_ENV_GLOBAL = ".config/debate-agent/env";
+
+function isProviderEnvKey(provider: string, key: string): boolean {
+  if (provider === "claude") return key.startsWith("ANTHROPIC_");
+  return false;
+}
+
+function parseProviderEnv(provider: string, text: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const rawLine of text.split(/\r?\n/)) {
+    let line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    if (line.startsWith("export ")) line = line.slice("export ".length).trimStart();
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    if (!isProviderEnvKey(provider, key)) continue;
+    let value = line.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    env[key] = value;
+  }
+  return env;
+}
+
+function readProviderEnvFile(path: string): string | null {
+  try {
+    const st = lstatSync(path);
+    if (!st.isFile()) return null;
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+export function loadProviderEnv(
+  provider: string,
+  cwd: string,
+  baseEnv: Record<string, string | undefined>,
+): { env: Record<string, string>; source: string | null; keys: string[] } {
+  const projectPath = join(cwd, PROVIDER_ENV_PROJECT);
+  const home = baseEnv.HOME || homedir();
+  const globalPath = join(home, PROVIDER_ENV_GLOBAL);
+  for (const path of [projectPath, globalPath]) {
+    const text = readProviderEnvFile(path);
+    if (text === null) continue;
+    const env = parseProviderEnv(provider, text);
+    return { env, source: path, keys: Object.keys(env).sort() };
+  }
+  return { env: {}, source: null, keys: [] };
 }
 
 // Read-only Claude posture (Claude has no OS sandbox, so this is a harness-level
@@ -124,15 +193,13 @@ function buildClaudeArgv(
   session?: { id: string; resume: boolean },
 ): string[] {
   // Mirrors cli-launch Claude Code defaults: print mode, prompt via stdin. Thinking
-  // `effort` is per-launch (the planner picks it; the planner itself runs xhigh).
+  // `effort` is a per-launch override; when omitted by the request/plan, the
+  // caller defaults Claude to high because Claude has no Codex-style profile knob.
   // Claude profiles are unsupported (caller fails closed before reaching here).
   // read_only_review denies writes and allows only read tools + read-only git;
   // workspace_write auto-accepts edits.
   //
-  // Claude is EXEMPT from fast/turbo mode (like copilot): Claude's fast mode needs
-  // an API token, but the runner strips API keys and runs the child on the default
-  // logged-in account config, so a fast flag could not take effect. Only codex
-  // honors `fast`.
+  // `fast` is a debate workflow switch, not a child CLI performance flag.
   const permissionMode = capability === "workspace_write" ? "acceptEdits" : "default";
   const argv = ["claude", "--print", "--permission-mode", permissionMode, "--effort", effort];
   if (session) {
@@ -164,25 +231,29 @@ function buildCodexArgv(
   cwd: string,
   profile: string | null,
   capability: string,
-  effort: string,
+  effort?: string | null,
   schemaFile?: string,
   outputFile?: string,
 ): string[] {
   // Mirrors cli-launch Codex CLI defaults: exec mode, approvals never, prompt
-  // via stdin (the trailing "-"). Thinking `effort` is per-launch (the planner
-  // picks it; codex is fast/cheap so it generally uses xhigh). read_only_review
+  // via stdin (the trailing "-"). Codex model/reasoning/service-tier normally
+  // come from the user's Codex config/profile; an explicit plan/request `effort`
+  // is the only reason to override model_reasoning_effort here. read_only_review
   // uses the read-only sandbox with no network; workspace_write uses the writable
   // sandbox with network.
   const argv = ["codex"];
   if (profile) {
     argv.push("--profile", profile);
   }
-  argv.push("--ask-for-approval", "never", "-c", `model_reasoning_effort="${effort}"`);
-  // Codex always runs in turbo mode (per-invocation -c overrides, no global config
-  // change): codex is fast and token-cheap, so xhigh+turbo is its default posture.
-  // This is unconditional and DECOUPLED from any request `fast` field — that field
-  // now only controls debate flow leanness, never a child's turbo mode.
-  argv.push("-c", 'service_tier="fast"', "-c", "features.fast_mode=true");
+  argv.push(
+    "--ask-for-approval",
+    "never",
+    "-c",
+    'approval_policy="never"',
+  );
+  if (effort) {
+    argv.push("-c", `model_reasoning_effort="${effort}"`);
+  }
   if (capability === "workspace_write") {
     argv.push(
       "-c",
@@ -195,9 +266,12 @@ function buildCodexArgv(
     argv.push("exec", "--sandbox", "read-only");
   }
   // Planner only: constrain the final message to a JSON Schema file and capture
-  // it to an output file (the runner reads that file back as the plan).
+  // it to an output file (the runner reads that file back as the plan). Workers
+  // stream JSONL on stdout so slow Codex runs can be tailed live; runValidated()
+  // extracts the final answer from that stream before writing the audit stdout.
   if (schemaFile) argv.push("--output-schema", schemaFile);
   if (outputFile) argv.push("-o", outputFile);
+  if (!schemaFile && !outputFile) argv.push("--json");
   argv.push("--color", "never", "-C", cwd, "-");
   return argv;
 }
@@ -225,7 +299,7 @@ export function buildChildLaunch(args: {
   capability: string;
   prompt: string;
   baseEnv: Record<string, string | undefined>;
-  effort?: string; // thinking effort (per-launch; default "high"). copilot has none.
+  effort?: string | null; // optional thinking override. copilot has none.
   // Planner-only structured-output (the runner reads the validated plan back):
   jsonSchema?: string; // claude: inline `--json-schema` (with `--output-format json`)
   codexSchemaFile?: string; // codex: `--output-schema <file>`
@@ -234,7 +308,7 @@ export function buildChildLaunch(args: {
   // sets `--session-id`; an invalid-plan retry sets `--resume` to fix in-context.
   claudeSession?: { id: string; resume: boolean };
 }): ChildLaunch {
-  const { provider, cwd, profile, capability, prompt, baseEnv, effort = "high", jsonSchema, codexSchemaFile, codexOutputFile, claudeSession } = args;
+  const { provider, cwd, profile, capability, prompt, baseEnv, effort, jsonSchema, codexSchemaFile, codexOutputFile, claudeSession } = args;
 
   let argv: string[];
   let promptTransport: "stdin" | "argv";
@@ -244,7 +318,7 @@ export function buildChildLaunch(args: {
     if (profile !== null) {
       throw new Error("claude profile is not supported by this runner");
     }
-    argv = buildClaudeArgv(capability, effort, jsonSchema, claudeSession); // claude is fast-exempt (needs an API token)
+    argv = buildClaudeArgv(capability, effort ?? "high", jsonSchema, claudeSession);
     promptTransport = "stdin";
   } else if (provider === "codex") {
     argv = buildCodexArgv(cwd, profile, capability, effort, codexSchemaFile, codexOutputFile);
@@ -268,6 +342,14 @@ export function buildChildLaunch(args: {
   }
 
   const { env, stripped } = buildChildEnv(baseEnv);
+  let providerEnvSource: string | null = null;
+  let injectedEnvKeys: string[] = [];
+  if (provider === "claude") {
+    const providerEnv = loadProviderEnv(provider, cwd, baseEnv);
+    Object.assign(env, providerEnv.env);
+    providerEnvSource = providerEnv.source;
+    injectedEnvKeys = providerEnv.keys;
+  }
   const displayCommand =
     promptTransport === "stdin"
       ? argv.join(" ") + " <stdin-prompt>"
@@ -281,5 +363,7 @@ export function buildChildLaunch(args: {
     cwd,
     env,
     strippedEnvKeys: stripped,
+    providerEnvSource,
+    injectedEnvKeys,
   };
 }

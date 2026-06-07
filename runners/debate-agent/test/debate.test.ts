@@ -6,8 +6,7 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 
-import { DEFAULT_EFFORT } from "../src/allowlist";
-import { DebateDeps, runDebate } from "../src/debate";
+import { DebateDeps, IntermediateStore, PersistedDebateState, runDebate } from "../src/debate";
 import { DebateRequest } from "../src/mailbox";
 import { PlannerFn } from "../src/planner";
 import { BatchItemResult, PreparedItem } from "../src/runner";
@@ -36,6 +35,7 @@ function req(overrides: Partial<DebateRequest> = {}): DebateRequest {
     fast: false,
     plannerProvider: null,
     providers: ["codex", "claude"],
+    requestDigest: "sha256:test-request",
     ...overrides,
   };
 }
@@ -70,6 +70,21 @@ const twoPhasePlan = JSON.stringify({
   answer_item: "A1",
 });
 
+function stateStore(initial: PersistedDebateState): { store: IntermediateStore; saves: PersistedDebateState[] } {
+  let state = initial;
+  const saves: PersistedDebateState[] = [];
+  return {
+    saves,
+    store: {
+      load: () => state,
+      save: (next) => {
+        state = next;
+        saves.push(next);
+      },
+    },
+  };
+}
+
 test("runs the plan, substitutes earlier outputs into later prompts (mechanical)", async () => {
   const planner: PlannerFn = async () => twoPhasePlan;
   const { runItems, calls } = stubRun();
@@ -85,6 +100,144 @@ test("runs the plan, substitutes earlier outputs into later prompts (mechanical)
   assert.equal(calls[0]![0]!.req!.capability, "read_only_review");
   // trace covers every launch
   assert.deepEqual(resp.trace.map((t) => `${t.item}:${t.status}`), ["P1:completed", "P2:completed", "A1:completed"]);
+  assert.deepEqual(
+    resp.intermediate_outputs.map((o) => `${o.phase}:${o.item}:${o.provider}:${o.status}:${o.output_markdown}`),
+    [
+      "proposal_generation:P1:codex:completed:OUT[P1]",
+      "proposal_generation:P2:claude:completed:OUT[P2]",
+      "arbitration:A1:claude:completed:OUT[A1]",
+    ],
+  );
+});
+
+test("resumes from persisted intermediates and reads later prompts from the sidecar", async () => {
+  const plan = {
+    complexity: "simple" as const,
+    phases: [
+      { name: "proposal_generation", launches: [{ id: "P1", provider: "codex", effort: "xhigh", prompt: "propose" }] },
+      { name: "arbitration", launches: [{ id: "A1", provider: "claude", effort: "high", prompt: "decide from {{P1.output}}" }] },
+    ],
+    answerItem: "A1",
+  };
+  const { store, saves } = stateStore({
+    schema_version: 1,
+    request_id: "d1",
+    request_digest: "sha256:test-request",
+    kind: "debate_intermediates",
+    plan,
+    outputs: [{ phase: "proposal_generation", item: "P1", provider: "codex", status: "completed", output_markdown: "SAVED-P1" }],
+    updated_at: "2026-06-07T00:00:00.000Z",
+  });
+  const planner: PlannerFn = async () => {
+    throw new Error("planner must NOT be called when a persisted plan exists");
+  };
+  const { runItems, calls } = stubRun();
+  const resp = await runDebate(req({ fast: true }), allow, { planner, runItems, readOutput, intermediateStore: store });
+
+  assert.equal(resp.status, "completed");
+  assert.equal(calls.length, 1, "only the missing arbitration step should run");
+  assert.equal(calls[0]![0]!.itemId, "A1");
+  assert.match(calls[0]![0]!.req!.prompt, /decide from SAVED-P1/);
+  assert.deepEqual(
+    resp.trace.map((t) => `${t.item}:${t.status}:${t.resumed === true ? "resumed" : "ran"}`),
+    ["P1:completed:resumed", "A1:completed:ran"],
+  );
+  assert.deepEqual(resp.intermediate_outputs.map((o) => `${o.item}:${o.output_markdown}`), ["P1:SAVED-P1", "A1:OUT[A1]"]);
+  assert.equal(saves.at(-1)?.finished_at, resp.finished_at);
+});
+
+test("ignores a persisted sidecar with an unsupported schema version", async () => {
+  const { store } = stateStore({
+    schema_version: 999,
+    request_id: "d1",
+    request_digest: "sha256:test-request",
+    kind: "debate_intermediates",
+    plan: {
+      complexity: "simple",
+      phases: [{ name: "proposal_generation", launches: [{ id: "P1", provider: "codex", prompt: "stale" }] }],
+      answerItem: "P1",
+    },
+    outputs: [{ phase: "proposal_generation", item: "P1", provider: "codex", status: "completed", output_markdown: "STALE" }],
+    updated_at: "2026-06-07T00:00:00.000Z",
+  });
+  let planned = 0;
+  const planner: PlannerFn = async () => {
+    planned++;
+    return twoPhasePlan;
+  };
+  const { runItems, calls } = stubRun();
+  const logs: string[] = [];
+  const resp = await runDebate(req(), allow, { planner, runItems, readOutput, intermediateStore: store, log: (line) => logs.push(line) });
+
+  assert.equal(planned, 1, "invalid persisted state should be ignored and replanned");
+  assert.equal(resp.status, "completed");
+  assert.deepEqual(calls[0]!.map((it) => it.itemId), ["P1", "P2"]);
+  assert.ok(!resp.trace.some((row) => row.resumed === true));
+  assert.ok(logs.some((line) => line.includes("ignored persisted intermediates") && line.includes("schema_version")));
+});
+
+test("ignores a persisted sidecar whose request digest does not match", async () => {
+  const { store } = stateStore({
+    schema_version: 1,
+    request_id: "d1",
+    request_digest: "sha256:old-request",
+    kind: "debate_intermediates",
+    plan: {
+      complexity: "simple",
+      phases: [{ name: "proposal_generation", launches: [{ id: "P1", provider: "codex", prompt: "stale" }] }],
+      answerItem: "P1",
+    },
+    outputs: [{ phase: "proposal_generation", item: "P1", provider: "codex", status: "completed", output_markdown: "STALE" }],
+    updated_at: "2026-06-07T00:00:00.000Z",
+  });
+  let planned = 0;
+  const planner: PlannerFn = async () => {
+    planned++;
+    return twoPhasePlan;
+  };
+  const { runItems, calls } = stubRun();
+  const logs: string[] = [];
+  const resp = await runDebate(req(), allow, { planner, runItems, readOutput, intermediateStore: store, log: (line) => logs.push(line) });
+
+  assert.equal(planned, 1, "state from a different request body should not be resumed");
+  assert.equal(resp.status, "completed");
+  assert.deepEqual(calls[0]!.map((it) => it.itemId), ["P1", "P2"]);
+  assert.ok(!resp.trace.some((row) => row.resumed === true));
+  assert.ok(logs.some((line) => line.includes("ignored persisted intermediates") && line.includes("request_digest")));
+});
+
+test("does not resume a completed row whose phase does not match the persisted plan", async () => {
+  const plan = {
+    complexity: "simple" as const,
+    phases: [
+      { name: "proposal_generation", launches: [{ id: "P1", provider: "codex", prompt: "propose" }] },
+      { name: "arbitration", launches: [{ id: "A1", provider: "claude", prompt: "decide from {{P1.output}}" }] },
+    ],
+    answerItem: "A1",
+  };
+  const { store } = stateStore({
+    schema_version: 1,
+    request_id: "d1",
+    request_digest: "sha256:test-request",
+    kind: "debate_intermediates",
+    plan,
+    outputs: [{ phase: "arbitration", item: "P1", provider: "codex", status: "completed", output_markdown: "WRONG-PHASE" }],
+    updated_at: "2026-06-07T00:00:00.000Z",
+  });
+  let planned = 0;
+  const planner: PlannerFn = async () => {
+    planned++;
+    return twoPhasePlan;
+  };
+  const { runItems, calls } = stubRun();
+  const logs: string[] = [];
+  const resp = await runDebate(req(), allow, { planner, runItems, readOutput, intermediateStore: store, log: (line) => logs.push(line) });
+
+  assert.equal(planned, 1, "stale output rows should invalidate persisted resume state");
+  assert.equal(resp.status, "completed");
+  assert.deepEqual(calls[0]!.map((it) => it.itemId), ["P1", "P2"]);
+  assert.ok(!resp.trace.some((row) => row.resumed === true));
+  assert.ok(logs.some((line) => line.includes("does not match plan phase")));
 });
 
 test("retries the planner on invalid output, then succeeds", async () => {
@@ -187,9 +340,10 @@ test("a rate_limited worker is re-run on the next provider (same task, swap engi
   assert.equal(calls[1]![0]!.req!.provider, "codex");
   // the SAME substituted prompt is reused verbatim on the swap
   assert.equal(calls[1]![0]!.req!.prompt, calls[0]![0]!.req!.prompt);
-  // the planner's claude effort is dropped for codex's default on the swap
-  assert.equal(calls[0]![0]!.req!.effort, DEFAULT_EFFORT.claude);
-  assert.equal(calls[1]![0]!.req!.effort, DEFAULT_EFFORT.codex);
+  // the planner's claude effort is dropped on the swap so codex can use its
+  // profile/config instead of inheriting a provider-specific override.
+  assert.equal(calls[0]![0]!.req!.effort, "high");
+  assert.equal(calls[1]![0]!.req!.effort, null);
   // trace + answer reflect the substitute engine, and the swap is visible
   assert.deepEqual(resp.trace.map((t) => `${t.item}:${t.provider}:${t.status}`), ["P1:codex:completed"]);
   assert.equal(resp.trace[0]!.planned_provider, "claude"); // swap from the planned engine is recorded
@@ -293,7 +447,7 @@ test("the fast plan assigns roles from provider order and ignores providers afte
   assert.equal(resp.status, "completed");
   assert.deepEqual(resp.trace.map((t) => `${t.item}:${t.provider}`), ["P1:claude", "P2:codex", "A1:copilot"]);
   assert.deepEqual(calls.flat().map((it) => it.req!.provider), ["claude", "codex", "copilot"]);
-  assert.deepEqual(calls.flat().map((it) => it.req!.effort), ["high", "xhigh", "high"]);
+  assert.deepEqual(calls.flat().map((it) => it.req!.effort), [null, null, null]);
 });
 
 test("runDebate honors a codex-only request provider set even with a wider allowlist", async () => {
@@ -305,7 +459,7 @@ test("runDebate honors a codex-only request provider set even with a wider allow
   assert.equal(resp.status, "completed");
   assert.deepEqual(resp.trace.map((t) => `${t.item}:${t.provider}`), ["P1:codex", "P2:codex", "A1:codex"]);
   assert.deepEqual(calls.flat().map((it) => it.req!.provider), ["codex", "codex", "codex"]);
-  assert.deepEqual(calls.flat().map((it) => it.req!.effort), ["xhigh", "xhigh", "xhigh"]);
+  assert.deepEqual(calls.flat().map((it) => it.req!.effort), [null, null, null]);
 });
 
 test("the fast plan escapes {{...}} in the user prompt (not mangled by substitute)", async () => {

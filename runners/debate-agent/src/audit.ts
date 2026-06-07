@@ -6,7 +6,7 @@
 //
 // A tiny YAML emitter is used so the runner has no third-party dependency.
 
-import { closeSync, lstatSync, mkdirSync, openSync, realpathSync, writeFileSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, lstatSync, mkdirSync, openSync, realpathSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 
@@ -14,6 +14,8 @@ import { expandUser } from "./paths";
 
 // Process-local sequence so same-second launches never collide on a filename.
 let seq = 0;
+const PRIVATE_DIR_MODE = 0o700;
+const PRIVATE_FILE_MODE = 0o600;
 
 export function auditRoot(): string {
   const override = process.env.DEBATE_AGENT_AUDIT_HOME;
@@ -78,7 +80,8 @@ function timestampSlug(): string {
  */
 function resolveRunDir(runId: string): string {
   const rootRaw = auditRoot();
-  mkdirSync(rootRaw, { recursive: true });
+  mkdirSync(rootRaw, { recursive: true, mode: PRIVATE_DIR_MODE });
+  chmodSync(rootRaw, PRIVATE_DIR_MODE);
   const root = realpathSync(rootRaw);
   const outDir = resolve(root, runId);
   // (1) Lexical containment: rejects '..' and absolute escapes.
@@ -99,6 +102,16 @@ function resolveRunDir(runId: string): string {
     );
   }
   return outDir;
+}
+
+function ensurePrivateDir(path: string): void {
+  mkdirSync(path, { recursive: true, mode: PRIVATE_DIR_MODE });
+  chmodSync(path, PRIVATE_DIR_MODE);
+}
+
+function writePrivateFile(path: string, content: string): void {
+  writeFileSync(path, content, { mode: PRIVATE_FILE_MODE });
+  chmodSync(path, PRIVATE_FILE_MODE);
 }
 
 /**
@@ -147,7 +160,7 @@ export function writeExecutionAudit(args: {
   const { runId, record, stdout = null, stderr = null, phase = "other", provider = "unknown" } = args;
 
   const outDir = resolveRunDir(runId);
-  mkdirSync(outDir, { recursive: true });
+  ensurePrivateDir(outDir);
 
   const stemBase = `exec-${phase}-${provider}-${timestampSlug()}`;
   const [stem, fd] = openUnique(outDir, stemBase);
@@ -162,12 +175,12 @@ export function writeExecutionAudit(args: {
   const paths: AuditPaths = { audit_path: auditPath };
   if (stdout !== null) {
     const p = join(outDir, `${stem}.stdout.txt`);
-    writeFileSync(p, stdout);
+    writePrivateFile(p, stdout);
     paths.stdout_path = p;
   }
   if (stderr !== null) {
     const p = join(outDir, `${stem}.stderr.txt`);
-    writeFileSync(p, stderr);
+    writePrivateFile(p, stderr);
     paths.stderr_path = p;
   }
   return paths;

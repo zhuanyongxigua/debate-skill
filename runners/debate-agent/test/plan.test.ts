@@ -123,32 +123,31 @@ test("validatePlan rejects unknown reference and bad answer_item", () => {
   );
 });
 
-test("validatePlan requires per-launch effort + complexity, rejects bad effort and unknown fields", () => {
+test("validatePlan allows optional per-launch effort, rejects bad effort and unknown fields", () => {
   const ok = {
     complexity: "simple",
     phases: [{ name: "p", launches: [
-      { id: "P1", provider: "codex", prompt: "x", effort: "xhigh" },
+      { id: "P1", provider: "codex", prompt: "x" },
       { id: "P2", provider: "claude", prompt: "y", effort: "max" },
     ] }],
     answer_item: "P1",
   };
   const plan = validatePlan(ok, allow);
   assert.equal(plan.complexity, "simple");
-  assert.equal(plan.phases[0]!.launches[0]!.effort, "xhigh");
+  assert.equal(plan.phases[0]!.launches[0]!.effort, undefined);
   assert.equal(plan.phases[0]!.launches[1]!.effort, "max"); // max valid for claude
   assert.throws(
     () => validatePlan({ phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", effort: "xhigh", prompt: "x" }] }], answer_item: "P1" }, allow),
     /complexity/,
   );
   assert.throws(
-    () => validatePlan({ complexity: "simple", phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "x" }] }], answer_item: "P1" }, allow),
+    () => validatePlan({ complexity: "simple", phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "x", effort: null }] }], answer_item: "P1" }, allow),
     /effort .* not allowed/,
   );
   // 'max' is NOT valid for codex
   const badCodex = { complexity: "simple", phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "x", effort: "max" }] }], answer_item: "P1" };
   assert.throws(() => validatePlan(badCodex, allow), /effort .* not allowed for provider "codex"/);
-  // the retired per-launch `fast` field is now an UNKNOWN field => rejected
-  // (codex always runs turbo, so there is nothing to toggle per launch)
+  // the retired per-launch `fast` field is now an UNKNOWN field => rejected.
   const badFast = { complexity: "simple", phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "x", effort: "xhigh", fast: true }] }], answer_item: "P1" };
   assert.throws(() => validatePlan(badFast, allow), /unknown field/);
 });

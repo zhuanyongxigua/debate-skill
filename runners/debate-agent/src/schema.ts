@@ -11,7 +11,6 @@ import { isAbsolute } from "node:path";
 import {
   Allowlist,
   DEFAULT_CAPABILITY,
-  DEFAULT_EFFORT,
   FALLBACK_DEFAULT_TIMEOUT,
   MAX_TIMEOUT_SECONDS,
   PHASE_DEFAULT_TIMEOUT,
@@ -64,7 +63,7 @@ export interface ValidatedRequest {
   repoRoot: string;
   profile: string | null;
   capability: string;
-  effort: string;
+  effort: string | null;
   prompt: string;
   timeoutSeconds: number;
   requestDigest: string;
@@ -198,9 +197,10 @@ export function validateRequest(raw: Record<string, unknown>, allow: Allowlist):
     `capability ${JSON.stringify(capability)} not in allowlist ${JSON.stringify(allow.capabilities)}`,
   );
 
-  // --- effort (per-launch thinking depth) ---------------------------------
-  // The planner picks this per worker; valid values depend on the provider.
-  let effort: string;
+  // --- effort (optional per-launch thinking override) ----------------------
+  // If omitted, the child CLI's own profile/config decides. This matters most
+  // for Codex, where model/reasoning/service-tier are user profile settings.
+  let effort: string | null = null;
   if (raw.effort !== undefined && raw.effort !== null) {
     req(typeof raw.effort === "string", "effort must be a string");
     const allowed = validEffortsFor(provider);
@@ -209,8 +209,6 @@ export function validateRequest(raw: Record<string, unknown>, allow: Allowlist):
       `effort ${JSON.stringify(raw.effort)} not allowed for provider "${provider}"; allowed: ${JSON.stringify(allowed)}`,
     );
     effort = raw.effort as string;
-  } else {
-    effort = DEFAULT_EFFORT[provider] ?? "high";
   }
 
   // --- prompt -------------------------------------------------------------

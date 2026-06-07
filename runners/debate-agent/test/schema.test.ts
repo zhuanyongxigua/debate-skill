@@ -29,6 +29,7 @@ function expectReject(req: Record<string, unknown>, re: RegExp): void {
 test("valid request", () => {
   const req = validateRequest(baseRequest(repo), allow);
   assert.equal(req.provider, "claude");
+  assert.equal(req.effort, null);
   assert.equal(req.timeoutSeconds, 1800); // phase default
   assert.ok(req.requestDigest.startsWith("sha256:"));
 });
@@ -106,6 +107,14 @@ test("copilot accepted when allowlisted", () => {
   assert.equal(req.capability, "read_only_review");
 });
 
+test("explicit effort is accepted but omitted effort stays null", () => {
+  const codexDefault = validateRequest({ ...baseRequest(repo), provider: "codex" }, allow);
+  assert.equal(codexDefault.effort, null);
+  const codexOverride = validateRequest({ ...baseRequest(repo), provider: "codex", effort: "xhigh" }, allow);
+  assert.equal(codexOverride.effort, "xhigh");
+  expectReject({ ...baseRequest(repo), provider: "codex", effort: "max" }, /effort .* not allowed/);
+});
+
 test("copilot profile rejected", () => {
   const withCopilot = makeAllowlist(repo, { providers: ["claude", "codex", "copilot"] });
   assert.throws(
@@ -125,8 +134,8 @@ test("explicit workspace_write capability accepted when allowlisted", () => {
 });
 
 test("the retired low-level `fast` request field is now rejected as unknown", () => {
-  // codex always runs turbo and there is no per-request turbo toggle, so `fast` is
-  // no longer a valid run/run-batch request field (strict unknown-field reject).
+  // `fast` belongs only to high-level debate_request workflow selection, not to
+  // low-level run/run-batch child CLI launch specs.
   expectReject({ ...baseRequest(repo), fast: true }, /unknown request field/);
 });
 

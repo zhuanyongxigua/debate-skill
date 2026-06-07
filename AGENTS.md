@@ -90,10 +90,26 @@ plus one optional execution adapter:
    execution, per (c)) still runs for `fast: false`, used only when the human
    explicitly asks for a serious/thorough debate. For hand-authored daemon
    requests, the raw omitted-field default remains conservative `fast: false`; the
-   skill must write `fast: true` when it wants the lean default. Also: **codex
-   always runs turbo (`service_tier=fast` / `fast_mode`) at xhigh** as its default
-   posture — fully decoupled from the `fast` field; there is no
-   per-request/per-launch turbo toggle.
+   skill must write `fast: true` when it wants the lean default. `fast` only
+   chooses this fixed workflow; it MUST NOT add Codex speed/reasoning overrides.
+   Codex model, reasoning effort, and service tier come from the user's Codex
+   config/profile unless a low-level request or planner launch explicitly sets
+   `effort`, in which case only `model_reasoning_effort` is overridden. Codex
+   workers use `codex exec --json` for live progress streams, while codex planner
+   calls keep the structured `--output-schema/-o` path.
+   (g) **The intermediates sidecar is canonical execution state.** The daemon
+   writes `responses/<id>.intermediates.json` incrementally with the validated
+   plan (or fixed fast plan) and each clean worker `output_markdown`. Later phase
+   prompt substitution reads from that persisted sidecar, not from a parallel
+   in-memory-only representation. The sidecar MUST be validated before reuse:
+   schema version, request id, normalized request digest, plan shape/semantics,
+   output row shape, duplicate items, and item/phase/provider lineage must all
+   match the current request and allowlist. On restart, orphaned `processing/`
+   requests are resumed through the
+   normal plan→execute path: reuse a valid persisted plan, skip only completed
+   launch rows that match that plan, and run missing/incomplete downstream
+   launches. This applies to both `fast: true` and `fast: false`. Do not
+   reintroduce a second source of truth for intermediate outputs.
 4. **The runner is closed by default and fails closed.** No `repo_roots` ⇒ every
    request rejected. Malformed config raises at startup; the daemon's per-request
    allowlist reload instead keeps the last-good config and warns — neither path
@@ -104,6 +120,15 @@ plus one optional execution adapter:
    `debate_request.planner_provider` / `debate_request.providers` select among
    fixed safe templates. Omitted `debate_request.providers` defaults to
    `["codex"]`; add other engines explicitly in that array. Keep it that way.
+   Child env is also rebuilt from a small allowlist. The only credential exception
+   is Claude provider env loaded by the runner itself from a regular-file
+   `<repo>/.debate-agent/env` or `~/.config/debate-agent/env`, injecting only
+   `ANTHROPIC_*` keys into Claude launches (planner attempts and workers). Invalid
+   project env paths such as symlinks/directories are ignored and may fall back to
+   global config; a valid project file is not merged with global config. Codex uses
+   its normal CLI login/subscription config and must not receive `OPENAI_*` secrets
+   in worker env. Do not add request-controlled env fields or generic shell
+   sourcing.
 6. **Two audit trails, linked by id only.** Protocol audit
    (`~/.debate-router/<run-id>/`) is the skill's; execution audit
    (`~/.debate-agent/<run-id|batch-id>/`) is the runner's. The runner never
@@ -144,18 +169,20 @@ real model:
   and that every `{{id.output}}` references a STRICTLY earlier phase.
 - `test/debate.test.ts` — the orchestrator with a scripted `planner` and stub
   `runItems`: asserts mechanical templating (earlier outputs substituted into
-  later prompts), planner retry-on-invalid, plan-failure → error response,
-  status-based degrade, and capability forced read-only.
+  later prompts), persisted-sidecar resume/skips, planner retry-on-invalid,
+  plan-failure → error response, status-based degrade, and capability forced
+  read-only.
 - `test/watch.test.ts` — mailbox primitives (validate `debate_request` / claim /
-  snapshot / atomic write) + `processNewRequests` via injected `makeDeps`
-  (scripted planner + stub workers): id-mismatch error, fail-closed planner
-  provider, orphan recovery, per-request allowlist reload.
+  snapshot / atomic write) + `processNewRequests` / `recoverOrphans` via injected
+  `makeDeps` (scripted planner + stub workers): id-mismatch error, fail-closed
+  planner provider, orphan resume, per-request allowlist reload.
 - `test/watch-e2e.test.ts` — scripted planner but **REAL worker subprocess spawns**
   (a bash stub CLI): asserts the answer = worker stdout, the claimed→cleared
   `processing/` entry, the live `<id>.log`, and the read-only argv on the child.
-- `test/integration.test.ts` — the real `bin/debate-agent watch` subprocess, where
-  one stub CLI serves as both planner and worker, driving a `debate_request`
-  end-to-end across the process boundary.
+- `test/integration.test.ts` — the real `bin/debate-agent watch` subprocess,
+  where one stub CLI serves as both planner and worker, driving a
+  `debate_request` end-to-end across the process boundary, including orphan
+  resume from persisted intermediates.
 
 Keep these deterministic seams: `runDebate(req, allow, deps)` takes an injectable
 `planner: PlannerFn`, `runItems` (defaults to the real `runPreparedItems`), and

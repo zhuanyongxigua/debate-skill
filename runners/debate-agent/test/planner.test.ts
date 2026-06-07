@@ -48,7 +48,7 @@ const CERT_ERROR: ExecResult = {
 const ok = (stdout: string): ExecResult => ({ status: "completed", errorCategory: null, returncode: 0, elapsedSeconds: 0, stdout, stderr: "" });
 
 function plannerReq(repo: string): DebateRequest {
-  return { id: "d1", prompt: "decide", repo, repoRoot: repo, language: null, fast: false, plannerProvider: null, providers: ["codex"] };
+  return { id: "d1", prompt: "decide", repo, repoRoot: repo, language: null, fast: false, plannerProvider: null, providers: ["codex"], requestDigest: "sha256:test-request" };
 }
 
 test("planner rotates to the next provider when the primary is rate-limited", async () => {
@@ -218,6 +218,7 @@ test("rate-limit rotation starts the fallback engine fresh; codex never gets a s
     const codexLaunch = launches.find((l) => l.provider === "codex")!;
     assert.ok(!codexLaunch.argv.includes("--session-id"));
     assert.ok(!codexLaunch.argv.includes("--resume"));
+    assert.ok(!codexLaunch.argv.some((a) => a.includes("model_reasoning_effort")));
   } finally {
     cleanup(root);
   }

@@ -1,9 +1,21 @@
 // Static argv shape and env allowlist tests.
 
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import { buildChildEnv, buildChildLaunch } from "../src/launch";
+
+function withTempDir(fn: (root: string) => void): void {
+  const root = mkdtempSync(join(tmpdir(), "dr-launch-"));
+  try {
+    fn(root);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
 
 test("secrets dropped, PATH kept", () => {
   const base = {
@@ -51,6 +63,130 @@ test("claude argv has no prompt in argv", () => {
   assert.ok(!launch.displayCommand.includes("SECRET PROMPT"));
 });
 
+test("claude provider env comes from project file before global file", () => {
+  withTempDir((root) => {
+    const repo = join(root, "repo");
+    const home = join(root, "home");
+    mkdirSync(join(repo, ".debate-agent"), { recursive: true });
+    mkdirSync(join(home, ".config", "debate-agent"), { recursive: true });
+    writeFileSync(
+      join(repo, ".debate-agent", "env"),
+      [
+        "ANTHROPIC_API_KEY=project-key",
+        'export ANTHROPIC_BASE_URL="https://project.example"',
+        "PATH=/bad",
+        "CLAUDE_CONFIG_DIR=/bad",
+      ].join("\n"),
+    );
+    writeFileSync(join(home, ".config", "debate-agent", "env"), "ANTHROPIC_API_KEY=global-key\n");
+
+    const launch = buildChildLaunch({
+      provider: "claude",
+      cwd: repo,
+      profile: null,
+      capability: "read_only_review",
+      prompt: "P",
+      baseEnv: { PATH: "/usr/bin", HOME: home, ANTHROPIC_API_KEY: "parent-key" },
+    });
+
+    assert.equal(launch.env.ANTHROPIC_API_KEY, "project-key");
+    assert.equal(launch.env.ANTHROPIC_BASE_URL, "https://project.example");
+    assert.equal(launch.env.PATH, "/usr/bin");
+    assert.ok(!("CLAUDE_CONFIG_DIR" in launch.env));
+    assert.equal(launch.providerEnvSource, join(repo, ".debate-agent", "env"));
+    assert.deepEqual(launch.injectedEnvKeys, ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"]);
+    assert.ok(launch.strippedEnvKeys.includes("ANTHROPIC_API_KEY"));
+  });
+});
+
+test("claude provider env falls back to global file and is not injected into codex", () => {
+  withTempDir((root) => {
+    const repo = join(root, "repo");
+    const home = join(root, "home");
+    mkdirSync(repo, { recursive: true });
+    mkdirSync(join(home, ".config", "debate-agent"), { recursive: true });
+    writeFileSync(
+      join(home, ".config", "debate-agent", "env"),
+      "ANTHROPIC_MODEL=claude-test\nOPENAI_API_KEY=openai-test\n",
+    );
+
+    const claude = buildChildLaunch({
+      provider: "claude",
+      cwd: repo,
+      profile: null,
+      capability: "read_only_review",
+      prompt: "P",
+      baseEnv: { PATH: "/usr/bin", HOME: home },
+    });
+    assert.equal(claude.env.ANTHROPIC_MODEL, "claude-test");
+    assert.ok(!("OPENAI_API_KEY" in claude.env));
+    assert.equal(claude.providerEnvSource, join(home, ".config", "debate-agent", "env"));
+    assert.deepEqual(claude.injectedEnvKeys, ["ANTHROPIC_MODEL"]);
+
+    const codex = buildChildLaunch({
+      provider: "codex",
+      cwd: repo,
+      profile: null,
+      capability: "read_only_review",
+      prompt: "P",
+      baseEnv: { PATH: "/usr/bin", HOME: home },
+    });
+    assert.ok(!("OPENAI_API_KEY" in codex.env));
+    assert.ok(!("ANTHROPIC_MODEL" in codex.env));
+    assert.equal(codex.providerEnvSource, null);
+    assert.deepEqual(codex.injectedEnvKeys, []);
+  });
+});
+
+test("project claude provider env suppresses global fallback even with no allowed keys", () => {
+  withTempDir((root) => {
+    const repo = join(root, "repo");
+    const home = join(root, "home");
+    mkdirSync(join(repo, ".debate-agent"), { recursive: true });
+    mkdirSync(join(home, ".config", "debate-agent"), { recursive: true });
+    writeFileSync(join(repo, ".debate-agent", "env"), "PATH=/bad\nCLAUDE_CONFIG_DIR=/bad\n");
+    writeFileSync(join(home, ".config", "debate-agent", "env"), "ANTHROPIC_MODEL=global-model\nOPENAI_API_KEY=global-key\n");
+
+    const launch = buildChildLaunch({
+      provider: "claude",
+      cwd: repo,
+      profile: null,
+      capability: "read_only_review",
+      prompt: "P",
+      baseEnv: { PATH: "/usr/bin", HOME: home },
+    });
+
+    assert.ok(!("ANTHROPIC_MODEL" in launch.env));
+    assert.equal(launch.providerEnvSource, join(repo, ".debate-agent", "env"));
+    assert.deepEqual(launch.injectedEnvKeys, []);
+  });
+});
+
+test("non-regular project claude provider env falls back to global file", () => {
+  withTempDir((root) => {
+    const repo = join(root, "repo");
+    const home = join(root, "home");
+    mkdirSync(join(repo, ".debate-agent"), { recursive: true });
+    mkdirSync(join(home, ".config", "debate-agent"), { recursive: true });
+    writeFileSync(join(root, "target.env"), "ANTHROPIC_MODEL=project-symlink-model\n");
+    symlinkSync(join(root, "target.env"), join(repo, ".debate-agent", "env"));
+    writeFileSync(join(home, ".config", "debate-agent", "env"), "ANTHROPIC_MODEL=global-model\n");
+
+    const launch = buildChildLaunch({
+      provider: "claude",
+      cwd: repo,
+      profile: null,
+      capability: "read_only_review",
+      prompt: "P",
+      baseEnv: { PATH: "/usr/bin", HOME: home },
+    });
+
+    assert.equal(launch.env.ANTHROPIC_MODEL, "global-model");
+    assert.equal(launch.providerEnvSource, join(home, ".config", "debate-agent", "env"));
+    assert.deepEqual(launch.injectedEnvKeys, ["ANTHROPIC_MODEL"]);
+  });
+});
+
 test("codex argv uses stdin dash and cwd", () => {
   const launch = buildChildLaunch({
     provider: "codex",
@@ -62,6 +198,8 @@ test("codex argv uses stdin dash and cwd", () => {
   });
   assert.equal(launch.argv[0], "codex");
   assert.ok(launch.argv.includes("exec"));
+  assert.ok(launch.argv.includes('approval_policy="never"'));
+  assert.ok(launch.argv.includes("--json"));
   assert.ok(launch.argv.includes("--sandbox"));
   assert.equal(launch.argv[launch.argv.length - 1], "-");
   assert.ok(launch.argv.includes("/repo/sub"));
@@ -137,25 +275,24 @@ test("claude read_only_review denies writes, allows read tools + read-only git",
   assert.ok(!rw.argv.includes("--disallowedTools") && !rw.argv.includes("--allowedTools"));
 });
 
-test("thinking effort is per-launch (default high; planner picks the value)", () => {
-  // default effort is high (the planner overrides per launch; codex defaults to xhigh at the schema layer)
+test("thinking effort is optional; codex defaults to profile config", () => {
+  // Claude has no Codex-style profile knob, so the runner defaults it to high.
   const c = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {} });
   assert.equal(c.argv[c.argv.indexOf("--effort") + 1], "high");
-  // an explicit effort is honored
+  // An explicit effort is honored.
   const cx = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {}, effort: "xhigh" });
   assert.equal(cx.argv[cx.argv.indexOf("--effort") + 1], "xhigh");
+
+  const defaultCodex = buildChildLaunch({ provider: "codex", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {} });
+  assert.ok(!defaultCodex.argv.some((a) => a.includes("model_reasoning_effort")));
+
   const x = buildChildLaunch({ provider: "codex", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {}, effort: "xhigh" });
   assert.ok(x.argv.some((a) => a === 'model_reasoning_effort="xhigh"'));
 });
 
-test("codex always runs in turbo mode; claude/copilot never get turbo flags", () => {
-  // codex is unconditionally turbo (xhigh+fast is its default posture), via
-  // per-invocation -c overrides — no `fast` input needed or accepted.
+test("codex does not get runner-injected service tier or fast-mode flags", () => {
   const x = buildChildLaunch({ provider: "codex", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {} });
-  assert.ok(x.argv.includes('service_tier="fast"'));
-  assert.ok(x.argv.includes("features.fast_mode=true"));
-  // claude/copilot get NO turbo flags (their fast mode needs an API token the
-  // runner strips — they run on the logged-in account).
+  assert.ok(!x.argv.some((a) => a.includes("service_tier") || a.includes("fast_mode")));
   const c = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {} });
   assert.ok(!c.argv.some((a) => a.includes("service_tier") || a.includes("fast_mode")));
   const cp = buildChildLaunch({ provider: "copilot", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {} });
@@ -176,6 +313,7 @@ test("planner structured-output flags: claude inline --json-schema, codex --outp
   assert.ok(oi >= 0 && x.argv[oi + 1] === "/tmp/o.json");
   assert.equal(x.argv[x.argv.length - 1], "-"); // prompt still on stdin
   assert.ok(si > x.argv.indexOf("exec") && oi > x.argv.indexOf("exec"));
+  assert.ok(!x.argv.includes("--json"), "codex planner uses -o/--output-schema, not worker JSONL");
   // a normal claude worker streams (for the live debug file) but has no schema
   const w = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {} });
   assert.ok(!w.argv.includes("--json-schema"));

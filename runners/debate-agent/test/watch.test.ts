@@ -2,7 +2,7 @@
 // scripted planner and stub workers (injected makeDeps). No real LLM/CLI.
 
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 
@@ -12,8 +12,11 @@ import {
   claimRequest,
   loadRequestObject,
   openMailbox,
+  openResponseLog,
+  requestStreamDir,
   snapshotRequestIds,
   validateDebateRequest,
+  writeIntermediates,
   writeResponse,
 } from "../src/mailbox";
 import { PlannerFn } from "../src/planner";
@@ -44,6 +47,10 @@ function writeRequestFile(id: string, overrides: Record<string, unknown> = {}): 
     join(mb.requestsDir, `${id}.json`),
     JSON.stringify({ schema_version: 1, id, kind: "debate_request", prompt: "debate this", repo: realpathSync(repo), ...overrides }),
   );
+}
+
+function modeOf(path: string): number {
+  return statSync(path).mode & 0o777;
 }
 
 const onePhasePlan = JSON.stringify({
@@ -79,6 +86,9 @@ test("validateDebateRequest accepts a good request and defaults", () => {
   assert.equal(r.fast, false);
   assert.equal(r.plannerProvider, null);
   assert.deepEqual(r.providers, ["codex"]);
+  assert.ok(r.requestDigest.startsWith("sha256:"));
+  const changed = validateDebateRequest({ schema_version: 1, id: "r1", kind: "debate_request", prompt: "y", repo: realpathSync(repo) }, allow);
+  assert.notEqual(changed.requestDigest, r.requestDigest);
 });
 
 test("validateDebateRequest accepts language + fast + planner_provider, rejects bad shapes", () => {
@@ -187,6 +197,12 @@ test("processes a new request: plans, executes, writes a matching response", asy
   assert.equal(resp.status, "completed");
   assert.equal(resp.answer_markdown, "ANSWER-P1");
   assert.ok(Array.isArray(resp.trace) && resp.trace.length === 1);
+  assert.equal(typeof resp.intermediates_path, "string");
+  assert.ok(!("intermediate_outputs" in resp), "response keeps intermediate outputs in a sidecar");
+  const sidecar = JSON.parse(readFileSync(resp.intermediates_path, "utf8"));
+  assert.equal(sidecar.kind, "debate_intermediates");
+  assert.equal(typeof sidecar.request_digest, "string");
+  assert.deepEqual(sidecar.outputs.map((o: { item: string; output_markdown: string }) => `${o.item}:${o.output_markdown}`), ["P1:ANSWER-P1"]);
   assert.equal(planTexts.length, 1); // the planner was consulted
   assert.ok(!existsSync(join(mb.requestsDir, "20260531-e2e.json")));
   assert.ok(!existsSync(join(mb.processingDir, "20260531-e2e.json")), "processing entry cleared");
@@ -197,25 +213,41 @@ test("processes a new request: plans, executes, writes a matching response", asy
 test("a malformed request becomes an error response (never hangs)", async () => {
   const mb = openMailbox();
   const ignore = snapshotRequestIds(mb);
+  writeIntermediates(mb, "bad", {
+    schema_version: 1,
+    request_id: "bad",
+    request_digest: "sha256:stale",
+    kind: "debate_intermediates",
+    plan: null,
+    outputs: [{ phase: "proposal_generation", item: "P1", provider: "codex", status: "completed", output_markdown: "STALE" }],
+    updated_at: "2026-06-07T00:00:00.000Z",
+  });
   writeFileSync(join(mb.requestsDir, "bad.json"), JSON.stringify({ schema_version: 1, id: "bad", kind: "debate_request", prompt: "x", repo: "/not/allowed" }));
   const { makeDeps } = stubDeps();
   await processNewRequests(mb, ignore, allow, { makeDeps });
   const resp = JSON.parse(readFileSync(join(mb.responsesDir, "bad.json"), "utf8"));
   assert.equal(resp.status, "error");
   assert.equal(resp.request_id, "bad");
+  const sidecar = JSON.parse(readFileSync(resp.intermediates_path, "utf8"));
+  assert.equal(sidecar.request_digest, "invalid-request");
+  assert.deepEqual(sidecar.outputs, []);
 });
 
-test("orphaned processing/ request is recovered as an error response on startup", () => {
+test("orphaned processing/ request is resumed on startup", async () => {
   const mb = openMailbox();
   writeFileSync(
     join(mb.processingDir, "orphan.json"),
     JSON.stringify({ schema_version: 1, id: "orphan", kind: "debate_request", prompt: "x", repo: realpathSync(repo) }),
   );
-  const recovered = recoverOrphans(mb);
+  const { makeDeps } = stubDeps();
+  const recovered = await recoverOrphans(mb, allow, { makeDeps });
   assert.deepEqual(recovered, ["orphan"]);
   const resp = JSON.parse(readFileSync(join(mb.responsesDir, "orphan.json"), "utf8"));
-  assert.equal(resp.status, "error");
-  assert.match(resp.status_reason, /in flight/);
+  assert.equal(resp.status, "completed");
+  assert.equal(resp.answer_markdown, "ANSWER-P1");
+  assert.equal(typeof resp.intermediates_path, "string");
+  const sidecar = JSON.parse(readFileSync(resp.intermediates_path, "utf8"));
+  assert.deepEqual(sidecar.outputs.map((o: { item: string; output_markdown: string }) => `${o.item}:${o.output_markdown}`), ["P1:ANSWER-P1"]);
   assert.ok(!existsSync(join(mb.processingDir, "orphan.json")), "processing entry cleared");
   assert.ok(existsSync(join(mb.archiveDir, "orphan.json")), "orphan request archived");
   assert.ok(existsSync(join(mb.responsesDir, "orphan.log")), "progress log written");
@@ -248,4 +280,32 @@ test("loadRequestObject round-trips; writeResponse is atomic and id-named", () =
   const p = writeResponse(mb, "r9", { status: "completed" });
   assert.ok(p.endsWith("/r9.json"));
   assert.equal(JSON.parse(readFileSync(p, "utf8")).status, "completed");
+});
+
+test("mailbox directories and response artifacts are private", () => {
+  const mb = openMailbox();
+  for (const dir of [mb.requestsDir, mb.processingDir, mb.responsesDir, mb.archiveDir]) {
+    assert.equal(modeOf(dir), 0o700, `${dir} should be private`);
+  }
+
+  const responsePath = writeResponse(mb, "private-response", { status: "completed" });
+  assert.equal(modeOf(responsePath), 0o600);
+  const intermediatesPath = writeIntermediates(mb, "private-response", {
+    schema_version: 1,
+    request_id: "private-response",
+    request_digest: "sha256:private-response",
+    kind: "debate_intermediates",
+    plan: null,
+    outputs: [],
+    updated_at: new Date().toISOString(),
+  });
+  assert.equal(modeOf(intermediatesPath), 0o600);
+
+  const { log, close } = openResponseLog(mb, "private-response");
+  log("hello");
+  close();
+  assert.equal(modeOf(join(mb.responsesDir, "private-response.log")), 0o600);
+
+  const streams = requestStreamDir(mb, "private-response");
+  assert.equal(modeOf(streams), 0o700);
 });

@@ -1,12 +1,12 @@
 // In-process launch test using a stubbed CLI binary (no real claude/codex).
 
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 
 import { compilePatterns } from "../src/ratelimit";
-import { extractClaudeStreamResult, runRequestFile } from "../src/runner";
+import { execute, extractClaudeStreamResult, extractCodexJsonResult, runRequestFile } from "../src/runner";
 import { CLAUDE_STUB, cleanup, makeAllowlist, makeMarkerStub, makeStub, makeTempDir, writeRequest } from "./helpers";
 
 const RATE_LIMIT_STUB =
@@ -23,6 +23,28 @@ test("extractClaudeStreamResult: final result event, else raw fallback", () => {
   // not a stream (e.g. a plain stub) — returned verbatim
   assert.equal(extractClaudeStreamResult("PROPOSAL-TEXT"), "PROPOSAL-TEXT");
   assert.equal(extractClaudeStreamResult("CWD=/r\nARGS=x\nSTDIN=y"), "CWD=/r\nARGS=x\nSTDIN=y");
+});
+
+test("extractCodexJsonResult: final JSONL answer, else raw fallback", () => {
+  assert.equal(
+    extractCodexJsonResult(
+      [
+        '{"type":"session.started","session_id":"s"}',
+        '{"type":"response.output_text.delta","delta":"ignored partial"}',
+        '{"type":"result","result":"Final answer\\n"}',
+      ].join("\n"),
+    ),
+    "Final answer\n",
+  );
+  assert.equal(
+    extractCodexJsonResult(
+      [
+        '{"type":"item.completed","item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Final "},{"type":"output_text","text":"answer"}]}}',
+      ].join("\n"),
+    ),
+    "Final answer",
+  );
+  assert.equal(extractCodexJsonResult("CWD=/r\nARGS=x\nSTDIN=y"), "CWD=/r\nARGS=x\nSTDIN=y");
 });
 
 let root: string;
@@ -57,6 +79,10 @@ function env(extra: Record<string, string> = {}): Record<string, string> {
   };
 }
 
+function modeOf(path: string): number {
+  return statSync(path).mode & 0o777;
+}
+
 test("successful launch records audit and transports prompt on stdin", async () => {
   const reqPath = join(root, "request.json");
   writeRequest(reqPath, repo, { run_id: "20260530-e2e", timeout_seconds: 30 });
@@ -76,6 +102,82 @@ test("successful launch records audit and transports prompt on stdin", async () 
   assert.ok((result.audit_path as string).includes("20260530-e2e"));
   assert.ok(audit.includes("request_digest:"));
   assert.ok(audit.includes("status: completed"));
+});
+
+test("live stream sink is private", async () => {
+  makeStub(binDir, "streamer", "#!/bin/sh\necho STREAM-OUT\n");
+  const streamPath = join(root, "stream.log");
+  const result = await execute(
+    {
+      provider: "test",
+      argv: ["streamer"],
+      displayCommand: "streamer",
+      stdin: "",
+      promptTransport: "stdin",
+      cwd: repo,
+      env: { PATH: binDir },
+      strippedEnvKeys: [],
+      providerEnvSource: null,
+      injectedEnvKeys: [],
+    },
+    30,
+    streamPath,
+  );
+
+  assert.equal(result.status, "completed", JSON.stringify(result));
+  assert.equal(readFileSync(streamPath, "utf8"), "STREAM-OUT\n");
+  assert.equal(modeOf(streamPath), 0o600);
+});
+
+test("claude provider env file is injected and audited without trusting parent secrets", async () => {
+  makeStub(binDir, "claude", "#!/usr/bin/env bash\nenv\n");
+  mkdirSync(join(repo, ".debate-agent"), { recursive: true });
+  writeFileSync(join(repo, ".debate-agent", "env"), "ANTHROPIC_API_KEY=project-key\nANTHROPIC_MODEL=project-model\n");
+
+  const reqPath = join(root, "request.json");
+  writeRequest(reqPath, repo, { run_id: "20260606-claude-env", timeout_seconds: 30 });
+  const result = await runRequestFile(reqPath, allow, {
+    ...env(),
+    HOME: root,
+    ANTHROPIC_API_KEY: "parent-key",
+  });
+
+  assert.equal(result.status, "completed", JSON.stringify(result));
+  assert.deepEqual(result.injected_env_keys, ["ANTHROPIC_API_KEY", "ANTHROPIC_MODEL"]);
+  assert.equal(result.provider_env_source, join(realpathSync(repo), ".debate-agent", "env"));
+  assert.ok((result.stripped_env_keys as string[]).includes("ANTHROPIC_API_KEY"));
+
+  const stdout = readFileSync(result.stdout_path as string, "utf8");
+  assert.match(stdout, /^ANTHROPIC_API_KEY=project-key$/m);
+  assert.match(stdout, /^ANTHROPIC_MODEL=project-model$/m);
+  assert.ok(!stdout.includes("parent-key"));
+
+  const audit = readFileSync(result.audit_path as string, "utf8");
+  assert.ok(audit.includes("provider_env_source:"));
+  assert.ok(audit.includes("injected_env_keys:"));
+  assert.ok(!audit.includes("project-key"));
+});
+
+test("codex json worker stream is cleaned before audit stdout", async () => {
+  makeStub(
+    binDir,
+    "codex",
+    [
+      "#!/usr/bin/env bash",
+      "cat >/dev/null",
+      'printf \'{"type":"session.started"}\\n\'',
+      'printf \'{"type":"result","result":"CODEX FINAL"}\\n\'',
+    ].join("\n") + "\n",
+  );
+
+  const reqPath = join(root, "request.json");
+  writeRequest(reqPath, repo, { provider: "codex", run_id: "20260606-codex-json", timeout_seconds: 30 });
+  const result = await runRequestFile(reqPath, allow, env());
+
+  assert.equal(result.status, "completed", JSON.stringify(result));
+  assert.ok((result.display_command as string).includes("--json"));
+  const stdout = readFileSync(result.stdout_path as string, "utf8");
+  assert.equal(stdout, "CODEX FINAL");
 });
 
 test("rejected request does not launch", async () => {

@@ -44,17 +44,13 @@ export const VALID_CAPABILITIES = ["read_only_review", "workspace_write"] as con
 export type Capability = (typeof VALID_CAPABILITIES)[number];
 export const DEFAULT_CAPABILITY: Capability = "read_only_review";
 
-// Per-launch thinking effort the planner may pick. The planner itself runs xhigh.
-// codex is fast/cheap so it generally uses xhigh; claude is slower so "high" is
-// usually enough (xhigh/max only when a launch needs deeper reasoning). copilot
-// has no effort flag. An unknown provider falls back to the claude set.
+// Optional per-launch thinking overrides. If omitted, the child CLI's own
+// profile/config/default applies (Codex especially should usually use its
+// configured profile). Copilot has no effort flag, but the same validation set is
+// useful if a planner supplies one.
 export const VALID_EFFORTS: Record<string, readonly string[]> = {
   claude: ["low", "medium", "high", "xhigh", "max"],
   codex: ["low", "medium", "high", "xhigh"],
-};
-export const DEFAULT_EFFORT: Record<string, string> = {
-  claude: "high",
-  codex: "xhigh",
 };
 export function validEffortsFor(provider: string): readonly string[] {
   return VALID_EFFORTS[provider] ?? VALID_EFFORTS.claude!;

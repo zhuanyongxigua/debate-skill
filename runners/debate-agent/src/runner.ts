@@ -4,7 +4,7 @@
 // it stays small and delegates policy to schema.ts / allowlist.ts / launch.ts.
 
 import { spawn } from "node:child_process";
-import { accessSync, closeSync, constants, openSync, statSync, writeSync } from "node:fs";
+import { accessSync, chmodSync, closeSync, constants, openSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 import { Allowlist } from "./allowlist";
@@ -23,6 +23,7 @@ import { RESULT_SCHEMA_VERSION } from "./version";
 
 // Grace period between SIGTERM and SIGKILL for a timed-out process group.
 const KILL_GRACE_MS = 10_000;
+const PRIVATE_FILE_MODE = 0o600;
 
 type ResultEnvelope = Record<string, unknown>;
 
@@ -116,6 +117,61 @@ export function extractClaudeStreamResult(stdout: string): string {
   return stdout; // not a stream — return raw (fallback)
 }
 
+function collectContentText(value: unknown): string[] {
+  if (!value || typeof value !== "object") return [];
+  if (Array.isArray(value)) return value.flatMap((item) => collectContentText(item));
+
+  const obj = value as Record<string, unknown>;
+  const parts: string[] = [];
+  if (typeof obj.text === "string") parts.push(obj.text);
+  if (typeof obj.output_text === "string") parts.push(obj.output_text);
+  if (Array.isArray(obj.content)) parts.push(...collectContentText(obj.content));
+  return parts;
+}
+
+function codexEventText(ev: Record<string, unknown>): string | null {
+  for (const key of ["result", "output", "answer", "final_response"]) {
+    if (typeof ev[key] === "string") return ev[key] as string;
+  }
+
+  const type = typeof ev.type === "string" ? ev.type : "";
+  const candidates = [ev.message, ev.item, ev.response, ev.data].filter(Boolean);
+  for (const candidate of candidates) {
+    if (typeof candidate === "string") return candidate;
+    if (typeof candidate !== "object") continue;
+
+    const obj = candidate as Record<string, unknown>;
+    const role = typeof obj.role === "string" ? obj.role : "";
+    const itemType = typeof obj.type === "string" ? obj.type : "";
+    if (role === "assistant" || itemType === "message" || /message|result|final|response/.test(type)) {
+      const text = collectContentText(obj).join("");
+      if (text) return text;
+    }
+  }
+
+  const directText = collectContentText(ev).join("");
+  if (directText && /message|result|final|response/.test(type)) return directText;
+  return null;
+}
+
+/** Extract a Codex worker's final answer from `codex exec --json` JSONL.
+ * Falls back to raw stdout so existing plain stubs and older CLIs keep working. */
+export function extractCodexJsonResult(stdout: string): string {
+  const lines = stdout.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!.trim();
+    if (!line || line[0] !== "{") continue;
+    try {
+      const ev = JSON.parse(line) as Record<string, unknown>;
+      const text = codexEventText(ev);
+      if (text !== null) return text;
+    } catch {
+      /* not a JSON event line; keep scanning */
+    }
+  }
+  return stdout;
+}
+
 /** Run the static child command in its own process group with a timeout.
  * When `streamPath` is set, the child's stdout is also appended there live (a
  * debug stream you can `tail -f`); the buffered stdout is still returned. */
@@ -158,7 +214,8 @@ export function execute(launch: ChildLaunch, timeoutSeconds: number, streamPath?
     let streamFd: number | undefined;
     if (streamPath) {
       try {
-        streamFd = openSync(streamPath, "a");
+        streamFd = openSync(streamPath, "a", PRIVATE_FILE_MODE);
+        chmodSync(streamPath, PRIVATE_FILE_MODE);
       } catch {
         streamFd = undefined;
       }
@@ -270,12 +327,16 @@ export async function runValidated(
       ? "rate_limited"
       : exec.errorCategory;
 
-  // claude workers run with --output-format stream-json (for the live debug
-  // stream); the clean answer is the stream's final result. Everything downstream
-  // (the audit stdout file + {{id.output}} substitution) sees the clean text, not
-  // the raw JSONL. The fallback in extractClaudeStreamResult keeps non-stream
-  // output (e.g. stubs) verbatim.
-  const cleanStdout = reqValidated.provider === "claude" ? extractClaudeStreamResult(exec.stdout) : exec.stdout;
+  // claude/codex workers stream JSON events for live debugging; the clean answer
+  // is the stream's final result. Everything downstream (the audit stdout file +
+  // {{id.output}} substitution) sees clean text, not raw JSONL. The fallbacks keep
+  // non-stream output (e.g. stubs) verbatim.
+  const cleanStdout =
+    reqValidated.provider === "claude"
+      ? extractClaudeStreamResult(exec.stdout)
+      : reqValidated.provider === "codex"
+        ? extractCodexJsonResult(exec.stdout)
+        : exec.stdout;
 
   const auditRecord = {
     run_id: reqValidated.runId,
@@ -295,6 +356,8 @@ export async function runValidated(
     returncode: exec.returncode,
     elapsed_seconds: exec.elapsedSeconds,
     stripped_env_keys: launch.strippedEnvKeys,
+    provider_env_source: launch.providerEnvSource,
+    injected_env_keys: launch.injectedEnvKeys,
   };
   const paths = writeExecutionAudit({
     runId: reqValidated.runId,
@@ -320,6 +383,8 @@ export async function runValidated(
     timeout_seconds: reqValidated.timeoutSeconds,
     display_command: launch.displayCommand,
     stripped_env_keys: launch.strippedEnvKeys,
+    provider_env_source: launch.providerEnvSource,
+    injected_env_keys: launch.injectedEnvKeys,
     ...paths,
   };
 }

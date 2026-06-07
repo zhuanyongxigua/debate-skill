@@ -17,7 +17,7 @@ export interface PlanLaunch {
   id: string;
   provider: string;
   prompt: string; // a template; may contain `{{<id>.output}}` referencing earlier launches
-  effort: string; // thinking depth the planner picked (per provider's valid set)
+  effort?: string; // optional thinking override (per provider's valid set)
 }
 
 export interface PlanPhase {
@@ -57,7 +57,7 @@ export const PLAN_JSON_SCHEMA = {
             items: {
               type: "object",
               additionalProperties: false,
-              required: ["id", "provider", "effort", "prompt"],
+              required: ["id", "provider", "prompt"],
               properties: {
                 id: { type: "string" },
                 provider: { type: "string" },
@@ -189,12 +189,19 @@ export function validatePlan(raw: unknown, allow: Allowlist): Plan {
       }
 
       const effort = launch.effort;
-      const allowed = validEffortsFor(provider as string);
-      if (typeof effort !== "string" || !allowed.includes(effort)) {
-        bad(`launch ${id} effort ${JSON.stringify(effort)} not allowed for provider "${provider}"; allowed: ${JSON.stringify(allowed)}`);
+      if (effort !== undefined) {
+        const allowed = validEffortsFor(provider as string);
+        if (typeof effort !== "string" || !allowed.includes(effort)) {
+          bad(`launch ${id} effort ${JSON.stringify(effort)} not allowed for provider "${provider}"; allowed: ${JSON.stringify(allowed)}`);
+        }
       }
 
-      return { id: id as string, provider: provider as string, prompt: prompt as string, effort: effort as string };
+      return {
+        id: id as string,
+        provider: provider as string,
+        prompt: prompt as string,
+        ...(typeof effort === "string" ? { effort } : {}),
+      };
     });
     phases.push({ name: phase.name as string, launches });
   });

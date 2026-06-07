@@ -163,9 +163,13 @@ Create the archive directory if it does not exist. If the archive cannot be
 written, state that failure in `Decision`/`Open Questions` and record the
 archive failure in the debate status instead of silently dropping the envelope.
 
-When the user later asks for debate details, read the archived YAML and answer
-from it. Do not dump the full YAML into the conversation unless the user
-explicitly asks for the raw record.
+When the user later asks for debate details from an in-session Mode 1 run, read
+the archived YAML and answer from it. For a daemon Mode 2 run, read the
+`intermediates_path` sidecar first because it contains each launched worker's
+clean conclusion; do not read `.streams/*.log` for debate conclusions unless the
+user explicitly asks for raw progress/debug output. Do not dump the full YAML or
+sidecar JSON into the conversation unless the user explicitly asks for the raw
+record.
 
 Do not stop after visible output if a required input, CLI, permission, or
 artifact is unavailable. Still emit the audit envelope with
@@ -435,7 +439,7 @@ Pick a unique `<id>` (`YYYYMMDD-HHMMSS-slug`).
   planner judges complexity and designs the phases (the full proposal → critique →
   cross-review → arbitration for a substantial task; it may still choose a leaner
   shape for one it judges genuinely simple). `fast` is purely about flow leanness;
-  it does **not** control codex/claude turbo (codex always runs turbo). The raw
+  it does **not** control Codex model/reasoning/service-tier settings. The raw
   daemon default when a hand-written request omits `fast` is conservative
   `false`, so this skill must write `fast: true` for default quick debates.
 - `planner_provider`: optional; use only when the human explicitly asks to choose
@@ -492,7 +496,38 @@ the parent forces the turn to end. If you stop for a non-response reason, read
 render `answer_markdown`; if `status` is not `completed`, say so briefly with
 `status_reason`. `trace` is a faithful per-launch record (phase, item, provider,
 status; plus `planned_provider` when the daemon moved a launch to another engine,
-and `error_category` on a non-completed launch) you may surface if useful.
+`error_category` on a non-completed launch, and `resumed: true` when a completed
+launch was reused from the persisted sidecar after daemon restart) you may
+surface if useful.
+The daemon also writes `intermediates_path`, a `debate_intermediates` sidecar
+containing the persisted plan, each launch's clean `output_markdown`, and
+audit/stream paths. This sidecar is the daemon's source of truth for resume and
+for later prompt substitution, so it is also the source of truth for explaining
+P1/P2/A1 after the run. Do not inline these intermediate conclusions in the
+default human answer, but if the human asks how P1/P2/A1 reasoned or wants debate
+details, read this sidecar first; use `.streams/*.log` only for raw
+progress/debugging.
+
+Important: never read `responses/<id>.streams/*.log` to reconstruct ordinary
+P1/P2/A1 conclusions. Stream logs can be very large and may contain JSON events,
+reconnect messages, retries, and other non-answer text. The conclusion source of
+truth is:
+
+1. `answer_markdown` for the final human answer.
+2. `intermediates_path` for each step's clean `output_markdown`.
+3. `stdout_path` from the sidecar only if you need the exact per-worker clean
+   output file.
+4. `.streams/*.log` only for live progress or raw CLI debugging.
+
+If `trace` says the answer item completed but `answer_markdown` is clearly not a
+substantive answer (for example it is only `Reconnecting...`, timeout transport
+text, an empty string, or raw event noise), read `intermediates_path` before doing
+anything else. If the answer item's sidecar `output_markdown` is substantive,
+present that and mention the main response looked like transport noise. If the
+answer item is also unusable but earlier P1/P2 outputs are clean, do **not**
+pretend the daemon produced a valid formal arbitration; say the formal answer was
+unusable and provide a degraded synthesis from the available intermediate
+outputs.
 If the original task had a required output
 format, render the answer in that format here (this is where Mode 2 still owns
 caller-format preservation). Do **not** run the debate yourself or fabricate a
@@ -525,18 +560,20 @@ Rules in this mode:
   No separate critique/cross-review for a simple task — that lean shape mirrors
   `parallel_positions` + arbitration and is the whole point of going fast.
   Provider allocation is positional from the effective request provider constraint:
-  default codex-only means P1/P2/A1 are all `codex` at `xhigh`; otherwise assign
-  P1 to `providers[0]`, P2 to `providers[1]` if present or `providers[0]` if not,
-  and A1 to `providers[2]` if present or `providers[0]` if not. Ignore providers
-  after the first three for this fixed shape.
+  default codex-only means P1/P2/A1 are all `codex` with Codex config/profile
+  deciding model/reasoning/service tier; otherwise assign P1 to `providers[0]`,
+  P2 to `providers[1]` if present or `providers[0]` if not, and A1 to
+  `providers[2]` if present or `providers[0]` if not. Ignore providers after the
+  first three for this fixed shape.
   **Complex** task → design the full bounded debate (proposal → normalization →
   critique → cross-review → arbitration).
-- **Pick `effort` per launch** (the daemon no longer hardcodes it). A launch has
-  only `id`, `provider`, `effort`, `prompt` — there is **no per-launch `fast`
-  field** (codex always runs in turbo mode in code; do not try to set it):
-  - `codex`: generally `xhigh` (codex is fast and token-cheap).
-  - `claude`: usually `high` is enough; use `xhigh`/`max` only when that launch
-    needs deep reasoning.
+- **Use `effort` only as an optional per-launch override.** A launch has `id`,
+  `provider`, `prompt`, and optional `effort` — there is **no per-launch `fast`
+  field**:
+  - `codex`: omit `effort` when the user's Codex profile/config should decide.
+    Set `low`/`medium`/`high`/`xhigh` only for a deliberate override.
+  - `claude`: omitted means runner-default `high`; use `xhigh`/`max` only when
+    that launch needs deep reasoning.
 - **Know what each provider can do**, and allocate accordingly:
   - `claude` worker = Read/Grep/Glob **and read-only git** (`git diff`/`log`/
     `show`/`status`/`blame`), but **no arbitrary shell**.

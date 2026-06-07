@@ -86,7 +86,7 @@ const PLAN_FORMAT = `Output ONLY one JSON object — no prose, no markdown, no c
   "complexity": "simple|complex",
   "phases": [
     { "name": "<label, e.g. proposal_generation|critique|cross_review|arbitration>",
-      "launches": [ { "id": "<unique slug, e.g. P1>", "provider": "claude|codex", "effort": "<see below>", "prompt": "<full self-contained instruction for this worker>" } ] }
+      "launches": [ { "id": "<unique slug, e.g. P1>", "provider": "claude|codex", "prompt": "<full self-contained instruction for this worker>", "effort": "<optional thinking override>" } ] }
   ],
   "answer_item": "<the id of the launch whose output IS the final answer>"
 }
@@ -94,13 +94,13 @@ Rules you MUST follow:
 - "complexity": FIRST judge the task. SIMPLE = a focused question, a small/single-area change, or a clearly-scoped review. COMPLEX = broad, contentious, large, or spanning multiple subsystems.
   - If SIMPLE, emit the FAST workflow (keep it short, this is the whole point):
       Phase 1 "proposal_generation": TWO independent reviewers in PARALLEL; Phase 2 "arbitration": ONE arbiter that reads {{P1.output}} and {{P2.output}} and writes the final answer, noting any disagreement. answer_item = that arbiter.
-      Use the request provider order positionally: P1 = providers[0], P2 = providers[1] if present otherwise providers[0], A1 = providers[2] if present otherwise providers[0]. Ignore providers after the first three for this simple shape. For example, codex-only means P1/P2/A1 are all codex effort xhigh.
+      Use the request provider order positionally: P1 = providers[0], P2 = providers[1] if present otherwise providers[0], A1 = providers[2] if present otherwise providers[0]. Ignore providers after the first three for this simple shape. For example, codex-only means P1/P2/A1 are all codex with no effort override unless you deliberately set one.
       Do NOT add separate critique / cross-review phases for a simple task.
-  - If COMPLEX, design the full bounded debate (proposal_generation -> normalization -> critique -> cross_review -> arbitration), allocating providers and effort per the task.
-- "effort" (per launch, the planner's choice — DO set it):
-    codex: generally "xhigh" (codex is fast/cheap and always runs in turbo mode).
-    claude: usually "high" is enough; use "xhigh" or "max" ONLY when that launch needs deep reasoning.
-    copilot: use "high" (the runner ignores effort for copilot, but the plan must still include one).
+  - If COMPLEX, design the full bounded debate (proposal_generation -> normalization -> critique -> cross_review -> arbitration), allocating providers and optional effort per the task.
+- "effort" is OPTIONAL. Omit it to let the child CLI's own profile/config decide:
+    codex: prefer omitting it so the user's Codex profile controls model/reasoning/service tier. Set low|medium|high|xhigh only when the task truly needs an explicit override.
+    claude: omitted means the runner uses high. Set xhigh or max ONLY when that launch needs deeper reasoning.
+    copilot: omit it; the runner ignores effort for copilot.
     valid values — claude: low|medium|high|xhigh|max ; codex: low|medium|high|xhigh ; copilot: low|medium|high|xhigh|max.
 - Provider capabilities (allocate accordingly):
     claude worker = can Read/Grep/Glob and run READ-ONLY git (git diff/log/show/status/blame), but NOT arbitrary shell.
@@ -245,7 +245,6 @@ export function makeCliPlanner(
           capability: "read_only_review", // the planner only reasons + reads; never writes
           prompt,
           baseEnv,
-          effort: "xhigh", // the planner's job is heavy — always xhigh (codex also always turbo)
           codexSchemaFile: schemaFile,
           codexOutputFile: outFile,
         });
