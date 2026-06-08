@@ -523,7 +523,7 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
           mode: phaseToMode(phase.name, allow),
           repo: req.repo,
           prompt: substituted[idx]!,
-          capability: "read_only_review", // FORCED read-only; the plan cannot request writes
+          capabilities: ["read_only_review"], // FORCED read-only; the plan cannot request writes
           effort,
         };
         const streamPath = deps.streamDir ? join(deps.streamDir, `${launch.id}.log`) : undefined;

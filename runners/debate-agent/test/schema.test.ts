@@ -157,17 +157,41 @@ test("copilot profile rejected", () => {
 test("capability defaults to read_only_review", () => {
   const req = validateRequest(baseRequest(repo), allow);
   assert.equal(req.capability, "read_only_review");
+  assert.deepEqual(req.capabilities, ["read_only_review"]);
 });
 
 test("explicit workspace_write capability accepted when allowlisted", () => {
   const req = validateRequest({ ...baseRequest(repo), capability: "workspace_write" }, allow);
   assert.equal(req.capability, "workspace_write");
+  assert.deepEqual(req.capabilities, ["workspace_write"]);
+});
+
+test("capabilities array accepts singleton and rejects implicit combinations", () => {
+  const singleton = validateRequest({ ...baseRequest(repo), capabilities: ["workspace_write"] }, allow);
+  assert.equal(singleton.capability, "workspace_write");
+  assert.deepEqual(singleton.capabilities, ["workspace_write"]);
+  assert.throws(
+    () => validateRequest({ ...baseRequest(repo), capabilities: ["workspace_write", "remote_ops"] }, allow),
+    (err) => err instanceof RequestRejected && /allowed_capability_sets/.test(err.message),
+  );
+  assert.throws(
+    () => validateRequest({ ...baseRequest(repo), capability: "workspace_write", capabilities: ["workspace_write"] }, allow),
+    (err) => err instanceof RequestRejected && /either capability or capabilities/.test(err.message),
+  );
 });
 
 test("remote_ops is rejected for low-level run requests", () => {
   const withRemoteOps = makeAllowlist(repo, { capabilities: ["read_only_review", "remote_ops"] });
   assert.throws(
     () => validateRequest({ ...baseRequest(repo), capability: "remote_ops" }, withRemoteOps),
+    (err) => err instanceof RequestRejected && /only supported for delegate_request/.test(err.message),
+  );
+  const withCombo = makeAllowlist(repo, {
+    capabilities: ["read_only_review", "workspace_write", "remote_ops"],
+    allowedCapabilitySets: [["read_only_review"], ["workspace_write"], ["remote_ops"], ["workspace_write", "remote_ops"]],
+  });
+  assert.throws(
+    () => validateRequest({ ...baseRequest(repo), capabilities: ["workspace_write", "remote_ops"] }, withCombo),
     (err) => err instanceof RequestRejected && /only supported for delegate_request/.test(err.message),
   );
 });

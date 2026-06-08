@@ -135,6 +135,7 @@ export async function main(argv: string[]): Promise<number> {
               repo: req.repo,
               repo_root: req.repoRoot,
               profile: req.profile,
+              capabilities: req.capabilities,
               timeout_seconds: req.timeoutSeconds,
               request_digest: req.requestDigest,
             },

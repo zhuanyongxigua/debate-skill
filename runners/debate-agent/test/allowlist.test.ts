@@ -227,6 +227,7 @@ test("non-numeric limit value is rejected", () => {
 
 test("default allowlist is read-only and carries batch limits", () => {
   assert.deepEqual(DEFAULT_ALLOWLIST.capabilities, ["read_only_review"]);
+  assert.deepEqual(DEFAULT_ALLOWLIST.allowedCapabilitySets, [["read_only_review"]]);
   assert.equal(DEFAULT_ALLOWLIST.maxBatchItems, 8);
   assert.equal(DEFAULT_ALLOWLIST.maxParallelPerProvider, 2);
   assert.equal(DEFAULT_ALLOWLIST.delegate.enabled, false);
@@ -328,10 +329,74 @@ test("capabilities can be locked to read-only", () => {
   try {
     const cfg = join(d, "allowlist.json");
     writeFileSync(cfg, JSON.stringify({ repo_roots: [d], capabilities: ["read_only_review"] }));
-    assert.deepEqual(loadAllowlist(cfg).capabilities, ["read_only_review"]);
+    const allow = loadAllowlist(cfg);
+    assert.deepEqual(allow.capabilities, ["read_only_review"]);
+    assert.deepEqual(allow.allowedCapabilitySets, [["read_only_review"]]);
   } finally {
     cleanup(d);
   }
+});
+
+test("allowed_capability_sets must explicitly list capability combinations", () => {
+  const d = makeTempDir();
+  try {
+    const cfg = join(d, "allowlist.json");
+    writeFileSync(
+      cfg,
+      JSON.stringify({
+        repo_roots: [d],
+        capabilities: ["read_only_review", "workspace_write", "remote_ops"],
+      }),
+    );
+    const singletonOnly = loadAllowlist(cfg);
+    assert.deepEqual(singletonOnly.allowedCapabilitySets, [
+      ["read_only_review"],
+      ["workspace_write"],
+      ["remote_ops"],
+    ]);
+
+    writeFileSync(
+      cfg,
+      JSON.stringify({
+        repo_roots: [d],
+        capabilities: ["read_only_review", "workspace_write", "remote_ops"],
+        allowed_capability_sets: [["read_only_review"], ["workspace_write"], ["remote_ops"], ["workspace_write", "remote_ops"]],
+      }),
+    );
+    const withCombo = loadAllowlist(cfg);
+    assert.deepEqual(withCombo.allowedCapabilitySets, [
+      ["read_only_review"],
+      ["workspace_write"],
+      ["remote_ops"],
+      ["workspace_write", "remote_ops"],
+    ]);
+  } finally {
+    cleanup(d);
+  }
+});
+
+test("allowed_capability_sets rejects unsafe or unlisted combinations", () => {
+  expectShapeError(
+    {
+      capabilities: ["read_only_review", "workspace_write"],
+      allowed_capability_sets: [["read_only_review", "workspace_write"]],
+    },
+    /cannot combine read_only_review/,
+  );
+  expectShapeError(
+    {
+      capabilities: ["read_only_review", "workspace_write"],
+      allowed_capability_sets: [["workspace_write", "remote_ops"]],
+    },
+    /must also be listed in capabilities/,
+  );
+  expectShapeError(
+    {
+      capabilities: ["workspace_write", "remote_ops"],
+      allowed_capability_sets: [["remote_ops", "workspace_write"], ["workspace_write", "remote_ops"]],
+    },
+    /duplicate set/,
+  );
 });
 
 test("unsupported capability in config rejected", () => {

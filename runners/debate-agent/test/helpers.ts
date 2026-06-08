@@ -39,13 +39,16 @@ export function makeMarkerStub(dir: string, name: string, markerPath: string): s
 }
 
 export function makeAllowlist(repoRoot: string, overrides: Partial<Allowlist> = {}): Allowlist {
+  const capabilities = overrides.capabilities ?? ["read_only_review", "workspace_write"];
+  const allowedCapabilitySets = overrides.allowedCapabilitySets ?? capabilities.map((cap) => [cap]);
   return {
     repoRoots: [realpathLenient(repoRoot)],
     modes: ["debate-proposal"],
     providers: ["claude", "codex"],
     providerAliases: {},
     profiles: { claude: [], codex: ["work"] },
-    capabilities: ["read_only_review", "workspace_write"],
+    capabilities,
+    allowedCapabilitySets,
     maxPromptChars: 200000,
     maxBatchItems: 8,
     maxParallel: 4,

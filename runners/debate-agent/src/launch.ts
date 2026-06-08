@@ -189,8 +189,12 @@ const CLAUDE_READONLY_TOOLS = [
 ];
 const CLAUDE_REMOTE_OPS_BASE_TOOLS = ["Read", "Grep", "Glob", "Edit", "Write", "MultiEdit"];
 
+function hasCapability(capabilities: readonly string[], capability: string): boolean {
+  return capabilities.includes(capability);
+}
+
 function buildClaudeArgv(
-  capability: string,
+  capabilities: readonly string[],
   effort: string,
   model?: string | null,
   remoteOps?: { allowedBashPatterns: string[]; injectSshAuthSock: boolean } | null,
@@ -202,11 +206,15 @@ function buildClaudeArgv(
   // caller defaults Claude to high because Claude has no Codex-style profile knob.
   // Claude profiles are unsupported (caller fails closed before reaching here).
   // read_only_review denies writes and allows only read tools + read-only git;
-  // workspace_write auto-accepts edits. remote_ops stays in default permission
-  // mode and allowlists only the configured Bash patterns plus local edit tools.
+  // workspace_write auto-accepts edits. remote_ops allowlists only the configured
+  // Bash patterns plus local edit tools. If both are present, the operator has
+  // explicitly allowlisted that exact set and Claude gets acceptEdits + Bash
+  // pattern allowTools, still without bypassPermissions.
   //
   // `fast` is a debate workflow switch, not a child CLI performance flag.
-  const permissionMode = capability === "workspace_write" ? "acceptEdits" : "default";
+  const workspaceWrite = hasCapability(capabilities, "workspace_write");
+  const remoteOpsRequested = hasCapability(capabilities, "remote_ops");
+  const permissionMode = workspaceWrite ? "acceptEdits" : "default";
   const argv = ["claude", "--print", "--permission-mode", permissionMode, "--effort", effort];
   if (model) argv.push("--model", model);
   if (session) {
@@ -217,7 +225,7 @@ function buildClaudeArgv(
     // workers never do.
     argv.push(session.resume ? "--resume" : "--session-id", session.id);
   }
-  if (capability === "remote_ops") {
+  if (remoteOpsRequested) {
     if (!remoteOps || remoteOps.allowedBashPatterns.length === 0) {
       throw new Error("remote_ops requires at least one allowlisted Bash pattern");
     }
@@ -226,7 +234,7 @@ function buildClaudeArgv(
       ...CLAUDE_REMOTE_OPS_BASE_TOOLS,
       ...remoteOps.allowedBashPatterns.map((pattern) => `Bash(${pattern})`),
     );
-  } else if (capability !== "workspace_write") {
+  } else if (!workspaceWrite) {
     argv.push("--disallowedTools", ...CLAUDE_DENY_WRITE_TOOLS);
     argv.push("--allowedTools", ...CLAUDE_READONLY_TOOLS);
   }
@@ -321,6 +329,7 @@ export function buildChildLaunch(args: {
   cwd: string;
   profile: string | null;
   capability: string;
+  capabilities?: readonly string[];
   prompt: string;
   baseEnv: Record<string, string | undefined>;
   effort?: string | null; // optional thinking override. copilot has none.
@@ -337,6 +346,10 @@ export function buildChildLaunch(args: {
   const baseProvider = args.baseProvider ?? provider;
   const model = args.model ?? null;
   const remoteOps = args.remoteOps ?? null;
+  const capabilities = args.capabilities ?? [capability];
+  const workspaceWrite = hasCapability(capabilities, "workspace_write");
+  const remoteOpsRequested = hasCapability(capabilities, "remote_ops");
+  const filesystemCapability = workspaceWrite ? "workspace_write" : "read_only_review";
 
   let argv: string[];
   let promptTransport: "stdin" | "argv";
@@ -346,16 +359,16 @@ export function buildChildLaunch(args: {
     if (profile !== null) {
       throw new Error("claude profile is not supported by this runner");
     }
-    argv = buildClaudeArgv(capability, effort ?? "high", model, remoteOps, jsonSchema, claudeSession);
+    argv = buildClaudeArgv(capabilities, effort ?? "high", model, remoteOps, jsonSchema, claudeSession);
     promptTransport = "stdin";
   } else if (baseProvider === "codex") {
-    if (capability === "remote_ops") {
+    if (remoteOpsRequested) {
       throw new Error("remote_ops is only supported for claude provider aliases");
     }
-    argv = buildCodexArgv(cwd, profile, capability, effort, model, codexSchemaFile, codexOutputFile);
+    argv = buildCodexArgv(cwd, profile, filesystemCapability, effort, model, codexSchemaFile, codexOutputFile);
     promptTransport = "stdin";
   } else if (baseProvider === "copilot") {
-    if (capability === "remote_ops") {
+    if (remoteOpsRequested) {
       throw new Error("remote_ops is only supported for claude provider aliases");
     }
     // copilot is exempt from fast mode (no clean per-invocation fast flag).
@@ -368,7 +381,7 @@ export function buildChildLaunch(args: {
     if (jsonSchema !== undefined) {
       throw new Error("copilot does not support native JSON schema; it cannot be used as a planner");
     }
-    argv = buildCopilotArgv(cwd, capability, prompt, model);
+    argv = buildCopilotArgv(cwd, filesystemCapability, prompt, model);
     promptTransport = "argv";
   } else {
     // Should never happen: schema validation already enforces the allowlist.
@@ -384,7 +397,7 @@ export function buildChildLaunch(args: {
     Object.assign(env, providerEnv.env);
     providerEnvSource = providerEnv.source;
     injectedEnvKeys = providerEnv.keys;
-    if (capability === "remote_ops" && remoteOps?.injectSshAuthSock && baseEnv.SSH_AUTH_SOCK) {
+    if (remoteOpsRequested && remoteOps?.injectSshAuthSock && baseEnv.SSH_AUTH_SOCK) {
       env.SSH_AUTH_SOCK = baseEnv.SSH_AUTH_SOCK;
       injectedEnvKeys = [...new Set([...injectedEnvKeys, "SSH_AUTH_SOCK"])].sort();
       strippedEnvKeys = strippedEnvKeys.filter((key) => key !== "SSH_AUTH_SOCK");

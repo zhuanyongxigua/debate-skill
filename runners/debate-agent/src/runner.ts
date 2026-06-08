@@ -310,6 +310,7 @@ export async function runValidated(
     cwd: reqValidated.repo,
     profile: reqValidated.profile,
     capability: reqValidated.capability,
+    capabilities: reqValidated.capabilities,
     prompt: reqValidated.prompt,
     baseEnv: env,
     effort: reqValidated.effort,
@@ -350,6 +351,7 @@ export async function runValidated(
     phase: reqValidated.phase,
     mode: reqValidated.mode,
     capability: reqValidated.capability,
+    capabilities: reqValidated.capabilities,
     remote_ops:
       reqValidated.remoteOps === null
         ? null
@@ -390,6 +392,7 @@ export async function runValidated(
     phase: reqValidated.phase,
     mode: reqValidated.mode,
     capability: reqValidated.capability,
+    capabilities: reqValidated.capabilities,
     remote_ops:
       reqValidated.remoteOps === null
         ? null

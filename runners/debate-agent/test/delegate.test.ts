@@ -109,6 +109,54 @@ test("delegate_request remote_ops is delegate-only, Claude-only, and separately 
   );
 });
 
+test("delegate_request capabilities array supports explicit workspace_write + remote_ops combination", () => {
+  const implicitOnly = makeAllowlist(repo, {
+    providers: ["claude"],
+    capabilities: ["read_only_review", "workspace_write", "remote_ops"],
+    remoteOps: { enabled: true, allowedBashPatterns: ["ssh:*"], injectSshAuthSock: true },
+    delegate: { enabled: true, modes: ["once"], maxMinutes: 20, maxWorkspaceWriteMinutes: 5 },
+  });
+  assert.throws(
+    () =>
+      validateDelegateRequest(
+        { ...base(), provider: "claude", capabilities: ["workspace_write", "remote_ops"], max_minutes: 5 },
+        implicitOnly,
+      ),
+    /allowed_capability_sets/,
+  );
+
+  const comboAllowed = makeAllowlist(repo, {
+    providers: ["claude"],
+    capabilities: ["read_only_review", "workspace_write", "remote_ops"],
+    allowedCapabilitySets: [["read_only_review"], ["workspace_write"], ["remote_ops"], ["workspace_write", "remote_ops"]],
+    remoteOps: { enabled: true, allowedBashPatterns: ["ssh:*"], injectSshAuthSock: true },
+    delegate: { enabled: true, modes: ["once"], maxMinutes: 20, maxWorkspaceWriteMinutes: 5 },
+  });
+  const req = validateDelegateRequest(
+    { ...base(), provider: "claude", capabilities: ["remote_ops", "workspace_write"], max_minutes: 5 },
+    comboAllowed,
+  );
+  assert.equal(req.capability, "workspace_write+remote_ops");
+  assert.deepEqual(req.capabilities, ["workspace_write", "remote_ops"]);
+  assert.deepEqual(req.remoteOps, { allowedBashPatterns: ["ssh:*"], injectSshAuthSock: true });
+  assert.throws(
+    () =>
+      validateDelegateRequest(
+        { ...base(), provider: "claude", capabilities: ["workspace_write", "remote_ops"], max_minutes: 6 },
+        comboAllowed,
+      ),
+    /workspace_write max_minutes/,
+  );
+  assert.throws(
+    () =>
+      validateDelegateRequest(
+        { ...base(), provider: "claude", capability: "workspace_write", capabilities: ["remote_ops"], max_minutes: 5 },
+        comboAllowed,
+      ),
+    /either capability or capabilities/,
+  );
+});
+
 test("delegate_request rejects argv/env-like unknown fields and write windows beyond policy", () => {
   const allow = makeAllowlist(repo, {
     providers: ["codex"],

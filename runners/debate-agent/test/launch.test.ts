@@ -360,6 +360,26 @@ test("claude remote_ops uses default permission mode with static allowed tools",
   assert.ok(launch.injectedEnvKeys.includes("SSH_AUTH_SOCK"));
 });
 
+test("claude workspace_write + remote_ops combines acceptEdits with static Bash allowTools", () => {
+  const launch = buildChildLaunch({
+    provider: "claude",
+    cwd: "/r",
+    profile: null,
+    capability: "workspace_write+remote_ops",
+    capabilities: ["workspace_write", "remote_ops"],
+    prompt: "P",
+    baseEnv: { PATH: "/usr/bin", SSH_AUTH_SOCK: "/tmp/agent.sock" },
+    remoteOps: { allowedBashPatterns: ["ssh:*"], injectSshAuthSock: true },
+  });
+  assert.equal(launch.argv[launch.argv.indexOf("--permission-mode") + 1], "acceptEdits");
+  assert.ok(!launch.argv.includes("bypassPermissions"));
+  assert.ok(!launch.argv.includes("--disallowedTools"));
+  const allowed = launch.argv.slice(launch.argv.indexOf("--allowedTools") + 1).filter((a) => !a.startsWith("--"));
+  assert.ok(allowed.includes("Bash(ssh:*)"));
+  assert.ok(allowed.includes("Edit"));
+  assert.equal(launch.env.SSH_AUTH_SOCK, "/tmp/agent.sock");
+});
+
 test("remote_ops fails closed without Bash patterns and for non-Claude providers", () => {
   assert.throws(
     () =>
@@ -380,7 +400,8 @@ test("remote_ops fails closed without Bash patterns and for non-Claude providers
         provider: "codex",
         cwd: "/r",
         profile: null,
-        capability: "remote_ops",
+        capability: "workspace_write+remote_ops",
+        capabilities: ["workspace_write", "remote_ops"],
         prompt: "P",
         baseEnv: {},
         remoteOps: { allowedBashPatterns: ["ssh:*"], injectSshAuthSock: false },

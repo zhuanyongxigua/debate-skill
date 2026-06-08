@@ -13,6 +13,7 @@ const allow: Allowlist = {
   providerAliases: {},
   profiles: { claude: [], codex: [] },
   capabilities: ["read_only_review"],
+  allowedCapabilitySets: [["read_only_review"]],
   maxPromptChars: 200000,
   maxBatchItems: 8,
   maxParallel: 4,

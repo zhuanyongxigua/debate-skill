@@ -31,6 +31,9 @@
   "_capabilities_note": "Child sandbox postures the runner may use. read_only_review = codex read-only sandbox + claude default permission (debate/critique, cannot edit) — this is the DEFAULT and the only one listed here. workspace_write = codex workspace-write + network + claude acceptEdits (lets a child edit the repo) is OPT-IN. remote_ops is delegate-only, Claude-only, and separately gated by remote_ops below; add it only if you want controlled Bash/SSH-style delegation.",
   "capabilities": ["read_only_review"],
 
+  "_allowed_capability_sets_note": "Exact capability sets a request may choose. If omitted, the daemon permits only singleton sets derived from capabilities. Listing both workspace_write and remote_ops in capabilities does NOT allow combining them unless [\"workspace_write\", \"remote_ops\"] is explicitly listed here.",
+  "allowed_capability_sets": [["read_only_review"]],
+
   "limits": {
     "max_prompt_chars": 200000,
     "max_batch_items": 8,
@@ -58,7 +61,7 @@
     "max_workspace_write_minutes": 30
   },
 
-  "_remote_ops_note": "Delegate-only remote operations. Disabled by default. When enabled and capability=remote_ops is requested, the daemon only supports Claude providers and maps to --permission-mode default plus --allowedTools Read/Grep/Glob/Edit/Write/MultiEdit and Bash(<pattern>) for each static pattern below. SSH host restrictions are NOT enforced here; use SSH config, wrappers, network ACLs, or a dedicated runner for host-level control.",
+  "_remote_ops_note": "Delegate-only remote operations. Disabled by default. When enabled and remote_ops is requested, the daemon only supports Claude providers and maps to --allowedTools Read/Grep/Glob/Edit/Write/MultiEdit and Bash(<pattern>) for each static pattern below. With capabilities=[\"workspace_write\", \"remote_ops\"], Claude also uses --permission-mode acceptEdits; without workspace_write it uses --permission-mode default. SSH host restrictions are NOT enforced here; use SSH config, wrappers, network ACLs, or a dedicated runner for host-level control.",
   "remote_ops": {
     "enabled": false,
     "allowed_bash_patterns": ["ssh:*", "scp:*"],

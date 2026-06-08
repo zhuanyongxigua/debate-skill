@@ -10,11 +10,13 @@ import { isAbsolute } from "node:path";
 
 import {
   Allowlist,
-  DEFAULT_CAPABILITY,
+  Capability,
   FALLBACK_DEFAULT_TIMEOUT,
   MAX_TIMEOUT_SECONDS,
   PHASE_DEFAULT_TIMEOUT,
   VALID_PHASES,
+  capabilityLabel,
+  parseRequestedCapabilities,
   repoRootMatch,
   resolveProvider,
   validEffortsFor,
@@ -33,6 +35,7 @@ const ALLOWED_REQUEST_FIELDS = new Set([
   "repo",
   "profile",
   "capability",
+  "capabilities",
   "effort",
   "prompt",
   "timeout_seconds",
@@ -66,6 +69,7 @@ export interface ValidatedRequest {
   repoRoot: string;
   profile: string | null;
   capability: string;
+  capabilities: Capability[];
   effort: string | null;
   remoteOps: { allowedBashPatterns: string[]; injectSshAuthSock: boolean } | null;
   prompt: string;
@@ -193,20 +197,16 @@ export function validateRequest(raw: Record<string, unknown>, allow: Allowlist):
     profile = profileRaw;
   }
 
-  // --- capability ---------------------------------------------------------
-  // Defaults to the safe read-only posture. The effective capability (after
-  // defaulting) must be allowlisted, so an operator who lists only
-  // read_only_review guarantees no automated child can write.
-  const capabilityRaw = raw.capability;
-  if (capabilityRaw !== undefined && capabilityRaw !== null) {
-    req(typeof capabilityRaw === "string", "capability must be a string");
-  }
-  const capability = (capabilityRaw as string | undefined) ?? DEFAULT_CAPABILITY;
+  // --- capabilities -------------------------------------------------------
+  // Defaults to the safe read-only posture. A request may use the legacy
+  // singleton `capability` field or the new `capabilities` array, but any
+  // combination must match allowlist.allowed_capability_sets exactly.
+  const capabilities = parseRequestedCapabilities(raw, allow, req);
+  const capability = capabilityLabel(capabilities);
   req(
-    allow.capabilities.includes(capability),
-    `capability ${JSON.stringify(capability)} not in allowlist ${JSON.stringify(allow.capabilities)}`,
+    !capabilities.includes("remote_ops"),
+    "remote_ops is only supported for delegate_request, not low-level run/run-batch",
   );
-  req(capability !== "remote_ops", "remote_ops is only supported for delegate_request, not low-level run/run-batch");
 
   // --- effort (optional per-launch thinking override) ----------------------
   // If omitted, the child CLI's own profile/config decides. This matters most
@@ -256,6 +256,7 @@ export function validateRequest(raw: Record<string, unknown>, allow: Allowlist):
     repoRoot: matchedRoot,
     profile,
     capability,
+    capabilities,
     effort,
     remoteOps: null,
     prompt: prompt as string,

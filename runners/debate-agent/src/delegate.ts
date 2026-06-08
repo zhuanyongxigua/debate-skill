@@ -4,7 +4,15 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
-import { Allowlist, DEFAULT_CAPABILITY, VALID_DELEGATE_MODES, repoRootMatch, resolveProvider } from "./allowlist";
+import {
+  Allowlist,
+  Capability,
+  VALID_DELEGATE_MODES,
+  capabilityLabel,
+  parseRequestedCapabilities,
+  repoRootMatch,
+  resolveProvider,
+} from "./allowlist";
 import { MailboxHandler } from "./handler";
 import { Mailbox, MailboxRequestRejected, writeResponse } from "./mailbox";
 import { expandUser, realpathLenient } from "./paths";
@@ -23,6 +31,7 @@ const ALLOWED_DELEGATE_FIELDS = [
   "provider",
   "profile",
   "capability",
+  "capabilities",
   "mode",
   "skill_hint",
   "task",
@@ -39,6 +48,7 @@ export interface DelegateRequest {
   model: string | null;
   profile: string | null;
   capability: string;
+  capabilities: Capability[];
   remoteOps: { allowedBashPatterns: string[]; injectSshAuthSock: boolean } | null;
   mode: "once" | "supervised_loop";
   skillHint: string | null;
@@ -87,6 +97,7 @@ function computeDelegateDigest(req: Omit<DelegateRequest, "requestDigest">): str
     model: req.model,
     profile: req.profile,
     capability: req.capability,
+    capabilities: req.capabilities,
     remote_ops:
       req.remoteOps === null
         ? null
@@ -146,14 +157,12 @@ export function validateDelegateRequest(raw: Record<string, unknown>, allow: All
     profile = raw.profile;
   }
 
-  const capability = raw.capability === undefined || raw.capability === null ? DEFAULT_CAPABILITY : raw.capability;
-  req(typeof capability === "string", "capability must be a string");
-  req(
-    allow.capabilities.includes(capability),
-    `capability ${JSON.stringify(capability)} not in allowlist ${JSON.stringify(allow.capabilities)}`,
-  );
+  const capabilities = parseRequestedCapabilities(raw, allow, req);
+  const capability = capabilityLabel(capabilities);
+  const hasWorkspaceWrite = capabilities.includes("workspace_write");
+  const hasRemoteOps = capabilities.includes("remote_ops");
   let remoteOps: DelegateRequest["remoteOps"] = null;
-  if (capability === "remote_ops") {
+  if (hasRemoteOps) {
     req(allow.remoteOps.enabled, "remote_ops capability is disabled in allowlist.remote_ops");
     req(resolvedProvider.base === "claude", "remote_ops is only supported for providers that resolve to claude");
     req(
@@ -190,13 +199,13 @@ export function validateDelegateRequest(raw: Record<string, unknown>, allow: All
     maxMinutes = raw.max_minutes;
   }
   req(maxMinutes >= 1 && maxMinutes <= allow.delegate.maxMinutes, `max_minutes outside [1, ${allow.delegate.maxMinutes}]`);
-  if (capability === "workspace_write") {
+  if (hasWorkspaceWrite) {
     req(
       maxMinutes <= allow.delegate.maxWorkspaceWriteMinutes,
       `workspace_write max_minutes must be <= ${allow.delegate.maxWorkspaceWriteMinutes}`,
     );
   }
-  if (capability === "remote_ops") {
+  if (hasRemoteOps) {
     req(
       maxMinutes <= allow.delegate.maxWorkspaceWriteMinutes,
       `remote_ops max_minutes must be <= ${allow.delegate.maxWorkspaceWriteMinutes}`,
@@ -212,6 +221,7 @@ export function validateDelegateRequest(raw: Record<string, unknown>, allow: All
     model: resolvedProvider.model,
     profile,
     capability,
+    capabilities,
     remoteOps,
     mode: mode as DelegateRequest["mode"],
     skillHint,
@@ -259,6 +269,7 @@ function writeDelegateArtifacts(mb: Mailbox, req: DelegateRequest, response: Del
     provider: req.provider,
     profile: req.profile,
     capability: req.capability,
+    capabilities: req.capabilities,
     remote_ops:
       req.remoteOps === null
         ? null
@@ -324,6 +335,7 @@ export function createDelegateHandler(baseEnv?: Record<string, string | undefine
         repoRoot: req.repoRoot,
         profile: req.profile,
         capability: req.capability,
+        capabilities: req.capabilities,
         effort: null,
         remoteOps: req.remoteOps,
         prompt: buildDelegatePrompt(req),
@@ -354,6 +366,7 @@ export function createDelegateHandler(baseEnv?: Record<string, string | undefine
             provider: req.provider,
             base_provider: req.baseProvider,
             model: req.model,
+            capabilities: req.capabilities,
             status: result.status,
             error_category: result.error_category ?? null,
           },

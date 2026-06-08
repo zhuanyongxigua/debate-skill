@@ -116,17 +116,20 @@ plus one optional execution adapter:
    request rejected. Malformed config raises at startup; the daemon's per-request
    allowlist reload instead keeps the last-good config and warns — neither path
    ever silently widens. Unknown request/batch/delegate fields are rejected.
-   Default `capability` is `read_only_review`. `delegate_request` support is
-   additionally gated by `allowlist.delegate.enabled`, which defaults to false.
+   Default `capabilities` is `["read_only_review"]` (`capability` remains only as
+   a legacy singleton spelling). Capability combinations are allowed only when the
+   exact set is listed in `allowlist.allowed_capability_sets`; listing individual
+   capabilities must never silently permit their combination. `delegate_request`
+   support is additionally gated by `allowlist.delegate.enabled`, which defaults to false.
    `remote_ops` is delegate-only, Claude-only, and gated by a separate
    `allowlist.remote_ops` block; never make SSH hosts or Bash argv request fields,
    and never allow debate workers to use `remote_ops`.
    Preserve these when editing.
 5. **Static argv only.** No request value is ever spliced into a child `argv` as
-   a flag; the prompt goes on stdin. Capability/profile and the optional
+   a flag; the prompt goes on stdin. Capabilities/profile and the optional
    `debate_request.planner_provider` / `debate_request.providers` select among
    fixed safe templates. `delegate_request.provider` / `profile` /
-   `capability` / `mode` also only select among fixed templates and allowlist
+   `capabilities` / `capability` / `mode` also only select among fixed templates and allowlist
    policy; `skill_hint` is prompt-only and must never become argv. Omitted
    `debate_request.providers` defaults to `["codex"]`; add other engines
    explicitly in that array. Provider aliases are allowed only as allowlist-defined

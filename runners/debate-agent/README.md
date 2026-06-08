@@ -105,7 +105,7 @@ listed here.
   "mode": "debate-proposal",
   "repo": "/Users/you/5xflm-fwsap/Codes/Crawler",
   "profile": null,
-  "capability": "read_only_review",
+  "capabilities": ["read_only_review"],
   "prompt": "Independently propose ...",
   "timeout_seconds": 1800
 }
@@ -120,7 +120,8 @@ listed here.
 | `mode` | string | in the mode allowlist (audit/policy label only; does not change argv) |
 | `repo` | string | absolute path; `realpath` must resolve under an allowed repo root and be an existing directory |
 | `profile` | string \| null | `null`, or in the profile allowlist for that provider. **Only Codex has profiles the runner can honor** — Claude profiles (strips `CLAUDE_CONFIG_DIR`) and Copilot profiles are rejected. If a provider alias fixes a Codex profile, the request cannot override it |
-| `capability` | string | `read_only_review` (default) or `workspace_write`; must be in the `capabilities` allowlist. Controls the child sandbox posture (see below). `remote_ops` is rejected here; it is delegate-only |
+| `capabilities` | string[] | preferred capability set; defaults to `["read_only_review"]`. The exact set must be in `allowed_capability_sets`. Low-level `run` / `run-batch` accept `read_only_review` or `workspace_write`; `remote_ops` is rejected here because it is delegate-only |
+| `capability` | string | legacy singleton form of `capabilities`; use either `capability` or `capabilities`, never both |
 | `effort` | string | optional thinking override (`--effort` / `model_reasoning_effort`). claude: `low\|medium\|high\|xhigh\|max` (omitted defaults to `high` in the runner because Claude has no Codex-style profile knob); codex: `low\|medium\|high\|xhigh` (omitted means use the user's Codex config/profile). The planner may pick this per launch, but should omit it when the profile should decide |
 | `prompt` | string | non-empty, length ≤ `max_prompt_chars`; transported to the child via **stdin only** |
 | `timeout_seconds` | int | a positive integer ≤ `86400` (fixed internal sanity cap, not configurable); if omitted, the phase-aware default is used |
@@ -175,15 +176,29 @@ environment cannot override these. Keep it off unless you specifically want it.
 
 ### Capability (child sandbox posture)
 
-`capability` is the runner's blast-radius control. It defaults to the safe
+`capabilities` is the runner's blast-radius control. It defaults to the safe
 read-only posture, so a debate participant can never edit the repo unless the
 operator **both** allowlists `workspace_write` **and** a request asks for it.
+`capability` remains accepted as a legacy singleton spelling, but new request
+files should use `capabilities`.
 
 | capability | codex | claude | copilot | use |
 | --- | --- | --- | --- | --- |
 | `read_only_review` (default) | `exec --sandbox read-only` (no network) | `--permission-mode default` + deny `Edit/Write/MultiEdit/NotebookEdit` + allow `Read/Grep/Glob` and read-only git (`Bash(git diff:*)` / `log` / `show` / `status` / `blame`) | `--deny-tool=write --deny-tool=shell` | proposer / critic / reviewer — reads + read-only git, cannot edit |
 | `workspace_write` | `--sandbox workspace-write` + network | `--permission-mode acceptEdits` | `--allow-tool=write --add-dir <repo>` (no shell) | implementation — may edit the repo |
-| `remote_ops` | rejected | delegate-only: `--permission-mode default` + `--allowedTools Read/Grep/Glob/Edit/Write/MultiEdit` plus `Bash(<allowlist pattern>)` from `remote_ops.allowed_bash_patterns` | rejected | bounded cli-delegator tasks that need controlled Bash/SSH-style operations |
+| `remote_ops` | rejected | delegate-only singleton: `--permission-mode default` + `--allowedTools Read/Grep/Glob/Edit/Write/MultiEdit` plus `Bash(<allowlist pattern>)` from `remote_ops.allowed_bash_patterns` | rejected | bounded cli-delegator tasks that need controlled Bash/SSH-style operations |
+| `workspace_write + remote_ops` | rejected | delegate-only exact set: `--permission-mode acceptEdits` + the same static `remote_ops` `--allowedTools` | rejected | bounded cli-delegator tasks that need repo edits plus controlled Bash/SSH-style operations |
+
+Capability sets are allowlisted as exact combinations. If an operator lists
+`workspace_write` and `remote_ops` individually in `capabilities`, that does
+**not** automatically permit `["workspace_write", "remote_ops"]`. The combination
+must also appear in `allowed_capability_sets`. When that explicit combination is
+used for a Claude delegate request, Claude gets `--permission-mode acceptEdits`
+plus the static `remote_ops` `Bash(...)` allowTools. These delegate launches run
+Claude in non-interactive `--print` mode: tools named by `--allowedTools`,
+including matching `Bash(...)` patterns, may run without an interactive approval
+prompt, while tools outside the static allowlist stay unavailable. This is still
+not `bypassPermissions`; the operator-controlled allowlist remains the boundary.
 
 **Assurance differs by provider.** Codex read-only is an **OS-level** sandbox
 (`--sandbox read-only`) — a kernel guarantee — so it can run **any** read-only
@@ -202,11 +217,11 @@ can ever write — important once Codex Rules are set to `allow` (unattended).
 `workspace_write` is OPT-IN: add it to `capabilities` only if you explicitly want
 children to edit repos. `remote_ops` is even narrower in API surface but higher
 risk operationally: it is accepted only by `delegate_request`, only for providers
-that resolve to Claude, only when `remote_ops.enabled` is true, and only with
-operator-configured Bash patterns. It does **not** enforce SSH host allowlists;
-use SSH config, wrappers, network ACLs, or a dedicated runner for host-level
-control. The argv stays static: capability only selects among fixed, safe
-templates.
+that resolve to Claude, only when `remote_ops.enabled` is true, only with
+operator-configured Bash patterns, and only as part of an exact
+`allowed_capability_sets` entry. It does **not** enforce SSH host allowlists; use
+SSH config, wrappers, network ACLs, or a dedicated runner for host-level control.
+The argv stays static: capabilities only select among fixed, safe templates.
 
 ### Prompt transport
 
@@ -432,7 +447,7 @@ It is disabled unless `allowlist.delegate.enabled` is true.
   "kind": "delegate_request",
   "repo": "/Users/you/Code/app",
   "provider": "codex",
-  "capability": "read_only_review",
+  "capabilities": ["read_only_review"],
   "mode": "once",
   "skill_hint": "optional local skill name or SKILL.md path",
   "task": "Inspect the run logs and summarize the failure.",
@@ -446,7 +461,8 @@ It is disabled unless `allowlist.delegate.enabled` is true.
 | `repo` | string | absolute; `realpath` must resolve under an allowed repo root |
 | `provider` | string | optional; defaults to `codex`; must be an allowlisted built-in provider id or alias |
 | `profile` | string \| null | optional; only Codex profiles are supported and must be allowlisted. If an alias fixes a Codex profile, the request cannot override it |
-| `capability` | string | optional; defaults to `read_only_review`; `workspace_write` requires both allowlist opt-in and the tighter delegate write-time cap. `remote_ops` requires allowlisted capability, `remote_ops.enabled`, a Claude provider, and at least one static `remote_ops.allowed_bash_patterns` entry |
+| `capabilities` | string[] | preferred; optional; defaults to `["read_only_review"]`. The exact set must be listed in `allowed_capability_sets`. `["workspace_write", "remote_ops"]` is valid only when that exact combination is explicitly allowlisted |
+| `capability` | string | legacy singleton form; optional; use either `capability` or `capabilities`, never both |
 | `mode` | string | optional; only `once` is implemented in this slice. `supervised_loop` is a reserved future mode and is rejected today |
 | `skill_hint` | string | optional prompt-only hint. It never becomes argv and is named `skill_hint` to avoid implying executable routing |
 | `task` | string | non-empty delegated task prompt; transported through stdin for stdin-capable providers |
@@ -777,7 +793,8 @@ through it, all of the following must be in place. This is the full list.
    | `providers` | launchable CLIs | `claude`, `codex` |
    | `provider_aliases` | optional `alias -> {base, model, profile}` templates | `{}` |
    | `profiles` | per-provider local profiles (claude must be empty) | `{}` |
-   | `capabilities` | child sandbox postures | `read_only_review` (workspace_write opt-in) |
+   | `capabilities` | child sandbox postures available as individual capabilities | `read_only_review` (workspace_write opt-in) |
+   | `allowed_capability_sets` | exact capability sets a request may select | singleton sets derived from `capabilities` |
    | `limits.max_prompt_chars` | prompt size cap | 200000 |
    | `limits.max_batch_items` | items per `run-batch` | 8 |
    | `limits.max_parallel` | global batch concurrency | 4 |

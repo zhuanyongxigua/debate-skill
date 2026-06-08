@@ -48,6 +48,75 @@ export const VALID_CAPABILITIES = ["read_only_review", "workspace_write", "remot
 export type Capability = (typeof VALID_CAPABILITIES)[number];
 export const DEFAULT_CAPABILITY: Capability = "read_only_review";
 
+export function isValidCapability(value: string): value is Capability {
+  return (VALID_CAPABILITIES as readonly string[]).includes(value);
+}
+
+export function capabilitySetKey(capabilities: readonly string[]): string {
+  const order = new Map<string, number>(VALID_CAPABILITIES.map((cap, index) => [cap, index]));
+  return [...capabilities].sort((a, b) => (order.get(a) ?? 999) - (order.get(b) ?? 999) || a.localeCompare(b)).join("+");
+}
+
+export function capabilityLabel(capabilities: readonly string[]): string {
+  return capabilitySetKey(capabilities);
+}
+
+export function hasCapability(capabilities: readonly string[], capability: Capability): boolean {
+  return capabilities.includes(capability);
+}
+
+export function parseRequestedCapabilities(
+  raw: Record<string, unknown>,
+  allow: Allowlist,
+  req: (cond: boolean, msg: string) => asserts cond,
+): Capability[] {
+  const capabilityRaw = raw.capability;
+  const capabilitiesRaw = raw.capabilities;
+  req(
+    !(capabilityRaw !== undefined && capabilityRaw !== null && capabilitiesRaw !== undefined && capabilitiesRaw !== null),
+    "use either capability or capabilities, not both",
+  );
+  let values: unknown[];
+  if (capabilitiesRaw !== undefined && capabilitiesRaw !== null) {
+    req(Array.isArray(capabilitiesRaw), "capabilities must be an array of strings");
+    values = capabilitiesRaw;
+  } else if (capabilityRaw !== undefined && capabilityRaw !== null) {
+    req(typeof capabilityRaw === "string", "capability must be a string");
+    values = [capabilityRaw];
+  } else {
+    values = [DEFAULT_CAPABILITY];
+  }
+  req(values.length > 0, "capabilities must contain at least one capability");
+  const seen = new Set<string>();
+  const capabilities: Capability[] = [];
+  for (const value of values) {
+    req(typeof value === "string", "capabilities must be an array of strings");
+    req(
+      isValidCapability(value),
+      `capability ${JSON.stringify(value)} is not supported by this runner ` +
+        `(supported: ${VALID_CAPABILITIES.join(", ")})`,
+    );
+    req(!seen.has(value), `duplicate capability ${JSON.stringify(value)} in capabilities`);
+    seen.add(value);
+    capabilities.push(value);
+  }
+  req(
+    !(capabilities.includes("read_only_review") && capabilities.length > 1),
+    "read_only_review cannot be combined with other capabilities",
+  );
+  capabilities.sort(
+    (a, b) =>
+      (VALID_CAPABILITIES as readonly string[]).indexOf(a) -
+      (VALID_CAPABILITIES as readonly string[]).indexOf(b),
+  );
+  req(
+    isCapabilitySetAllowed(allow, capabilities),
+    `capabilities ${JSON.stringify(capabilities)} not in allowed_capability_sets ` +
+      `${JSON.stringify(allow.allowedCapabilitySets)}`,
+  );
+  return capabilities;
+}
+
 // Optional per-launch thinking overrides. If omitted, the child CLI's own
 // profile/config/default applies (Codex especially should usually use its
 // configured profile). Copilot has no effort flag, but the same validation set is
@@ -134,7 +203,11 @@ export interface Allowlist {
   profiles: Record<string, string[]>;
   // Permitted child sandbox postures. An operator can lock the runner to
   // read-only by listing only "read_only_review".
-  capabilities: string[];
+  capabilities: Capability[];
+  // Exact capability combinations a request may select. If omitted in config,
+  // this defaults to one singleton set per allowed capability, so listing
+  // workspace_write and remote_ops never silently allows their combination.
+  allowedCapabilitySets: Capability[][];
   maxPromptChars: number;
   // run-batch resource bounds (matter most under Codex Rules `allow`).
   maxBatchItems: number;
@@ -171,6 +244,7 @@ export const DEFAULT_ALLOWLIST: Allowlist = {
   // Read-only by default. workspace_write is supported but OPT-IN (like copilot):
   // an operator must add it here before any request can ask for child writes.
   capabilities: [DEFAULT_CAPABILITY],
+  allowedCapabilitySets: [[DEFAULT_CAPABILITY]],
   maxPromptChars: 200000,
   maxBatchItems: 8,
   maxParallel: 4,
@@ -216,6 +290,11 @@ export function resolveProvider(allow: Allowlist, id: string): ResolvedProvider 
 
 export function isPlannerProviderId(allow: Allowlist, id: string): boolean {
   return (PLANNER_PROVIDERS as readonly string[]).includes(resolveProvider(allow, id).base);
+}
+
+export function isCapabilitySetAllowed(allow: Allowlist, capabilities: readonly string[]): boolean {
+  const key = capabilitySetKey(capabilities);
+  return allow.allowedCapabilitySets.some((set) => capabilitySetKey(set) === key);
 }
 
 function resolveRoot(raw: unknown): string {
@@ -384,6 +463,83 @@ function parseRemoteOps(raw: unknown, base: RemoteOpsPolicy): RemoteOpsPolicy {
   return { enabled, allowedBashPatterns, injectSshAuthSock };
 }
 
+function parseCapabilities(raw: unknown, base: readonly Capability[]): Capability[] {
+  const capabilities = raw === undefined ? [...base] : expectStringArray(raw, "capabilities");
+  if (capabilities.length === 0) {
+    throw new AllowlistError("capabilities must contain at least one entry");
+  }
+  const seen = new Set<string>();
+  for (const cap of capabilities) {
+    if (!isValidCapability(cap)) {
+      throw new AllowlistError(
+        `capability ${JSON.stringify(cap)} is not supported by this runner ` +
+          `(supported: ${VALID_CAPABILITIES.join(", ")})`,
+      );
+    }
+    if (seen.has(cap)) {
+      throw new AllowlistError(`duplicate capability ${JSON.stringify(cap)} in capabilities`);
+    }
+    seen.add(cap);
+  }
+  return capabilities as Capability[];
+}
+
+function normalizeCapabilitySetForConfig(raw: unknown, field: string, allowedCapabilities: readonly Capability[]): Capability[] {
+  const capabilities = expectStringArray(raw, field);
+  if (capabilities.length === 0) {
+    throw new AllowlistError(`${field} must contain at least one capability`);
+  }
+  const seen = new Set<string>();
+  const normalized: Capability[] = [];
+  for (const cap of capabilities) {
+    if (!isValidCapability(cap)) {
+      throw new AllowlistError(
+        `${field} entry ${JSON.stringify(cap)} is not supported by this runner ` +
+          `(supported: ${VALID_CAPABILITIES.join(", ")})`,
+      );
+    }
+    if (!allowedCapabilities.includes(cap)) {
+      throw new AllowlistError(
+        `${field} entry ${JSON.stringify(cap)} must also be listed in capabilities ` +
+          `${JSON.stringify(allowedCapabilities)}`,
+      );
+    }
+    if (seen.has(cap)) {
+      throw new AllowlistError(`${field} contains duplicate capability ${JSON.stringify(cap)}`);
+    }
+    seen.add(cap);
+    normalized.push(cap);
+  }
+  if (normalized.includes("read_only_review") && normalized.length > 1) {
+    throw new AllowlistError(`${field} cannot combine read_only_review with other capabilities`);
+  }
+  return normalized.sort(
+    (a, b) =>
+      (VALID_CAPABILITIES as readonly string[]).indexOf(a) -
+      (VALID_CAPABILITIES as readonly string[]).indexOf(b),
+  );
+}
+
+function parseAllowedCapabilitySets(raw: unknown, capabilities: readonly Capability[]): Capability[][] {
+  const source = raw === undefined ? capabilities.map((cap) => [cap]) : raw;
+  if (!Array.isArray(source)) {
+    throw new AllowlistError("allowed_capability_sets must be an array of capability arrays");
+  }
+  if (source.length === 0) {
+    throw new AllowlistError("allowed_capability_sets must contain at least one capability set");
+  }
+  const seen = new Set<string>();
+  return source.map((value, index) => {
+    const set = normalizeCapabilitySetForConfig(value, `allowed_capability_sets[${index}]`, capabilities);
+    const key = capabilitySetKey(set);
+    if (seen.has(key)) {
+      throw new AllowlistError(`allowed_capability_sets contains duplicate set ${JSON.stringify(set)}`);
+    }
+    seen.add(key);
+    return set;
+  });
+}
+
 function parseProviderAliases(raw: unknown, profiles: Record<string, string[]>): Record<string, ProviderAlias> {
   if (raw === undefined) return {};
   const obj = expectObject(raw, "provider_aliases");
@@ -493,16 +649,8 @@ export function loadAllowlist(configPath: string | null | undefined): Allowlist 
 
   const modes = obj.modes === undefined ? base.modes : expectStringArray(obj.modes, "modes");
 
-  const capabilities =
-    obj.capabilities === undefined ? base.capabilities : expectStringArray(obj.capabilities, "capabilities");
-  for (const cap of capabilities) {
-    if (!(VALID_CAPABILITIES as readonly string[]).includes(cap)) {
-      throw new AllowlistError(
-        `capability ${JSON.stringify(cap)} is not supported by this runner ` +
-          `(supported: ${VALID_CAPABILITIES.join(", ")})`,
-      );
-    }
-  }
+  const capabilities = parseCapabilities(obj.capabilities, base.capabilities);
+  const allowedCapabilitySets = parseAllowedCapabilitySets(obj.allowed_capability_sets, capabilities);
 
   const limits = obj.limits === undefined ? {} : expectObject(obj.limits, "limits");
   const limit = (key: string, fallback: number): number =>
@@ -520,6 +668,7 @@ export function loadAllowlist(configPath: string | null | undefined): Allowlist 
     providerAliases,
     profiles,
     capabilities,
+    allowedCapabilitySets,
     maxPromptChars: limit("max_prompt_chars", base.maxPromptChars),
     maxBatchItems: limit("max_batch_items", base.maxBatchItems),
     maxParallel: limit("max_parallel", base.maxParallel),

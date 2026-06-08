@@ -247,6 +247,7 @@ export function makeCliPlanner(
           cwd: repo,
           profile: resolvedProvider.profile,
           capability: "read_only_review", // the planner only reasons + reads; never writes
+          capabilities: ["read_only_review"],
           prompt,
           baseEnv,
           codexSchemaFile: schemaFile,
@@ -285,6 +286,7 @@ export function makeCliPlanner(
       cwd: repo,
       profile: resolvedProvider.profile,
       capability: "read_only_review",
+      capabilities: ["read_only_review"],
       prompt,
       baseEnv,
       effort: "xhigh", // the planner's job is heavy — always xhigh
