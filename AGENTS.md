@@ -126,7 +126,10 @@ plus one optional execution adapter:
    `capability` / `mode` also only select among fixed templates and allowlist
    policy; `skill_hint` is prompt-only and must never become argv. Omitted
    `debate_request.providers` defaults to `["codex"]`; add other engines
-   explicitly in that array. Keep it that way.
+   explicitly in that array. Provider aliases are allowed only as allowlist-defined
+   provider ids (`provider_aliases`); the alias's base provider, model, and codex
+   profile are static operator config, and a request may only select the alias id,
+   never supply argv flags or ad-hoc model/profile strings. Keep it that way.
    Child env is also rebuilt from a small allowlist. The only credential exception
    is Claude provider env loaded by the runner itself from a regular-file
    `<repo>/.debate-agent/env` or `~/.config/debate-agent/env`, injecting only

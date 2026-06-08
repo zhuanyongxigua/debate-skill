@@ -5,7 +5,7 @@ import { realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { AllowlistError, DEFAULT_ALLOWLIST, loadAllowlist, repoRootMatch, safeReloadAllowlist } from "../src/allowlist";
+import { AllowlistError, DEFAULT_ALLOWLIST, loadAllowlist, repoRootMatch, resolveProvider, safeReloadAllowlist } from "../src/allowlist";
 import { cleanup, makeTempDir } from "./helpers";
 
 test("safeReloadAllowlist picks up a valid edit, falls back to last-good on a bad one", () => {
@@ -66,6 +66,73 @@ test("unsupported provider raises", () => {
   } finally {
     cleanup(d);
   }
+});
+
+test("provider aliases map request ids to fixed base provider/model/profile", () => {
+  const d = makeTempDir();
+  try {
+    const cfg = join(d, "allowlist.json");
+    writeFileSync(
+      cfg,
+      JSON.stringify({
+        repo_roots: [d],
+        providers: ["claude-opus", "codex-gpt52", "copilot-gpt"],
+        profiles: { codex: ["azure"] },
+        provider_aliases: {
+          "claude-opus": { base: "claude", model: "claude-opus-4-8" },
+          "codex-gpt52": { base: "codex", model: "gpt-5.2-codex", profile: "azure" },
+          "copilot-gpt": { base: "copilot", model: "gpt-5-mini" },
+        },
+      }),
+    );
+    const allow = loadAllowlist(cfg);
+    assert.deepEqual(allow.providers, ["claude-opus", "codex-gpt52", "copilot-gpt"]);
+    assert.deepEqual(resolveProvider(allow, "claude-opus"), {
+      id: "claude-opus",
+      base: "claude",
+      model: "claude-opus-4-8",
+      profile: null,
+    });
+    assert.deepEqual(resolveProvider(allow, "codex-gpt52"), {
+      id: "codex-gpt52",
+      base: "codex",
+      model: "gpt-5.2-codex",
+      profile: "azure",
+    });
+  } finally {
+    cleanup(d);
+  }
+});
+
+test("provider aliases fail closed on unsafe or unsupported mappings", () => {
+  expectShapeError(
+    { providers: ["claude-opus"], provider_aliases: { "claude-opus": { base: "not-real" } } },
+    /provider_aliases\.claude-opus\.base/,
+  );
+  expectShapeError(
+    { provider_aliases: { claude: { base: "claude", model: "opus" } } },
+    /cannot shadow a built-in provider/,
+  );
+  expectShapeError(
+    { providers: ["bad space"], provider_aliases: { "bad space": { base: "claude" } } },
+    /must match/,
+  );
+  expectShapeError(
+    { providers: ["claude-opus"], provider_aliases: { "claude-opus": { base: "claude", model: "bad model" } } },
+    /model must be/,
+  );
+  expectShapeError(
+    { providers: ["claude-work"], provider_aliases: { "claude-work": { base: "claude", profile: "work" } } },
+    /profile is only supported for codex aliases/,
+  );
+  expectShapeError(
+    { providers: ["codex-missing"], provider_aliases: { "codex-missing": { base: "codex", profile: "azure" } } },
+    /profile "azure" not allowed/,
+  );
+  expectShapeError(
+    { providers: ["unknown-alias"] },
+    /not supported by this runner and is not configured in provider_aliases/,
+  );
 });
 
 test("relative repo root raises", () => {

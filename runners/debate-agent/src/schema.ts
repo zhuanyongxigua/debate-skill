@@ -16,6 +16,7 @@ import {
   PHASE_DEFAULT_TIMEOUT,
   VALID_PHASES,
   repoRootMatch,
+  resolveProvider,
   validEffortsFor,
 } from "./allowlist";
 import { expandUser, realpathLenient } from "./paths";
@@ -58,6 +59,8 @@ export interface ValidatedRequest {
   runId: string;
   phase: string;
   provider: string;
+  baseProvider: string;
+  model: string | null;
   mode: string;
   repo: string; // realpath-resolved, confirmed under an allowed root
   repoRoot: string;
@@ -135,6 +138,7 @@ export function validateRequest(raw: Record<string, unknown>, allow: Allowlist):
     allow.providers.includes(provider),
     `provider ${JSON.stringify(provider)} not in allowlist ${JSON.stringify(allow.providers)}`,
   );
+  const resolvedProvider = resolveProvider(allow, provider);
 
   // --- mode ---------------------------------------------------------------
   const mode = raw.mode as string;
@@ -163,11 +167,16 @@ export function validateRequest(raw: Record<string, unknown>, allow: Allowlist):
   // Copilot has no profile concept here, so a non-null profile for any other
   // provider is rejected (fail closed rather than accept-and-ignore).
   const profileRaw = raw.profile;
-  let profile: string | null = null;
+  let profile: string | null = resolvedProvider.profile;
   if (profileRaw !== undefined && profileRaw !== null) {
     req(typeof profileRaw === "string", "profile must be a string or null");
-    const allowedProfiles = allow.profiles[provider] ?? [];
-    if (provider === "codex") {
+    req(
+      resolvedProvider.profile === null,
+      `provider alias ${JSON.stringify(provider)} already fixes profile ${JSON.stringify(resolvedProvider.profile)}; ` +
+        "set profile to null or choose another provider id",
+    );
+    const allowedProfiles = allow.profiles[resolvedProvider.base] ?? [];
+    if (resolvedProvider.base === "codex") {
       req(
         allowedProfiles.includes(profileRaw),
         `profile ${JSON.stringify(profileRaw)} not allowed for provider "codex"; ` +
@@ -176,7 +185,7 @@ export function validateRequest(raw: Record<string, unknown>, allow: Allowlist):
     } else {
       req(
         false,
-        `${provider} profiles are not supported; the runner uses the default ` +
+        `${provider} profiles are not supported; resolved base provider ${resolvedProvider.base} uses the default ` +
           "account config (set profile to null)",
       );
     }
@@ -203,10 +212,11 @@ export function validateRequest(raw: Record<string, unknown>, allow: Allowlist):
   let effort: string | null = null;
   if (raw.effort !== undefined && raw.effort !== null) {
     req(typeof raw.effort === "string", "effort must be a string");
-    const allowed = validEffortsFor(provider);
+    const allowed = validEffortsFor(resolvedProvider.base);
     req(
       allowed.includes(raw.effort as string),
-      `effort ${JSON.stringify(raw.effort)} not allowed for provider "${provider}"; allowed: ${JSON.stringify(allowed)}`,
+      `effort ${JSON.stringify(raw.effort)} not allowed for provider "${provider}" ` +
+        `(base ${resolvedProvider.base}); allowed: ${JSON.stringify(allowed)}`,
     );
     effort = raw.effort as string;
   }
@@ -237,6 +247,8 @@ export function validateRequest(raw: Record<string, unknown>, allow: Allowlist):
     runId: runId as string,
     phase,
     provider,
+    baseProvider: resolvedProvider.base,
+    model: resolvedProvider.model,
     mode,
     repo: resolved,
     repoRoot: matchedRoot,

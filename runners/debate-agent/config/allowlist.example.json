@@ -15,10 +15,17 @@
   "_providers_note": "claude and codex by default. copilot is supported but OPT-IN and lower-assurance (the GitHub Copilot CLI has no OS filesystem sandbox); add \"copilot\" to this list only if you want it, and make sure `copilot login` is done.",
   "providers": ["claude", "codex"],
 
+  "_provider_aliases_note": "Optional static aliases. Requests may put these ids in providers, preserving order, but the model/profile/base mapping comes only from this allowlist. Alias ids cannot shadow built-ins. profile is supported only for codex aliases and must be listed in profiles.codex.",
+  "provider_aliases": {
+    "claude-opus": { "base": "claude", "model": "claude-opus-4-8" },
+    "codex-gpt52": { "base": "codex", "model": "gpt-5.2-codex", "profile": "azure" },
+    "copilot-gpt": { "base": "copilot", "model": "gpt-5-mini" }
+  },
+
   "_profiles_note": "Only codex has local profiles the runner can honor (claude strips CLAUDE_CONFIG_DIR; copilot has no profile concept here). Listing a profile for claude or copilot is an error; leave them empty to force the default account.",
   "profiles": {
     "claude": [],
-    "codex": []
+    "codex": ["azure"]
   },
 
   "_capabilities_note": "Child sandbox postures the runner may use. read_only_review = codex read-only sandbox + claude default permission (debate/critique, cannot edit) — this is the DEFAULT and the only one listed here. workspace_write = codex workspace-write + network + claude acceptEdits (lets a child edit the repo) is OPT-IN: add it to this list only if you want that.",

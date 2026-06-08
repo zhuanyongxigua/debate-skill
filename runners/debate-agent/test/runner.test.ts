@@ -110,6 +110,8 @@ test("live stream sink is private", async () => {
   const result = await execute(
     {
       provider: "test",
+      baseProvider: "test",
+      model: null,
       argv: ["streamer"],
       displayCommand: "streamer",
       stdin: "",

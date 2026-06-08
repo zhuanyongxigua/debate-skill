@@ -4,7 +4,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
-import { Allowlist, DEFAULT_CAPABILITY, VALID_DELEGATE_MODES, repoRootMatch } from "./allowlist";
+import { Allowlist, DEFAULT_CAPABILITY, VALID_DELEGATE_MODES, repoRootMatch, resolveProvider } from "./allowlist";
 import { MailboxHandler } from "./handler";
 import { Mailbox, MailboxRequestRejected, writeResponse } from "./mailbox";
 import { expandUser, realpathLenient } from "./paths";
@@ -35,6 +35,8 @@ export interface DelegateRequest {
   repo: string;
   repoRoot: string;
   provider: string;
+  baseProvider: string;
+  model: string | null;
   profile: string | null;
   capability: string;
   mode: "once" | "supervised_loop";
@@ -80,6 +82,8 @@ function computeDelegateDigest(req: Omit<DelegateRequest, "requestDigest">): str
     id: req.id,
     repo: req.repo,
     provider: req.provider,
+    base_provider: req.baseProvider,
+    model: req.model,
     profile: req.profile,
     capability: req.capability,
     mode: req.mode,
@@ -112,14 +116,21 @@ export function validateDelegateRequest(raw: Record<string, unknown>, allow: All
   const provider = raw.provider === undefined || raw.provider === null ? "codex" : raw.provider;
   req(typeof provider === "string", "provider must be a string");
   req(allow.providers.includes(provider), `provider ${JSON.stringify(provider)} not in allowlist ${JSON.stringify(allow.providers)}`);
+  const resolvedProvider = resolveProvider(allow, provider);
 
-  let profile: string | null = null;
+  let profile: string | null = resolvedProvider.profile;
   if (raw.profile !== undefined && raw.profile !== null) {
     req(typeof raw.profile === "string", "profile must be a string or null");
-    if (provider !== "codex") {
-      throw new MailboxRequestRejected(`${provider} profiles are not supported; set profile to null`);
+    req(
+      resolvedProvider.profile === null,
+      `provider alias ${JSON.stringify(provider)} already fixes profile ${JSON.stringify(resolvedProvider.profile)}; set profile to null`,
+    );
+    if (resolvedProvider.base !== "codex") {
+      throw new MailboxRequestRejected(
+        `${provider} profiles are not supported; resolved base provider ${resolvedProvider.base} uses the default account config`,
+      );
     }
-    const allowedProfiles = allow.profiles[provider] ?? [];
+    const allowedProfiles = allow.profiles[resolvedProvider.base] ?? [];
     req(
       allowedProfiles.includes(raw.profile),
       `profile ${JSON.stringify(raw.profile)} not allowed for provider "codex"; allowed: ${JSON.stringify(allowedProfiles)}`,
@@ -170,6 +181,8 @@ export function validateDelegateRequest(raw: Record<string, unknown>, allow: All
     repo: resolved,
     repoRoot: root as string,
     provider,
+    baseProvider: resolvedProvider.base,
+    model: resolvedProvider.model,
     profile,
     capability,
     mode: mode as DelegateRequest["mode"],
@@ -269,6 +282,8 @@ export function createDelegateHandler(baseEnv?: Record<string, string | undefine
         runId: req.id,
         phase: "other",
         provider: req.provider,
+        baseProvider: req.baseProvider,
+        model: req.model,
         mode: "delegate-once",
         repo: req.repo,
         repoRoot: req.repoRoot,
@@ -283,7 +298,7 @@ export function createDelegateHandler(baseEnv?: Record<string, string | undefine
         launchReq,
         baseEnv,
         join(ctx.streamDir, "delegate.log"),
-        ctx.allow.rateLimitPatterns[req.provider] ?? [],
+        ctx.allow.rateLimitPatterns[req.baseProvider] ?? [],
       );
       const answer = readText(result.stdout_path);
       const status =
@@ -301,6 +316,8 @@ export function createDelegateHandler(baseEnv?: Record<string, string | undefine
             phase: "delegation",
             item: req.id,
             provider: req.provider,
+            base_provider: req.baseProvider,
+            model: req.model,
             status: result.status,
             error_category: result.error_category ?? null,
           },

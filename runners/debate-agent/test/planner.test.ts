@@ -60,7 +60,7 @@ test("planner rotates to the next provider when the primary is rate-limited", as
       seen.push(launch.provider);
       return launch.provider === "claude" ? RL : ok(VALID_PLAN);
     };
-    const planner = makeCliPlanner(root, { providers: ["claude", "codex"], rateLimitPatterns: RL_PATTERNS, exec });
+    const planner = makeCliPlanner(root, { providers: ["claude", "codex"], allow, rateLimitPatterns: RL_PATTERNS, exec });
     const plan = await planWithRetry(plannerReq(root), allow, planner, 4);
     assert.deepEqual(seen, ["claude", "codex"]); // claude limited → rotate to codex
     assert.equal(plan.answerItem, "P1");
@@ -78,7 +78,7 @@ test("planner rotates to the next provider when the primary fails to connect", a
       seen.push(launch.provider);
       return launch.provider === "claude" ? CERT_ERROR : ok(VALID_PLAN);
     };
-    const planner = makeCliPlanner(root, { providers: ["claude", "codex"], rateLimitPatterns: RL_PATTERNS, exec });
+    const planner = makeCliPlanner(root, { providers: ["claude", "codex"], allow, rateLimitPatterns: RL_PATTERNS, exec });
     const plan = await planWithRetry(plannerReq(root), allow, planner, 4);
     assert.deepEqual(seen, ["claude", "codex"]); // cert/API failure → rotate to codex
     assert.equal(plan.answerItem, "P1");
@@ -96,7 +96,7 @@ test("planner rotates to the next provider when the primary CLI cannot launch", 
       seen.push(launch.provider);
       return launch.provider === "claude" ? MISSING_CLI : ok(VALID_PLAN);
     };
-    const planner = makeCliPlanner(root, { providers: ["claude", "codex"], rateLimitPatterns: RL_PATTERNS, exec });
+    const planner = makeCliPlanner(root, { providers: ["claude", "codex"], allow, rateLimitPatterns: RL_PATTERNS, exec });
     const plan = await planWithRetry(plannerReq(root), allow, planner, 4);
     assert.deepEqual(seen, ["claude", "codex"]); // missing binary/config → rotate to codex
     assert.equal(plan.answerItem, "P1");
@@ -114,7 +114,7 @@ test("all planner providers unavailable fails fast — no wasted attempts", asyn
       execCalls++;
       return CERT_ERROR;
     };
-    const planner = makeCliPlanner(root, { providers: ["claude", "codex"], rateLimitPatterns: RL_PATTERNS, exec });
+    const planner = makeCliPlanner(root, { providers: ["claude", "codex"], allow, rateLimitPatterns: RL_PATTERNS, exec });
     await assert.rejects(() => planWithRetry(plannerReq(root), allow, planner, 4), /unavailable/);
     assert.equal(execCalls, 2, "should call exec once per provider, then stop (not spin to maxAttempts=4)");
   } finally {
@@ -132,7 +132,7 @@ test("rotation composes with invalid-plan retry within the attempt budget", asyn
       codexCalls++;
       return ok(codexCalls === 1 ? "this is not a plan" : VALID_PLAN); // invalid, then valid
     };
-    const planner = makeCliPlanner(root, { providers: ["claude", "codex"], rateLimitPatterns: RL_PATTERNS, exec });
+    const planner = makeCliPlanner(root, { providers: ["claude", "codex"], allow, rateLimitPatterns: RL_PATTERNS, exec });
     const plan = await planWithRetry(plannerReq(root), allow, planner, 4);
     assert.equal(plan.answerItem, "P1");
     assert.equal(codexCalls, 2); // first codex plan invalid → retried on the same (rotated) provider
@@ -154,7 +154,7 @@ test("claude planner creates a named session, then resumes it on an invalid retr
       n++;
       return ok(n === 1 ? "not a valid plan" : VALID_PLAN); // first invalid → retry, then valid
     };
-    const planner = makeCliPlanner(root, { providers: ["claude", "codex"], rateLimitPatterns: RL_PATTERNS, exec });
+    const planner = makeCliPlanner(root, { providers: ["claude", "codex"], allow, rateLimitPatterns: RL_PATTERNS, exec });
     const plan = await planWithRetry(plannerReq(root), allow, planner, 4);
     assert.equal(plan.answerItem, "P1");
     assert.equal(launches.length, 2);
@@ -183,7 +183,7 @@ test("a resume that does not fix the plan falls back to a fresh regeneration (no
       // attempt 1 invalid, attempt 2 (resume) STILL invalid, attempt 3 (fresh) valid
       return ok(n <= 2 ? "still not a plan" : VALID_PLAN);
     };
-    const planner = makeCliPlanner(root, { providers: ["claude", "codex"], rateLimitPatterns: RL_PATTERNS, exec });
+    const planner = makeCliPlanner(root, { providers: ["claude", "codex"], allow, rateLimitPatterns: RL_PATTERNS, exec });
     const plan = await planWithRetry(plannerReq(root), allow, planner, 4);
     assert.equal(plan.answerItem, "P1");
     assert.equal(launches.length, 3);
@@ -207,7 +207,7 @@ test("rate-limit rotation starts the fallback engine fresh; codex never gets a s
       launches.push(launch);
       return launch.provider === "claude" ? RL : ok(VALID_PLAN);
     };
-    const planner = makeCliPlanner(root, { providers: ["claude", "codex"], rateLimitPatterns: RL_PATTERNS, exec });
+    const planner = makeCliPlanner(root, { providers: ["claude", "codex"], allow, rateLimitPatterns: RL_PATTERNS, exec });
     const plan = await planWithRetry(plannerReq(root), allow, planner, 4);
     assert.equal(plan.answerItem, "P1");
     // the claude attempt opened a fresh session but was never resumed (it failed)
@@ -219,6 +219,43 @@ test("rate-limit rotation starts the fallback engine fresh; codex never gets a s
     assert.ok(!codexLaunch.argv.includes("--session-id"));
     assert.ok(!codexLaunch.argv.includes("--resume"));
     assert.ok(!codexLaunch.argv.some((a) => a.includes("model_reasoning_effort")));
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("planner resolves provider aliases before launching structured-output CLI", async () => {
+  const root = makeTempDir();
+  try {
+    const allow = makeAllowlist(root, {
+      providers: ["codex-gpt52"],
+      profiles: { claude: [], codex: ["azure"], copilot: [] },
+      providerAliases: {
+        "codex-gpt52": { base: "codex", model: "gpt-5.2-codex", profile: "azure" },
+      },
+    });
+    const seen: ChildLaunch[] = [];
+    const aliasPlan = JSON.stringify({
+      complexity: "simple",
+      phases: [{ name: "proposal_generation", launches: [{ id: "P1", provider: "codex-gpt52", prompt: "do the task" }] }],
+      answer_item: "P1",
+    });
+    const exec = async (launch: ChildLaunch): Promise<ExecResult> => {
+      seen.push(launch);
+      return ok(aliasPlan);
+    };
+    const planner = makeCliPlanner(root, { providers: ["codex-gpt52"], allow, rateLimitPatterns: RL_PATTERNS, exec });
+    const req = { ...plannerReq(root), providers: ["codex-gpt52"] };
+    const plan = await planWithRetry(req, allow, planner, 4);
+
+    assert.equal(plan.answerItem, "P1");
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0]!.provider, "codex-gpt52");
+    assert.equal(seen[0]!.baseProvider, "codex");
+    assert.equal(seen[0]!.model, "gpt-5.2-codex");
+    assert.equal(seen[0]!.argv[0], "codex");
+    assert.equal(seen[0]!.argv[seen[0]!.argv.indexOf("--model") + 1], "gpt-5.2-codex");
+    assert.equal(seen[0]!.argv[seen[0]!.argv.indexOf("--profile") + 1], "azure");
   } finally {
     cleanup(root);
   }

@@ -70,7 +70,7 @@ by `run_id` from its `DebateRecord.cli_participation` rows.
 debate-agent [--config <allowlist.json>] run       --request <request.json>
 debate-agent [--config <allowlist.json>] run-batch  --request <batch.json>
 debate-agent [--config <allowlist.json>] validate   --request <request.json>
-debate-agent [--config <allowlist.json>] watch       [--planner claude|codex]
+debate-agent [--config <allowlist.json>] watch       [--planner <planner-provider-id>]
 debate-agent print-rules [--path <installed-path>]
 ```
 
@@ -80,8 +80,9 @@ daemon** that takes high-level request files. It handles `debate_request` from
 `cli-delegator` (`mode: "once"` only); see
 [watch](#watch-the-mailbox-daemon).
 `watch --planner` is accepted as a compatibility flag and must name an allowlisted
-planner-capable provider, but a request's `planner_provider` / `providers[0]`
-decides the actual planner for that request.
+planner-capable provider id (built-in or alias resolving to Claude/Codex), but a
+request's `planner_provider` / `providers[0]` decides the actual planner for that
+request.
 
 `run` prints a single **result JSON** object to stdout and exits non-zero if the
 request was rejected or the child failed. `run-batch` runs N requests in parallel
@@ -115,10 +116,10 @@ listed here.
 | `schema_version` | int | must equal `REQUEST_SCHEMA_VERSION` (1) |
 | `run_id` | string | matches `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` and contains no `..`; must start alphanumeric, so `.`, `..`, and `.hidden` are rejected (used as a path segment) |
 | `phase` | string | one of `proposal_generation`, `debate_execution`, `critique`, `cross_review`, `arbitration`, `other` |
-| `provider` | string | in the provider allowlist (`claude`, `codex` by default; `copilot` is supported but opt-in — see below) |
+| `provider` | string | in the provider allowlist (`claude`, `codex` by default; `copilot` and operator-defined aliases are opt-in — see below) |
 | `mode` | string | in the mode allowlist (audit/policy label only; does not change argv) |
 | `repo` | string | absolute path; `realpath` must resolve under an allowed repo root and be an existing directory |
-| `profile` | string \| null | `null`, or in the profile allowlist for that provider. **Only Codex has profiles the runner can honor** — Claude profiles (strips `CLAUDE_CONFIG_DIR`) and Copilot profiles are rejected |
+| `profile` | string \| null | `null`, or in the profile allowlist for that provider. **Only Codex has profiles the runner can honor** — Claude profiles (strips `CLAUDE_CONFIG_DIR`) and Copilot profiles are rejected. If a provider alias fixes a Codex profile, the request cannot override it |
 | `capability` | string | `read_only_review` (default) or `workspace_write`; must be in the `capabilities` allowlist. Controls the child sandbox posture (see below) |
 | `effort` | string | optional thinking override (`--effort` / `model_reasoning_effort`). claude: `low\|medium\|high\|xhigh\|max` (omitted defaults to `high` in the runner because Claude has no Codex-style profile knob); codex: `low\|medium\|high\|xhigh` (omitted means use the user's Codex config/profile). The planner may pick this per launch, but should omit it when the profile should decide |
 | `prompt` | string | non-empty, length ≤ `max_prompt_chars`; transported to the child via **stdin only** |
@@ -135,10 +136,27 @@ the user's Codex profile/config should decide. Claude defaults to `high` when
 omitted. The Claude planner itself runs `xhigh`; the Codex planner follows the
 user's Codex config/profile unless an explicit effort is supplied.
 
-`provider` selects the binary. `mode` is only a coarse allowlisted intent label
-recorded in the audit — it never selects a different binary or alters argv.
-Adding a new provider or mode is a deliberate edit to `allowlist.json` and (for
-providers) `src/launch.ts`, not something a request can do.
+`provider` selects a built-in binary id or an operator-defined provider alias.
+An alias is a static allowlist mapping such as `claude-opus -> {base: claude,
+model: claude-opus-4-8}` or `codex-gpt52 -> {base: codex, model:
+gpt-5.2-codex, profile: azure}`. Requests only select the alias id; they never
+supply raw argv flags or ad-hoc model/profile strings. `mode` is only a coarse
+allowlisted intent label recorded in the audit — it never selects a different
+binary or alters argv. Adding a new built-in provider or mode is a deliberate
+code/config edit; adding a model/profile variant is an allowlist-only alias edit.
+
+Example allowlist slice:
+
+```json
+{
+  "providers": ["claude-opus", "codex-gpt52"],
+  "profiles": { "claude": [], "codex": ["azure"], "copilot": [] },
+  "provider_aliases": {
+    "claude-opus": { "base": "claude", "model": "claude-opus-4-8" },
+    "codex-gpt52": { "base": "codex", "model": "gpt-5.2-codex", "profile": "azure" }
+  }
+}
+```
 
 ### Copilot (opt-in provider)
 
@@ -393,8 +411,8 @@ prompts; the daemon produces those.
 | `repo` | string | absolute; `realpath` must resolve under an allowed repo root |
 | `language` | string | optional; the human's language (workers + answer use it) |
 | `fast` | bool | optional. **The skill always writes it `true`** (lean flow: skip the planner and run a fixed lean 2-phase shape, 2 parallel reviewers → 1 arbiter); `false` runs the full planner debate (use only on an explicit serious/thorough request). **Daemon default when the field is omitted is `false`** (conservative full-planner path — a hand-crafted request must set `true` for the lean path). Does NOT control Codex model/reasoning/service-tier settings |
-| `planner_provider` | string | optional, only with `fast: false`. `"claude"` or `"codex"`; must be in allowlist `providers` and inside the effective request `providers` (omitted `providers` defaults to `["codex"]`). Overrides the default planner for this one request. |
-| `providers` | string[] | optional request-level provider set for **all** daemon-launched CLIs: planner, workers, fast path, and fallback. If omitted, it defaults to `["codex"]`, so every role is codex by default. It only narrows the allowlist, never widens it. In the fast path, fixed roles consume provider order directly: `P1 = providers[0]`, `P2 = providers[1] ?? providers[0]`, `A1 = providers[2] ?? providers[0]`; entries after the first three are ignored by the fixed role assignment. With `fast: false`, the planner defaults to the first entry unless `planner_provider` is set. Fallback preference remains the allowlist's `fallback.order`, filtered to the request's providers. |
+| `planner_provider` | string | optional, only with `fast: false`. A provider id that resolves to `claude` or `codex` (built-in id or allowlisted alias); must be in allowlist `providers` and inside the effective request `providers` (omitted `providers` defaults to `["codex"]`). Overrides the default planner for this one request. |
+| `providers` | string[] | optional request-level provider id set for **all** daemon-launched CLIs: planner, workers, fast path, and fallback. Entries may be built-ins (`claude`, `codex`, `copilot`) or allowlisted aliases (`claude-opus`, `codex-gpt52`, etc.). If omitted, it defaults to `["codex"]`, so every role is codex by default. It only narrows the allowlist, never widens it. In the fast path, fixed roles consume provider order directly: `P1 = providers[0]`, `P2 = providers[1] ?? providers[0]`, `A1 = providers[2] ?? providers[0]`; entries after the first three are ignored by the fixed role assignment. With `fast: false`, the planner defaults to the first entry unless `planner_provider` is set. Fallback preference remains the allowlist's `fallback.order`, filtered to the request's providers. |
 
 ### The delegate request (written by cli-delegator)
 
@@ -420,8 +438,8 @@ It is disabled unless `allowlist.delegate.enabled` is true.
 | --- | --- | --- |
 | `id` | string | safe slug; response/log/artifacts are named from it |
 | `repo` | string | absolute; `realpath` must resolve under an allowed repo root |
-| `provider` | string | optional; defaults to `codex`; must be allowlisted |
-| `profile` | string \| null | optional; only Codex profiles are supported and must be allowlisted |
+| `provider` | string | optional; defaults to `codex`; must be an allowlisted built-in provider id or alias |
+| `profile` | string \| null | optional; only Codex profiles are supported and must be allowlisted. If an alias fixes a Codex profile, the request cannot override it |
 | `capability` | string | optional; defaults to `read_only_review`; `workspace_write` requires both allowlist opt-in and the tighter delegate write-time cap |
 | `mode` | string | optional; only `once` is implemented in this slice. `supervised_loop` is a reserved future mode and is rejected today |
 | `skill_hint` | string | optional prompt-only hint. It never becomes argv and is named `skill_hint` to avoid implying executable routing |
@@ -645,8 +663,10 @@ Tuning (allowlist, hot-reloaded per request):
 1. **Static argv.** The runner builds the child command itself from a fixed
    per-provider template (`src/launch.ts`). The request contributes only
    validated, allowlisted fields plus the stdin prompt. `planner_provider` and
-   `providers` only choose among fixed provider templates; omitted `providers`
-   becomes `["codex"]`. No request value is ever spliced into `argv` as a flag.
+   `providers` only choose among fixed provider templates or allowlist-defined
+   aliases; omitted `providers` becomes `["codex"]`. Alias model/profile values
+   come from operator config, not the request. No request value is ever spliced
+   into `argv` as a flag.
 2. **realpath cwd.** `repo` is resolved with `realpath` and must sit under an
    allowed repo root after resolution, defeating symlink and `..` escapes. The
    child runs with `cwd` set to that resolved path.
@@ -746,6 +766,7 @@ through it, all of the following must be in place. This is the full list.
    | `repo_roots` | abs dirs a request `repo` may resolve under | `[]` (closed) |
    | `modes` | allowed audit labels | `debate-proposal`, `debate-critique`, `debate-cross-review` |
    | `providers` | launchable CLIs | `claude`, `codex` |
+   | `provider_aliases` | optional `alias -> {base, model, profile}` templates | `{}` |
    | `profiles` | per-provider local profiles (claude must be empty) | `{}` |
    | `capabilities` | child sandbox postures | `read_only_review` (workspace_write opt-in) |
    | `limits.max_prompt_chars` | prompt size cap | 200000 |

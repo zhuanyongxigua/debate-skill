@@ -10,6 +10,7 @@ const allow: Allowlist = {
   repoRoots: [],
   modes: ["debate-proposal"],
   providers: ["claude", "codex"],
+  providerAliases: {},
   profiles: { claude: [], codex: [] },
   capabilities: ["read_only_review"],
   maxPromptChars: 200000,
@@ -151,6 +152,29 @@ test("validatePlan allows optional per-launch effort, rejects bad effort and unk
   // the retired per-launch `fast` field is now an UNKNOWN field => rejected.
   const badFast = { complexity: "simple", phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "x", effort: "xhigh", fast: true }] }], answer_item: "P1" };
   assert.throws(() => validatePlan(badFast, allow), /unknown field/);
+});
+
+test("validatePlan checks effort against alias base provider", () => {
+  const aliasAllow: Allowlist = {
+    ...allow,
+    providers: ["codex-gpt52", "claude-opus"],
+    providerAliases: {
+      "codex-gpt52": { base: "codex", model: "gpt-5.2-codex", profile: null },
+      "claude-opus": { base: "claude", model: "claude-opus-4-8", profile: null },
+    },
+  };
+  const ok = {
+    complexity: "simple",
+    phases: [{ name: "p", launches: [{ id: "P1", provider: "claude-opus", effort: "max", prompt: "x" }] }],
+    answer_item: "P1",
+  };
+  assert.equal(validatePlan(ok, aliasAllow).phases[0]!.launches[0]!.provider, "claude-opus");
+  const badCodex = {
+    complexity: "simple",
+    phases: [{ name: "p", launches: [{ id: "P1", provider: "codex-gpt52", effort: "max", prompt: "x" }] }],
+    answer_item: "P1",
+  };
+  assert.throws(() => validatePlan(badCodex, aliasAllow), /base codex/);
 });
 
 test("validatePlan enforces per-phase launch cap (max_batch_items)", () => {

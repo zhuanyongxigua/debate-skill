@@ -450,6 +450,36 @@ test("the fast plan assigns roles from provider order and ignores providers afte
   assert.deepEqual(calls.flat().map((it) => it.req!.effort), [null, null, null]);
 });
 
+test("the fast plan assigns alias providers positionally and resolves base/model for launches", async () => {
+  const aliases = makeAllowlist(repo, {
+    providers: ["claude-opus", "codex-gpt52", "copilot-gpt"],
+    profiles: { claude: [], codex: ["azure"], copilot: [] },
+    providerAliases: {
+      "claude-opus": { base: "claude", model: "claude-opus-4-8", profile: null },
+      "codex-gpt52": { base: "codex", model: "gpt-5.2-codex", profile: "azure" },
+      "copilot-gpt": { base: "copilot", model: "gpt-5-mini", profile: null },
+    },
+    fallback: { enabled: true, order: ["claude-opus", "codex-gpt52", "copilot-gpt"] },
+  });
+  const planner: PlannerFn = async () => {
+    throw new Error("planner must NOT be called for a fast request");
+  };
+  const { runItems, calls } = stubRun();
+  const resp = await runDebate(
+    req({ fast: true, providers: ["claude-opus", "codex-gpt52", "copilot-gpt"] }),
+    aliases,
+    { planner, runItems, readOutput },
+  );
+  assert.equal(resp.status, "completed");
+  assert.deepEqual(resp.trace.map((t) => `${t.item}:${t.provider}`), ["P1:claude-opus", "P2:codex-gpt52", "A1:copilot-gpt"]);
+  assert.deepEqual(calls.flat().map((it) => `${it.req!.provider}:${it.req!.baseProvider}:${it.req!.model ?? "-"}`), [
+    "claude-opus:claude:claude-opus-4-8",
+    "codex-gpt52:codex:gpt-5.2-codex",
+    "copilot-gpt:copilot:gpt-5-mini",
+  ]);
+  assert.equal(calls[0]![1]!.req!.profile, "azure");
+});
+
 test("runDebate honors a codex-only request provider set even with a wider allowlist", async () => {
   const planner: PlannerFn = async () => {
     throw new Error("planner must NOT be called for a fast request");

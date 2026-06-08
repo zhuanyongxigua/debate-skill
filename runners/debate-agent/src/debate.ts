@@ -12,7 +12,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { Allowlist, VALID_PHASES } from "./allowlist";
+import { Allowlist, VALID_PHASES, resolveProvider } from "./allowlist";
 import { isFallbackEligible } from "./fallback";
 import { DebateRequest } from "./mailbox";
 import { Plan, substitute, validatePlan } from "./plan";
@@ -408,8 +408,8 @@ function pickFallbackProvider(allow: Allowlist, tried: Set<string>): string | nu
 // We cannot know whether a given task actually needs shell (the plan carries no
 // such hint yet), so a codex→claude swap is allowed but flagged — the operator can
 // see it in both the log and the trace's planned_provider.
-function capabilityRank(provider: string): number {
-  return provider === "codex" ? 2 : 1;
+function capabilityRank(provider: string, allow: Allowlist): number {
+  return resolveProvider(allow, provider).base === "codex" ? 2 : 1;
 }
 
 /** The hardcoded FAST debate shape used when a request is `fast`: skip the planner
@@ -580,7 +580,7 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
           // gave to codex because it may need shell could underperform on claude.
           for (const { idx, provider } of retry) {
             const planned = phase.launches[pending[idx]!.idx]!.provider;
-            if (capabilityRank(provider) < capabilityRank(planned)) {
+            if (capabilityRank(provider, allow) < capabilityRank(planned, allow)) {
               log?.(
                 `  warning: ${phase.launches[pending[idx]!.idx]!.id} ${planned} → ${provider} is a capability downgrade ` +
                   `(${provider} cannot run arbitrary read-only shell); a task needing shell may underperform`,

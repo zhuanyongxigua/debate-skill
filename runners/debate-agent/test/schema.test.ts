@@ -29,6 +29,8 @@ function expectReject(req: Record<string, unknown>, re: RegExp): void {
 test("valid request", () => {
   const req = validateRequest(baseRequest(repo), allow);
   assert.equal(req.provider, "claude");
+  assert.equal(req.baseProvider, "claude");
+  assert.equal(req.model, null);
   assert.equal(req.effort, null);
   assert.equal(req.timeoutSeconds, 1800); // phase default
   assert.ok(req.requestDigest.startsWith("sha256:"));
@@ -89,6 +91,7 @@ test("codex profile must be allowlisted", () => {
 test("allowed codex profile ok", () => {
   const req = validateRequest({ ...baseRequest(repo), provider: "codex", profile: "work" }, allow);
   assert.equal(req.profile, "work");
+  assert.equal(req.baseProvider, "codex");
 });
 
 test("claude profile rejected (unsupported)", () => {
@@ -104,7 +107,35 @@ test("copilot accepted when allowlisted", () => {
   const withCopilot = makeAllowlist(repo, { providers: ["claude", "codex", "copilot"] });
   const req = validateRequest({ ...baseRequest(repo), provider: "copilot" }, withCopilot);
   assert.equal(req.provider, "copilot");
+  assert.equal(req.baseProvider, "copilot");
   assert.equal(req.capability, "read_only_review");
+});
+
+test("provider alias resolves to base provider, model, and fixed profile", () => {
+  const withAliases = makeAllowlist(repo, {
+    providers: ["claude-opus", "codex-gpt52"],
+    profiles: { claude: [], codex: ["azure"], copilot: [] },
+    providerAliases: {
+      "claude-opus": { base: "claude", model: "claude-opus-4-8", profile: null },
+      "codex-gpt52": { base: "codex", model: "gpt-5.2-codex", profile: "azure" },
+    },
+  });
+
+  const claude = validateRequest({ ...baseRequest(repo), provider: "claude-opus", effort: "max" }, withAliases);
+  assert.equal(claude.provider, "claude-opus");
+  assert.equal(claude.baseProvider, "claude");
+  assert.equal(claude.model, "claude-opus-4-8");
+  assert.equal(claude.profile, null);
+
+  const codex = validateRequest({ ...baseRequest(repo), provider: "codex-gpt52" }, withAliases);
+  assert.equal(codex.provider, "codex-gpt52");
+  assert.equal(codex.baseProvider, "codex");
+  assert.equal(codex.model, "gpt-5.2-codex");
+  assert.equal(codex.profile, "azure");
+  assert.throws(
+    () => validateRequest({ ...baseRequest(repo), provider: "codex-gpt52", profile: "work" }, withAliases),
+    (err) => err instanceof RequestRejected && /already fixes profile/.test(err.message),
+  );
 });
 
 test("explicit effort is accepted but omitted effort stays null", () => {

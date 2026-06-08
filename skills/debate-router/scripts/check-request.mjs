@@ -5,7 +5,7 @@
 // Mode 2) before it is dropped in ~/.debate-router/requests/. Catches the common
 // drift — e.g. adding a stale `output_contract` field — without a round-trip to
 // the daemon. It checks shape only; the daemon still enforces policy (repo under
-// an allowlisted root, realpath, etc.).
+// an allowlisted root, realpath, configured provider aliases, etc.).
 //
 // Usage:  node scripts/check-request.mjs <request.json>
 //   exit 0 = valid format; exit 1 = invalid (reasons on stderr); exit 2 = usage.
@@ -20,6 +20,7 @@ import { readFileSync } from "node:fs";
 const ALLOWED = ["schema_version", "id", "kind", "prompt", "repo", "language", "fast", "planner_provider", "providers"];
 const REQUIRED = ["schema_version", "id", "kind", "prompt", "repo"];
 const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,128}$/;
+const PROVIDER_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SUPPORTED_PROVIDERS = ["claude", "codex", "copilot"];
 const PLANNER_PROVIDERS = ["claude", "codex"];
 
@@ -62,7 +63,9 @@ function check(raw) {
       effectiveProviders = raw.providers;
       const seen = new Set();
       for (const p of effectiveProviders) {
-        if (!SUPPORTED_PROVIDERS.includes(p)) errs.push(`providers entry ${JSON.stringify(p)} is not supported by the daemon`);
+        if (!PROVIDER_ID_RE.test(p) || p.includes("..")) {
+          errs.push(`providers entry ${JSON.stringify(p)} must be a safe provider id`);
+        }
         if (seen.has(p)) errs.push(`providers has duplicate entry ${JSON.stringify(p)}`);
         seen.add(p);
       }
@@ -71,16 +74,18 @@ function check(raw) {
   if ("planner_provider" in raw) {
     if (typeof raw.planner_provider !== "string") {
       errs.push("planner_provider must be a string");
-    } else if (!PLANNER_PROVIDERS.includes(raw.planner_provider)) {
-      errs.push('planner_provider must be "claude" or "codex"');
+    } else if (!PROVIDER_ID_RE.test(raw.planner_provider) || raw.planner_provider.includes("..")) {
+      errs.push("planner_provider must be a safe provider id");
+    } else if (SUPPORTED_PROVIDERS.includes(raw.planner_provider) && !PLANNER_PROVIDERS.includes(raw.planner_provider)) {
+      errs.push("planner_provider cannot be built-in copilot because copilot cannot produce a structured plan");
     } else if (!effectiveProviders.includes(raw.planner_provider)) {
       errs.push("planner_provider must be included in providers (omitted providers defaults to codex)");
     }
     if (raw.fast === true) errs.push("planner_provider requires fast=false because fast requests skip the planner");
   }
   const defaultPlanner = typeof raw.planner_provider === "string" ? raw.planner_provider : effectiveProviders[0];
-  if (raw.fast !== true && !PLANNER_PROVIDERS.includes(defaultPlanner)) {
-    errs.push("planner defaults to the first providers entry; put claude/codex first or set planner_provider");
+  if (raw.fast !== true && SUPPORTED_PROVIDERS.includes(defaultPlanner) && !PLANNER_PROVIDERS.includes(defaultPlanner)) {
+    errs.push("planner defaults to the first providers entry; built-in copilot cannot plan, so put claude/codex first or set planner_provider to a planner-capable alias");
   }
   return errs;
 }

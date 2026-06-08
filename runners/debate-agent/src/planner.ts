@@ -12,7 +12,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { Allowlist } from "./allowlist";
+import { Allowlist, resolveProvider } from "./allowlist";
 import { fallbackCategory, isFallbackEligible } from "./fallback";
 import { buildChildLaunch } from "./launch";
 import { DebateRequest } from "./mailbox";
@@ -86,7 +86,7 @@ const PLAN_FORMAT = `Output ONLY one JSON object — no prose, no markdown, no c
   "complexity": "simple|complex",
   "phases": [
     { "name": "<label, e.g. proposal_generation|critique|cross_review|arbitration>",
-      "launches": [ { "id": "<unique slug, e.g. P1>", "provider": "claude|codex", "prompt": "<full self-contained instruction for this worker>", "effort": "<optional thinking override>" } ] }
+      "launches": [ { "id": "<unique slug, e.g. P1>", "provider": "<one provider id from the request provider list>", "prompt": "<full self-contained instruction for this worker>", "effort": "<optional thinking override>" } ] }
   ],
   "answer_item": "<the id of the launch whose output IS the final answer>"
 }
@@ -183,6 +183,7 @@ export function makeCliPlanner(
   opts: {
     // Ordered planner providers: primary first, then provider-failure fallbacks.
     providers: string[];
+    allow: Allowlist;
     baseEnv?: Record<string, string | undefined>;
     streamDir?: string;
     // provider -> compiled rate-limit signatures (for the `rate_limited` label).
@@ -210,6 +211,7 @@ export function makeCliPlanner(
     if (provider === undefined) {
       throw new AllPlannersUnavailable(`all planner providers are unavailable (${opts.providers.join(", ")})`);
     }
+    const resolvedProvider = resolveProvider(opts.allow, provider);
     const streamPath = opts.streamDir ? join(opts.streamDir, `planner-${attempt + 1}.log`) : undefined;
 
     // Shared failure handler: rate limits keep their label, but any planner
@@ -218,7 +220,7 @@ export function makeCliPlanner(
     // fallback. Throwing lets planWithRetry retry with the rotated provider.
     // Branch on execution status only, never on the planner's text.
     const fail = (exec: { status: string; errorCategory: string | null; stderr: string; stdout: string }): never => {
-      const patterns = opts.rateLimitPatterns?.[provider] ?? [];
+      const patterns = opts.rateLimitPatterns?.[resolvedProvider.base] ?? [];
       const limited =
         classifyRateLimit(exec.stderr, exec.stdout, patterns);
       const category = limited ? "rate_limited" : fallbackCategory(exec.errorCategory);
@@ -230,7 +232,7 @@ export function makeCliPlanner(
       throw new Error(`planner CLI ${exec.status} (${category}): ${(exec.stderr || "").slice(0, 300)}`);
     };
 
-    if (provider === "codex") {
+    if (resolvedProvider.base === "codex") {
       // codex takes the schema as a file and writes the final message to `-o`.
       const prompt = buildPlannerPrompt(req, lastError); // codex always regenerates (no resume)
       const dir = mkdtempSync(join(tmpdir(), "debate-plan-"));
@@ -239,9 +241,11 @@ export function makeCliPlanner(
       try {
         writeFileSync(schemaFile, SCHEMA_STR);
         const launch = buildChildLaunch({
-          provider: "codex",
+          provider,
+          baseProvider: resolvedProvider.base,
+          model: resolvedProvider.model,
           cwd: repo,
-          profile: null,
+          profile: resolvedProvider.profile,
           capability: "read_only_review", // the planner only reasons + reads; never writes
           prompt,
           baseEnv,
@@ -276,8 +280,10 @@ export function makeCliPlanner(
     const prompt = resuming ? buildResumePrompt(lastError) : buildPlannerPrompt(req, lastError);
     const launch = buildChildLaunch({
       provider,
+      baseProvider: resolvedProvider.base,
+      model: resolvedProvider.model,
       cwd: repo,
-      profile: null,
+      profile: resolvedProvider.profile,
       capability: "read_only_review",
       prompt,
       baseEnv,

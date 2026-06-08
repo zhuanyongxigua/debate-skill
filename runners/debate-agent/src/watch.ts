@@ -10,7 +10,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 
-import { Allowlist, PLANNER_PROVIDERS } from "./allowlist";
+import { Allowlist, PLANNER_PROVIDERS, isPlannerProviderId } from "./allowlist";
 import { DebateDeps, DebateResponse, IntermediateStore, PersistedDebateState, narrowAllowlistForRequest, runDebate } from "./debate";
 import { createDelegateHandler } from "./delegate";
 import { MailboxHandler } from "./handler";
@@ -48,13 +48,11 @@ export interface WatchOptions {
 // planner relies on (claude --json-schema, codex --output-schema). copilot has no
 // equivalent, so the planner must never rotate onto it — that would silently drop
 // the schema constraint. Workers are unaffected (they can use any provider).
-const PLANNER_PROVIDER_SET = new Set<string>(PLANNER_PROVIDERS);
-
 function validatePlannerProvider(provider: string, allow: Allowlist): void {
   if (!allow.providers.includes(provider)) {
     throw new Error(`planner provider ${provider} is not in the allowlist providers (${allow.providers.join(", ")})`);
   }
-  if (!PLANNER_PROVIDER_SET.has(provider)) {
+  if (!isPlannerProviderId(allow, provider)) {
     throw new Error(`planner provider ${provider} cannot produce a structured plan (supported: ${[...PLANNER_PROVIDERS].join(", ")})`);
   }
 }
@@ -68,7 +66,7 @@ function defaultDeps(req: DebateRequest, opts: WatchOptions, streamDir: string, 
   if (allow.fallback.enabled) {
     const order = allow.fallback.order.length ? allow.fallback.order : allow.providers;
     for (const p of order) {
-      if (p !== primary && allow.providers.includes(p) && PLANNER_PROVIDER_SET.has(p) && !providers.includes(p)) {
+      if (p !== primary && allow.providers.includes(p) && isPlannerProviderId(allow, p) && !providers.includes(p)) {
         providers.push(p);
       }
     }
@@ -76,6 +74,7 @@ function defaultDeps(req: DebateRequest, opts: WatchOptions, streamDir: string, 
   return {
     planner: makeCliPlanner(req.repo, {
       providers,
+      allow,
       baseEnv: opts.baseEnv,
       streamDir,
       rateLimitPatterns: allow.rateLimitPatterns,

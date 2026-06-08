@@ -9,7 +9,7 @@
 // lives in the debate-router skill, which the planner loads); this file owns only
 // the plan FORMAT and its validation.
 
-import { Allowlist, validEffortsFor } from "./allowlist";
+import { Allowlist, resolveProvider, validEffortsFor } from "./allowlist";
 
 export class PlanInvalid extends Error {}
 
@@ -190,9 +190,13 @@ export function validatePlan(raw: unknown, allow: Allowlist): Plan {
 
       const effort = launch.effort;
       if (effort !== undefined) {
-        const allowed = validEffortsFor(provider as string);
+        const baseProvider = resolveProvider(allow, provider as string).base;
+        const allowed = validEffortsFor(baseProvider);
         if (typeof effort !== "string" || !allowed.includes(effort)) {
-          bad(`launch ${id} effort ${JSON.stringify(effort)} not allowed for provider "${provider}"; allowed: ${JSON.stringify(allowed)}`);
+          bad(
+            `launch ${id} effort ${JSON.stringify(effort)} not allowed for provider "${provider}" ` +
+              `(base ${baseProvider}); allowed: ${JSON.stringify(allowed)}`,
+          );
         }
       }
 

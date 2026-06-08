@@ -220,6 +220,69 @@ test("codex profile inserted statically", () => {
   assert.equal(launch.argv[i + 1], "work");
 });
 
+test("provider alias launch keeps alias id but uses base provider argv and model", () => {
+  const claude = buildChildLaunch({
+    provider: "claude-opus",
+    baseProvider: "claude",
+    model: "claude-opus-4-8",
+    cwd: "/repo",
+    profile: null,
+    capability: "read_only_review",
+    prompt: "P",
+    baseEnv: { PATH: "/usr/bin" },
+  });
+  assert.equal(claude.provider, "claude-opus");
+  assert.equal(claude.baseProvider, "claude");
+  assert.equal(claude.model, "claude-opus-4-8");
+  assert.equal(claude.argv[0], "claude");
+  assert.equal(claude.argv[claude.argv.indexOf("--model") + 1], "claude-opus-4-8");
+
+  const codex = buildChildLaunch({
+    provider: "codex-gpt52",
+    baseProvider: "codex",
+    model: "gpt-5.2-codex",
+    cwd: "/repo",
+    profile: "azure",
+    capability: "read_only_review",
+    prompt: "P",
+    baseEnv: { PATH: "/usr/bin" },
+  });
+  assert.equal(codex.provider, "codex-gpt52");
+  assert.equal(codex.baseProvider, "codex");
+  assert.equal(codex.argv[0], "codex");
+  assert.equal(codex.argv[codex.argv.indexOf("--model") + 1], "gpt-5.2-codex");
+  assert.equal(codex.argv[codex.argv.indexOf("--profile") + 1], "azure");
+
+  const copilot = buildChildLaunch({
+    provider: "copilot-gpt",
+    baseProvider: "copilot",
+    model: "gpt-5-mini",
+    cwd: "/repo",
+    profile: null,
+    capability: "read_only_review",
+    prompt: "P",
+    baseEnv: { PATH: "/usr/bin" },
+  });
+  assert.equal(copilot.provider, "copilot-gpt");
+  assert.equal(copilot.baseProvider, "copilot");
+  assert.equal(copilot.argv[0], "copilot");
+  assert.equal(copilot.argv[copilot.argv.indexOf("--model") + 1], "gpt-5-mini");
+});
+
+test("built-in provider launch has no model unless allowlist alias resolves one", () => {
+  const claude = buildChildLaunch({
+    provider: "claude",
+    cwd: "/repo",
+    profile: null,
+    capability: "read_only_review",
+    prompt: "P",
+    baseEnv: { PATH: "/usr/bin" },
+  });
+  assert.equal(claude.baseProvider, "claude");
+  assert.equal(claude.model, null);
+  assert.ok(!claude.argv.includes("--model"));
+});
+
 test("read_only_review: codex read-only sandbox, no network override", () => {
   const launch = buildChildLaunch({
     provider: "codex",

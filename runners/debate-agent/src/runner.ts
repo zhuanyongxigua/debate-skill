@@ -305,6 +305,8 @@ export async function runValidated(
   const env = baseEnv ?? process.env;
   const launch = buildChildLaunch({
     provider: reqValidated.provider,
+    baseProvider: reqValidated.baseProvider,
+    model: reqValidated.model,
     cwd: reqValidated.repo,
     profile: reqValidated.profile,
     capability: reqValidated.capability,
@@ -332,9 +334,9 @@ export async function runValidated(
   // {{id.output}} substitution) sees clean text, not raw JSONL. The fallbacks keep
   // non-stream output (e.g. stubs) verbatim.
   const cleanStdout =
-    reqValidated.provider === "claude"
+    reqValidated.baseProvider === "claude"
       ? extractClaudeStreamResult(exec.stdout)
-      : reqValidated.provider === "codex"
+      : reqValidated.baseProvider === "codex"
         ? extractCodexJsonResult(exec.stdout)
         : exec.stdout;
 
@@ -342,6 +344,8 @@ export async function runValidated(
     run_id: reqValidated.runId,
     request_digest: reqValidated.requestDigest,
     provider: reqValidated.provider,
+    base_provider: reqValidated.baseProvider,
+    model: reqValidated.model,
     phase: reqValidated.phase,
     mode: reqValidated.mode,
     capability: reqValidated.capability,
@@ -373,6 +377,8 @@ export async function runValidated(
     run_id: reqValidated.runId,
     request_digest: reqValidated.requestDigest,
     provider: reqValidated.provider,
+    base_provider: reqValidated.baseProvider,
+    model: reqValidated.model,
     phase: reqValidated.phase,
     mode: reqValidated.mode,
     capability: reqValidated.capability,
@@ -405,7 +411,7 @@ export async function runRequestFile(
     const raw = loadRequestDict(requestPath);
     runId = raw.run_id ?? "";
     const reqValidated = validateRequest(raw, allow);
-    return await runValidated(reqValidated, baseEnv, undefined, allow.rateLimitPatterns[reqValidated.provider] ?? []);
+    return await runValidated(reqValidated, baseEnv, undefined, allow.rateLimitPatterns[reqValidated.baseProvider] ?? []);
   } catch (err) {
     if (err instanceof RequestRejected) {
       return rejectedResult(runId, err.message);
@@ -496,11 +502,11 @@ export async function runPreparedItems(
     if (slot.req) {
       jobIndexBySlot.set(idx, jobs.length);
       jobs.push({
-        key: slot.req.provider,
+        key: slot.req.baseProvider,
         run: async () =>
           ({
             item_id: slot.itemId,
-            ...(await runValidated(slot.req!, baseEnv, slot.streamPath, allow.rateLimitPatterns[slot.req!.provider] ?? [])),
+            ...(await runValidated(slot.req!, baseEnv, slot.streamPath, allow.rateLimitPatterns[slot.req!.baseProvider] ?? [])),
           }) as BatchItemResult,
       });
     }

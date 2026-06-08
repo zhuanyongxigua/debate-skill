@@ -6,7 +6,7 @@ import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, rea
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
-import { Allowlist, PLANNER_PROVIDERS, repoRootMatch } from "./allowlist";
+import { Allowlist, PLANNER_PROVIDERS, isPlannerProviderId, repoRootMatch, resolveProvider } from "./allowlist";
 import { expandUser, realpathLenient } from "./paths";
 import { computeDigest } from "./schema";
 
@@ -221,7 +221,7 @@ export function loadRequestObject(path: string): Record<string, unknown> {
   return raw as Record<string, unknown>;
 }
 
-function computeDebateRequestDigest(req: Omit<DebateRequest, "requestDigest">): string {
+function computeDebateRequestDigest(req: Omit<DebateRequest, "requestDigest">, allow: Allowlist): string {
   return computeDigest({
     schema_version: 1,
     kind: "debate_request",
@@ -232,6 +232,8 @@ function computeDebateRequestDigest(req: Omit<DebateRequest, "requestDigest">): 
     fast: req.fast,
     planner_provider: req.plannerProvider,
     providers: req.providers,
+    provider_resolutions: req.providers.map((provider) => resolveProvider(allow, provider)),
+    planner_provider_resolution: req.plannerProvider ? resolveProvider(allow, req.plannerProvider) : null,
   });
 }
 
@@ -296,18 +298,21 @@ export function validateDebateRequest(raw: Record<string, unknown>, allow: Allow
   if (raw.planner_provider !== undefined && raw.planner_provider !== null) {
     req(typeof raw.planner_provider === "string", "planner_provider must be a string");
     const provider = raw.planner_provider as string;
-    req((PLANNER_PROVIDERS as readonly string[]).includes(provider), `planner_provider must be one of ${JSON.stringify([...PLANNER_PROVIDERS])}`);
     req(allow.providers.includes(provider), `planner_provider ${provider} is not in the allowlist providers (${allow.providers.join(", ")})`);
+    req(
+      isPlannerProviderId(allow, provider),
+      `planner_provider must resolve to one of ${JSON.stringify([...PLANNER_PROVIDERS])}`,
+    );
     req(providers.includes(provider), `planner_provider ${provider} is not in request providers (${providers.join(", ")})`);
     plannerProvider = provider;
   }
   req(!(fast && plannerProvider !== null), "planner_provider requires fast=false because fast requests skip the planner");
   const defaultPlanner = plannerProvider ?? providers[0]!;
   req(
-    fast || (PLANNER_PROVIDERS as readonly string[]).includes(defaultPlanner),
+    fast || isPlannerProviderId(allow, defaultPlanner),
     `planner defaults to first providers entry (${providers[0]}); set planner_provider to ${PLANNER_PROVIDERS.join(" or ")} or put a planner-capable provider first`,
   );
 
   const normalized = { id: id as string, prompt: prompt as string, repo: resolved, repoRoot: root as string, language, fast, plannerProvider, providers };
-  return { ...normalized, requestDigest: computeDebateRequestDigest(normalized) };
+  return { ...normalized, requestDigest: computeDebateRequestDigest(normalized, allow) };
 }

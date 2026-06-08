@@ -57,6 +57,12 @@ test("the skill checker accepts a valid request and rejects the stale output_con
   assert.equal(runChecker(withoutProviders).status, 0, "omitted providers defaults to codex");
   assert.equal(runChecker({ ...withoutProviders, planner_provider: "claude" }).status, 1);
   assert.equal(runChecker({ ...good, providers: ["codex", "codex"] }).status, 1);
+  assert.equal(
+    runChecker({ ...good, planner_provider: "claude-opus", providers: ["claude-opus", "codex-gpt52"] }).status,
+    0,
+    "checker accepts safe provider alias ids; daemon allowlist validates them later",
+  );
+  assert.equal(runChecker({ ...good, planner_provider: "bad space", providers: ["bad space"] }).status, 1);
   // the exact recurring mistake: a stale top-level output_contract field
   const bad = { ...good, output_contract: { format: "default" } };
   const r = runChecker(bad);

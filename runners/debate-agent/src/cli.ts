@@ -1,6 +1,6 @@
 // Command-line surface: run | run-batch | validate | watch | print-rules.
 
-import { AllowlistError, defaultConfigPath, loadAllowlist, safeReloadAllowlist } from "./allowlist";
+import { AllowlistError, defaultConfigPath, isPlannerProviderId, loadAllowlist, safeReloadAllowlist } from "./allowlist";
 import { runBatchFile, runRequestFile } from "./runner";
 import { RequestRejected, loadRequestDict, validateRequest } from "./schema";
 import { watchLoop } from "./watch";
@@ -128,6 +128,8 @@ export async function main(argv: string[]): Promise<number> {
               status: "valid",
               run_id: req.runId,
               provider: req.provider,
+              base_provider: req.baseProvider,
+              model: req.model,
               phase: req.phase,
               mode: req.mode,
               repo: req.repo,
@@ -156,20 +158,20 @@ export async function main(argv: string[]): Promise<number> {
       let planner: string | undefined;
       if (args.planner !== undefined) {
         planner = args.planner;
-        if (planner !== "claude" && planner !== "codex") {
-          process.stderr.write(`--planner must be claude or codex, got ${planner}\n`);
-          return 2;
-        }
         // Fail closed: keep accepting the legacy daemon planner flag only for a
-        // known structured-output provider. Per request, planner_provider wins;
-        // otherwise the planner defaults to providers[0] (omitted providers
-        // defaults to codex). The daemon flag no longer widens or overrides a
-        // request's provider policy.
+        // structured-output provider id (built-in or allowlisted alias). Per
+        // request, planner_provider wins; otherwise the planner defaults to
+        // providers[0] (omitted providers defaults to codex). The daemon flag no
+        // longer widens or overrides a request's provider policy.
         if (!allow.providers.includes(planner)) {
           process.stderr.write(
             `--planner ${planner} is not in the allowlist providers (${allow.providers.join(", ")}); ` +
               `add it to providers or pick an allowed planner\n`,
           );
+          return 2;
+        }
+        if (!isPlannerProviderId(allow, planner)) {
+          process.stderr.write(`--planner ${planner} does not resolve to claude or codex\n`);
           return 2;
         }
       }

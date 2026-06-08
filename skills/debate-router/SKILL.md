@@ -444,15 +444,18 @@ Pick a unique `<id>` (`YYYYMMDD-HHMMSS-slug`).
   `false`, so this skill must write `fast: true` for default quick debates.
 - `planner_provider`: optional; use only when the human explicitly asks to choose
   the planner CLI for a full debate. Set `fast: false` and then set
-  `"planner_provider": "claude"` or `"codex"`. The value must also be in the
-  effective `providers` list (omitted `providers` defaults to `["codex"]`). The
-  daemon rejects it with `fast: true`, because fast requests skip the planner
-  entirely.
+  `"planner_provider"` to a provider id that resolves to Claude or Codex (for
+  example `"claude"`, `"codex"`, or an operator-defined alias such as
+  `"claude-opus"`). The value must also be in the effective `providers` list
+  (omitted `providers` defaults to `["codex"]`). The daemon rejects it with
+  `fast: true`, because fast requests skip the planner entirely.
 - `providers`: optional. Normally omit it: omitted means `["codex"]`, so every
   daemon-launched role is codex by default. Use it only when the human explicitly
   asks for heterogeneous / multi-provider CLI debate or a non-codex engine is
   needed. It can only narrow the daemon's allowlist. Add multiple providers when
-  needed, for example `"providers": ["claude", "codex", "copilot"]`. In fast mode,
+  needed, for example `"providers": ["claude", "codex", "copilot"]`. Entries may
+  also be daemon allowlist aliases such as `"claude-opus"` or `"codex-gpt52"`; do
+  not invent model names yourself. In fast mode,
   the fixed roles use provider order exactly: `P1 = providers[0]`,
   `P2 = providers[1] ?? providers[0]`, `A1 = providers[2] ?? providers[0]`; ignore
   entries after the first three for fixed role assignment. In full mode
@@ -563,8 +566,9 @@ Rules in this mode:
   default codex-only means P1/P2/A1 are all `codex` with Codex config/profile
   deciding model/reasoning/service tier; otherwise assign P1 to `providers[0]`,
   P2 to `providers[1]` if present or `providers[0]` if not, and A1 to
-  `providers[2]` if present or `providers[0]` if not. Ignore providers after the
-  first three for this fixed shape.
+  `providers[2]` if present or `providers[0]` if not. A provider entry may be an
+  allowlisted alias; keep the alias id unchanged in the plan/request. Ignore
+  providers after the first three for this fixed shape.
   **Complex** task → design the full bounded debate (proposal → normalization →
   critique → cross-review → arbitration).
 - **Use `effort` only as an optional per-launch override.** A launch has `id`,

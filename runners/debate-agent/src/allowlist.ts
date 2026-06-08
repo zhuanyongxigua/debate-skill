@@ -26,6 +26,8 @@ export type PlannerProvider = (typeof PLANNER_PROVIDERS)[number];
 // Only Codex has local profiles the runner can honor (claude strips
 // CLAUDE_CONFIG_DIR; copilot has no profile concept here).
 const PROVIDERS_WITH_PROFILES = new Set(["codex"]);
+const PROVIDER_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,191}$/;
 
 export const VALID_PHASES = [
   "proposal_generation",
@@ -51,6 +53,7 @@ export const DEFAULT_CAPABILITY: Capability = "read_only_review";
 export const VALID_EFFORTS: Record<string, readonly string[]> = {
   claude: ["low", "medium", "high", "xhigh", "max"],
   codex: ["low", "medium", "high", "xhigh"],
+  copilot: ["low", "medium", "high", "xhigh", "max"],
 };
 export function validEffortsFor(provider: string): readonly string[] {
   return VALID_EFFORTS[provider] ?? VALID_EFFORTS.claude!;
@@ -88,6 +91,19 @@ export interface FallbackPolicy {
   order: string[];
 }
 
+export interface ProviderAlias {
+  base: Provider;
+  model: string | null;
+  profile: string | null;
+}
+
+export interface ResolvedProvider {
+  id: string;
+  base: Provider;
+  model: string | null;
+  profile: string | null;
+}
+
 export const VALID_DELEGATE_MODES = ["once", "supervised_loop"] as const;
 export type DelegateMode = (typeof VALID_DELEGATE_MODES)[number];
 
@@ -103,6 +119,9 @@ export interface Allowlist {
   repoRoots: string[];
   modes: string[];
   providers: string[];
+  // Optional operator-defined provider ids. Requests select these ids; the
+  // static allowlist, not the request, supplies model/profile details.
+  providerAliases: Record<string, ProviderAlias>;
   // provider -> allowed profile names (besides null, which is always allowed).
   profiles: Record<string, string[]>;
   // Permitted child sandbox postures. An operator can lock the runner to
@@ -136,6 +155,7 @@ export const DEFAULT_ALLOWLIST: Allowlist = {
   repoRoots: [],
   modes: ["debate-proposal", "debate-critique", "debate-cross-review"],
   providers: ["claude", "codex"], // copilot is supported but opt-in: add it here to enable
+  providerAliases: {},
   profiles: { claude: [], codex: [], copilot: [] },
   // Read-only by default. workspace_write is supported but OPT-IN (like copilot):
   // an operator must add it here before any request can ask for child writes.
@@ -159,8 +179,31 @@ export function repoRootMatch(allow: Allowlist, resolvedRepo: string): string | 
   return null;
 }
 
-function isSupportedProvider(name: string): name is Provider {
+export function isSupportedProvider(name: string): name is Provider {
   return (SUPPORTED_PROVIDERS as readonly string[]).includes(name);
+}
+
+export function isSafeProviderId(name: string): boolean {
+  return PROVIDER_ID_RE.test(name) && !name.includes("..");
+}
+
+function isSafeModelId(name: string): boolean {
+  return MODEL_ID_RE.test(name) && !/[\s\0]/.test(name);
+}
+
+export function resolveProvider(allow: Allowlist, id: string): ResolvedProvider {
+  const alias = allow.providerAliases[id];
+  if (alias !== undefined) {
+    return { id, base: alias.base, model: alias.model, profile: alias.profile };
+  }
+  if (isSupportedProvider(id)) {
+    return { id, base: id, model: null, profile: null };
+  }
+  throw new AllowlistError(`provider ${JSON.stringify(id)} is not a supported provider or configured alias`);
+}
+
+export function isPlannerProviderId(allow: Allowlist, id: string): boolean {
+  return (PLANNER_PROVIDERS as readonly string[]).includes(resolveProvider(allow, id).base);
 }
 
 function resolveRoot(raw: unknown): string {
@@ -192,6 +235,18 @@ function expectStringArray(value: unknown, field: string): string[] {
     throw new AllowlistError(`${field} must be an array of strings`);
   }
   return value as string[];
+}
+
+function expectProviderId(value: string, field: string): void {
+  if (!isSafeProviderId(value)) {
+    throw new AllowlistError(`${field} must match ${PROVIDER_ID_RE.source} and must not contain '..'`);
+  }
+}
+
+function expectModelId(value: string, field: string): void {
+  if (!isSafeModelId(value)) {
+    throw new AllowlistError(`${field} must be a non-empty safe model id with no whitespace/control characters`);
+  }
 }
 
 function expectNumber(value: unknown, field: string): number {
@@ -291,6 +346,55 @@ function parseDelegate(raw: unknown, base: DelegatePolicy): DelegatePolicy {
   return { enabled, modes, maxMinutes, maxWorkspaceWriteMinutes };
 }
 
+function parseProviderAliases(raw: unknown, profiles: Record<string, string[]>): Record<string, ProviderAlias> {
+  if (raw === undefined) return {};
+  const obj = expectObject(raw, "provider_aliases");
+  const aliases: Record<string, ProviderAlias> = {};
+  for (const [id, value] of Object.entries(obj)) {
+    expectProviderId(id, `provider_aliases key ${JSON.stringify(id)}`);
+    if (isSupportedProvider(id)) {
+      throw new AllowlistError(`provider_aliases key ${JSON.stringify(id)} cannot shadow a built-in provider`);
+    }
+    const alias = expectObject(value, `provider_aliases.${id}`);
+    const extra = Object.keys(alias).filter((k) => !["base", "model", "profile"].includes(k));
+    if (extra.length) {
+      throw new AllowlistError(`provider_aliases.${id} has unknown field(s): ${JSON.stringify(extra.sort())}`);
+    }
+    if (typeof alias.base !== "string" || !isSupportedProvider(alias.base)) {
+      throw new AllowlistError(
+        `provider_aliases.${id}.base must be one of ${JSON.stringify([...SUPPORTED_PROVIDERS])}`,
+      );
+    }
+    let model: string | null = null;
+    if (alias.model !== undefined && alias.model !== null) {
+      if (typeof alias.model !== "string") {
+        throw new AllowlistError(`provider_aliases.${id}.model must be a string or null`);
+      }
+      expectModelId(alias.model, `provider_aliases.${id}.model`);
+      model = alias.model;
+    }
+    let profile: string | null = null;
+    if (alias.profile !== undefined && alias.profile !== null) {
+      if (typeof alias.profile !== "string") {
+        throw new AllowlistError(`provider_aliases.${id}.profile must be a string or null`);
+      }
+      if (alias.base !== "codex") {
+        throw new AllowlistError(`provider_aliases.${id}.profile is only supported for codex aliases`);
+      }
+      const allowedProfiles = profiles.codex ?? [];
+      if (!allowedProfiles.includes(alias.profile)) {
+        throw new AllowlistError(
+          `provider_aliases.${id}.profile ${JSON.stringify(alias.profile)} not allowed for provider "codex"; ` +
+            `allowed: ${allowedProfiles.length ? JSON.stringify(allowedProfiles) : "(none)"}`,
+        );
+      }
+      profile = alias.profile;
+    }
+    aliases[id] = { base: alias.base, model, profile };
+  }
+  return aliases;
+}
+
 /**
  * Load an Allowlist from a JSON file, falling back to conservative defaults.
  *
@@ -318,29 +422,6 @@ export function loadAllowlist(configPath: string | null | undefined): Allowlist 
     resolveRoot,
   );
 
-  const providers = obj.providers === undefined ? base.providers : expectStringArray(obj.providers, "providers");
-  for (const provider of providers) {
-    if (!isSupportedProvider(provider)) {
-      throw new AllowlistError(
-        `provider ${JSON.stringify(provider)} is not supported by this runner ` +
-          `(supported: ${SUPPORTED_PROVIDERS.join(", ")})`,
-      );
-    }
-  }
-
-  const modes = obj.modes === undefined ? base.modes : expectStringArray(obj.modes, "modes");
-
-  const capabilities =
-    obj.capabilities === undefined ? base.capabilities : expectStringArray(obj.capabilities, "capabilities");
-  for (const cap of capabilities) {
-    if (!(VALID_CAPABILITIES as readonly string[]).includes(cap)) {
-      throw new AllowlistError(
-        `capability ${JSON.stringify(cap)} is not supported by this runner ` +
-          `(supported: ${VALID_CAPABILITIES.join(", ")})`,
-      );
-    }
-  }
-
   const rawProfiles = obj.profiles === undefined ? {} : expectObject(obj.profiles, "profiles");
   const profiles: Record<string, string[]> = { claude: [], codex: [], copilot: [] };
   for (const [provider, names] of Object.entries(rawProfiles)) {
@@ -359,6 +440,32 @@ export function loadAllowlist(configPath: string | null | undefined): Allowlist 
     profiles[provider] = profileNames;
   }
 
+  const providerAliases = parseProviderAliases(obj.provider_aliases, profiles);
+
+  const providers = obj.providers === undefined ? base.providers : expectStringArray(obj.providers, "providers");
+  for (const provider of providers) {
+    expectProviderId(provider, `providers entry ${JSON.stringify(provider)}`);
+    if (!isSupportedProvider(provider) && providerAliases[provider] === undefined) {
+      throw new AllowlistError(
+        `provider ${JSON.stringify(provider)} is not supported by this runner and is not configured in provider_aliases ` +
+          `(supported: ${SUPPORTED_PROVIDERS.join(", ")})`,
+      );
+    }
+  }
+
+  const modes = obj.modes === undefined ? base.modes : expectStringArray(obj.modes, "modes");
+
+  const capabilities =
+    obj.capabilities === undefined ? base.capabilities : expectStringArray(obj.capabilities, "capabilities");
+  for (const cap of capabilities) {
+    if (!(VALID_CAPABILITIES as readonly string[]).includes(cap)) {
+      throw new AllowlistError(
+        `capability ${JSON.stringify(cap)} is not supported by this runner ` +
+          `(supported: ${VALID_CAPABILITIES.join(", ")})`,
+      );
+    }
+  }
+
   const limits = obj.limits === undefined ? {} : expectObject(obj.limits, "limits");
   const limit = (key: string, fallback: number): number =>
     limits[key] === undefined ? fallback : expectNumber(limits[key], `limits.${key}`);
@@ -371,6 +478,7 @@ export function loadAllowlist(configPath: string | null | undefined): Allowlist 
     repoRoots,
     modes,
     providers,
+    providerAliases,
     profiles,
     capabilities,
     maxPromptChars: limit("max_prompt_chars", base.maxPromptChars),

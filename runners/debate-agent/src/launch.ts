@@ -72,6 +72,8 @@ const ENV_SECRET_DENY = new Set([
 
 export interface ChildLaunch {
   provider: string;
+  baseProvider: string;
+  model: string | null;
   argv: string[];
   displayCommand: string; // prompt redacted
   stdin: string; // the prompt; written to the child only when promptTransport === "stdin"
@@ -189,6 +191,7 @@ const CLAUDE_READONLY_TOOLS = [
 function buildClaudeArgv(
   capability: string,
   effort: string,
+  model?: string | null,
   jsonSchema?: string,
   session?: { id: string; resume: boolean },
 ): string[] {
@@ -202,6 +205,7 @@ function buildClaudeArgv(
   // `fast` is a debate workflow switch, not a child CLI performance flag.
   const permissionMode = capability === "workspace_write" ? "acceptEdits" : "default";
   const argv = ["claude", "--print", "--permission-mode", permissionMode, "--effort", effort];
+  if (model) argv.push("--model", model);
   if (session) {
     // Resumable planner session. The id is RUNNER-generated (not a request value),
     // so the static-argv rule still holds. `--session-id` creates the session on
@@ -232,6 +236,7 @@ function buildCodexArgv(
   profile: string | null,
   capability: string,
   effort?: string | null,
+  model?: string | null,
   schemaFile?: string,
   outputFile?: string,
 ): string[] {
@@ -242,6 +247,9 @@ function buildCodexArgv(
   // uses the read-only sandbox with no network; workspace_write uses the writable
   // sandbox with network.
   const argv = ["codex"];
+  if (model) {
+    argv.push("--model", model);
+  }
   if (profile) {
     argv.push("--profile", profile);
   }
@@ -276,13 +284,15 @@ function buildCodexArgv(
   return argv;
 }
 
-function buildCopilotArgv(cwd: string, capability: string, prompt: string): string[] {
+function buildCopilotArgv(cwd: string, capability: string, prompt: string, model?: string | null): string[] {
   // The standalone GitHub Copilot CLI (opt-in; off by default). It has no OS
   // filesystem sandbox like Codex, so the runner never grants it arbitrary
   // shell, all-paths, or all-urls. read_only_review denies the mutating tools;
   // workspace_write permits file edits scoped to the cwd but still denies shell.
   // The prompt is bound to a single `-p` argv element (no documented stdin).
-  const argv = ["copilot", "--no-color", "-C", cwd];
+  const argv = ["copilot", "--no-color"];
+  if (model) argv.push("--model", model);
+  argv.push("-C", cwd);
   if (capability === "workspace_write") {
     argv.push("--add-dir", cwd, "--allow-tool=write", "--deny-tool=shell");
   } else {
@@ -294,6 +304,8 @@ function buildCopilotArgv(cwd: string, capability: string, prompt: string): stri
 
 export function buildChildLaunch(args: {
   provider: string;
+  baseProvider?: string | null;
+  model?: string | null;
   cwd: string;
   profile: string | null;
   capability: string;
@@ -309,21 +321,23 @@ export function buildChildLaunch(args: {
   claudeSession?: { id: string; resume: boolean };
 }): ChildLaunch {
   const { provider, cwd, profile, capability, prompt, baseEnv, effort, jsonSchema, codexSchemaFile, codexOutputFile, claudeSession } = args;
+  const baseProvider = args.baseProvider ?? provider;
+  const model = args.model ?? null;
 
   let argv: string[];
   let promptTransport: "stdin" | "argv";
-  if (provider === "claude") {
+  if (baseProvider === "claude") {
     // Defense in depth: schema already rejects Claude profiles, but never
     // silently drop one here either.
     if (profile !== null) {
       throw new Error("claude profile is not supported by this runner");
     }
-    argv = buildClaudeArgv(capability, effort ?? "high", jsonSchema, claudeSession);
+    argv = buildClaudeArgv(capability, effort ?? "high", model, jsonSchema, claudeSession);
     promptTransport = "stdin";
-  } else if (provider === "codex") {
-    argv = buildCodexArgv(cwd, profile, capability, effort, codexSchemaFile, codexOutputFile);
+  } else if (baseProvider === "codex") {
+    argv = buildCodexArgv(cwd, profile, capability, effort, model, codexSchemaFile, codexOutputFile);
     promptTransport = "stdin";
-  } else if (provider === "copilot") {
+  } else if (baseProvider === "copilot") {
     // copilot is exempt from fast mode (no clean per-invocation fast flag).
     if (profile !== null) {
       throw new Error("copilot profile is not supported by this runner");
@@ -334,18 +348,18 @@ export function buildChildLaunch(args: {
     if (jsonSchema !== undefined) {
       throw new Error("copilot does not support native JSON schema; it cannot be used as a planner");
     }
-    argv = buildCopilotArgv(cwd, capability, prompt);
+    argv = buildCopilotArgv(cwd, capability, prompt, model);
     promptTransport = "argv";
   } else {
     // Should never happen: schema validation already enforces the allowlist.
-    throw new Error(`no static argv builder for provider ${JSON.stringify(provider)}`);
+    throw new Error(`no static argv builder for provider ${JSON.stringify(baseProvider)}`);
   }
 
   const { env, stripped } = buildChildEnv(baseEnv);
   let providerEnvSource: string | null = null;
   let injectedEnvKeys: string[] = [];
-  if (provider === "claude") {
-    const providerEnv = loadProviderEnv(provider, cwd, baseEnv);
+  if (baseProvider === "claude") {
+    const providerEnv = loadProviderEnv(baseProvider, cwd, baseEnv);
     Object.assign(env, providerEnv.env);
     providerEnvSource = providerEnv.source;
     injectedEnvKeys = providerEnv.keys;
@@ -356,6 +370,8 @@ export function buildChildLaunch(args: {
       : argv.map((a) => (a === prompt ? "<prompt>" : a)).join(" ");
   return {
     provider,
+    baseProvider,
+    model,
     argv,
     displayCommand,
     stdin: prompt,

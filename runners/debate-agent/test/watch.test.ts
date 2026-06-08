@@ -102,7 +102,10 @@ test("validateDebateRequest accepts language + fast + planner_provider, rejects 
   const base = { schema_version: 1, id: "r1", kind: "debate_request", prompt: "x", repo: realpathSync(repo) };
   assert.throws(() => validateDebateRequest({ ...base, fast: "yes" }, allow), /fast must be a boolean/);
   assert.throws(() => validateDebateRequest({ ...base, planner_provider: 1 }, allow), /planner_provider must be a string/);
-  assert.throws(() => validateDebateRequest({ ...base, planner_provider: "copilot" }, allow), /planner_provider must be one of/);
+  assert.throws(
+    () => validateDebateRequest({ ...base, providers: ["copilot", "codex"], planner_provider: "copilot" }, makeAllowlist(repo, { providers: ["claude", "codex", "copilot"] })),
+    /planner_provider .*resolve to one of/,
+  );
   assert.throws(
     () => validateDebateRequest({ ...base, planner_provider: "codex" }, makeAllowlist(repo, { providers: ["claude"] })),
     /providers entry "codex" is not in the allowlist/,
@@ -132,6 +135,36 @@ test("validateDebateRequest accepts providers and rejects invalid provider sets"
   assert.deepEqual(copilotWithPlanner.providers, ["copilot", "codex"]);
   const fastCopilot = validateDebateRequest({ ...base, fast: true, providers: ["copilot"] }, withCopilot);
   assert.deepEqual(fastCopilot.providers, ["copilot"]);
+});
+
+test("validateDebateRequest accepts provider aliases and includes alias resolution in digest", () => {
+  const base = { schema_version: 1, id: "r1", kind: "debate_request", prompt: "x", repo: realpathSync(repo), fast: false };
+  const aliases = makeAllowlist(repo, {
+    providers: ["claude-opus", "codex-gpt52"],
+    providerAliases: {
+      "claude-opus": { base: "claude", model: "claude-opus-4-8", profile: null },
+      "codex-gpt52": { base: "codex", model: "gpt-5.2-codex", profile: null },
+    },
+  });
+  const r = validateDebateRequest(
+    { ...base, providers: ["claude-opus", "codex-gpt52"], planner_provider: "claude-opus" },
+    aliases,
+  );
+  assert.deepEqual(r.providers, ["claude-opus", "codex-gpt52"]);
+  assert.equal(r.plannerProvider, "claude-opus");
+
+  const changedAlias = makeAllowlist(repo, {
+    providers: ["claude-opus", "codex-gpt52"],
+    providerAliases: {
+      "claude-opus": { base: "claude", model: "claude-opus-4-9", profile: null },
+      "codex-gpt52": { base: "codex", model: "gpt-5.2-codex", profile: null },
+    },
+  });
+  const changed = validateDebateRequest(
+    { ...base, providers: ["claude-opus", "codex-gpt52"], planner_provider: "claude-opus" },
+    changedAlias,
+  );
+  assert.notEqual(changed.requestDigest, r.requestDigest);
 });
 
 test("payload id mismatching the file name becomes an error response", async () => {

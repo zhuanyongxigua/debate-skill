@@ -111,6 +111,52 @@ test("run success writes audit and transports prompt", () => {
   }
 });
 
+test("run supports allowlisted provider aliases across the process boundary", () => {
+  const ctx = setup();
+  try {
+    writeFileSync(
+      ctx.cfg,
+      JSON.stringify({
+        repo_roots: [ctx.repo],
+        modes: ["debate-proposal"],
+        providers: ["codex-gpt52"],
+        profiles: { claude: [], codex: ["azure"], copilot: [] },
+        provider_aliases: {
+          "codex-gpt52": { base: "codex", model: "gpt-5.2-codex", profile: "azure" },
+        },
+      }),
+    );
+    makeStub(
+      ctx.binDir,
+      "codex",
+      "#!/usr/bin/env bash\n" +
+        'echo "CWD=$(pwd)"\n' +
+        'echo "ARGS=$*"\n' +
+        "echo -n 'STDIN='\n" +
+        "cat\n",
+    );
+    const req = join(ctx.root, "req.json");
+    writeRequest(req, ctx.repo, { provider: "codex-gpt52" });
+    const proc = runCli(ctx, ["--config", ctx.cfg, "run", "--request", req]);
+    assert.equal(proc.status, 0, proc.stderr);
+    const result = JSON.parse(proc.stdout);
+    assert.equal(result.status, "completed");
+    assert.equal(result.provider, "codex-gpt52");
+    assert.equal(result.base_provider, "codex");
+    assert.equal(result.model, "gpt-5.2-codex");
+
+    const childStdout = readFileSync(result.stdout_path, "utf8");
+    assert.ok(childStdout.includes("ARGS=--model gpt-5.2-codex --profile azure"));
+    assert.ok(childStdout.includes("STDIN=PROMPT-MARKER-XYZ"));
+    const audit = readFileSync(result.audit_path, "utf8");
+    assert.match(audit, /provider: codex-gpt52/);
+    assert.match(audit, /base_provider: codex/);
+    assert.match(audit, /model: gpt-5\.2-codex/);
+  } finally {
+    cleanup(ctx.root);
+  }
+});
+
 test("run rejected exits 1", () => {
   const ctx = setup();
   try {
@@ -1513,6 +1559,87 @@ test("watch daemon: fast request assigns P1/P2/A1 from the first three providers
     assert.ok(existsSync(codexArgs), "P2 should launch codex");
     assert.ok(existsSync(copilotArgs), "A1 should launch copilot");
     assert.ok(!existsSync(join(mailbox, "responses", `${id}.streams`, "planner-1.log")), "no planner stream in fast mode");
+  } finally {
+    if (daemon?.pid !== undefined) {
+      try {
+        process.kill(-daemon.pid, "SIGKILL");
+      } catch {
+        try {
+          daemon.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+    cleanup(ctx.root);
+  }
+});
+
+test("watch daemon: fast request accepts provider aliases and launches their configured models", async () => {
+  const ctx = setup();
+  const claudeArgs = join(ctx.root, "claude_alias_args");
+  const codexArgs = join(ctx.root, "codex_alias_args");
+  writeFileSync(
+    ctx.cfg,
+    JSON.stringify({
+      repo_roots: [ctx.repo],
+      modes: ["debate-proposal"],
+      providers: ["claude-opus", "codex-gpt52"],
+      profiles: { claude: [], codex: ["azure"], copilot: [] },
+      provider_aliases: {
+        "claude-opus": { base: "claude", model: "claude-opus-4-8" },
+        "codex-gpt52": { base: "codex", model: "gpt-5.2-codex", profile: "azure" },
+      },
+      capabilities: ["read_only_review"],
+    }),
+  );
+  makeStub(
+    ctx.binDir,
+    "claude",
+    "#!/usr/bin/env bash\n" + `echo "$@" >> ${JSON.stringify(claudeArgs)}\n` + "input=$(cat)\nprintf 'CLAUDE_ALIAS[%s]\\n' \"$input\"\n",
+  );
+  makeStub(
+    ctx.binDir,
+    "codex",
+    "#!/usr/bin/env bash\n" + `echo "$@" >> ${JSON.stringify(codexArgs)}\n` + "input=$(cat)\nprintf 'CODEX_ALIAS[%s]\\n' \"$input\"\n",
+  );
+  const mailbox = join(ctx.root, "mailbox");
+  const env = cliEnv(ctx, { DEBATE_AGENT_MAILBOX: mailbox });
+  let daemon: ReturnType<typeof spawn> | undefined;
+  try {
+    let stderr = "";
+    daemon = spawn(process.execPath, [BIN, "--config", ctx.cfg, "watch"], { env, detached: true });
+    daemon.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
+    daemon.on("error", (e) => (stderr += `spawn error: ${String(e)}`));
+    await waitFor(() => stderr.includes("polling every"), 8000, `daemon banner (stderr so far: ${stderr})`);
+
+    const id = "20260608-itest-fast-alias-provider-order";
+    writeFileSync(
+      join(mailbox, "requests", `${id}.json`),
+      JSON.stringify({
+        schema_version: 1,
+        id,
+        kind: "debate_request",
+        prompt: "decide alias provider order",
+        repo: realpathSync(ctx.repo),
+        fast: true,
+        providers: ["claude-opus", "codex-gpt52"],
+      }),
+    );
+
+    const respPath = join(mailbox, "responses", `${id}.json`);
+    await waitFor(() => existsSync(respPath), 15000, `response ${id}.json (stderr: ${stderr})`);
+
+    const resp = JSON.parse(readFileSync(respPath, "utf8"));
+    assert.equal(resp.status, "completed", JSON.stringify(resp));
+    assert.deepEqual(
+      resp.trace.map((t: { item: string; provider: string }) => `${t.item}:${t.provider}`),
+      ["P1:claude-opus", "P2:codex-gpt52", "A1:claude-opus"],
+    );
+    assert.match(readFileSync(claudeArgs, "utf8"), /--model claude-opus-4-8/);
+    const codexArgv = readFileSync(codexArgs, "utf8");
+    assert.match(codexArgv, /--model gpt-5\.2-codex/);
+    assert.match(codexArgv, /--profile azure/);
   } finally {
     if (daemon?.pid !== undefined) {
       try {

@@ -52,6 +52,26 @@ test("delegate_request accepts a bounded once task when enabled", () => {
   assert.ok(req.requestDigest.startsWith("sha256:"));
 });
 
+test("delegate_request accepts allowlisted provider aliases", () => {
+  const allow = makeAllowlist(repo, {
+    providers: ["codex-gpt52"],
+    profiles: { claude: [], codex: ["azure"], copilot: [] },
+    providerAliases: {
+      "codex-gpt52": { base: "codex", model: "gpt-5.2-codex", profile: "azure" },
+    },
+    delegate: { enabled: true, modes: ["once"], maxMinutes: 20, maxWorkspaceWriteMinutes: 5 },
+  });
+  const req = validateDelegateRequest({ ...base(), provider: "codex-gpt52" }, allow);
+  assert.equal(req.provider, "codex-gpt52");
+  assert.equal(req.baseProvider, "codex");
+  assert.equal(req.model, "gpt-5.2-codex");
+  assert.equal(req.profile, "azure");
+  assert.throws(
+    () => validateDelegateRequest({ ...base(), provider: "codex-gpt52", profile: "work" }, allow),
+    /already fixes profile/,
+  );
+});
+
 test("delegate_request rejects argv/env-like unknown fields and write windows beyond policy", () => {
   const allow = makeAllowlist(repo, {
     providers: ["codex"],
