@@ -231,6 +231,9 @@ test("default allowlist is read-only and carries batch limits", () => {
   assert.equal(DEFAULT_ALLOWLIST.maxParallelPerProvider, 2);
   assert.equal(DEFAULT_ALLOWLIST.delegate.enabled, false);
   assert.deepEqual(DEFAULT_ALLOWLIST.delegate.modes, ["once"]);
+  assert.equal(DEFAULT_ALLOWLIST.remoteOps.enabled, false);
+  assert.deepEqual(DEFAULT_ALLOWLIST.remoteOps.allowedBashPatterns, []);
+  assert.equal(DEFAULT_ALLOWLIST.remoteOps.injectSshAuthSock, false);
 });
 
 test("delegate policy is explicit and bounded", () => {
@@ -260,6 +263,34 @@ test("delegate policy rejects unknown modes and invalid write bounds", () => {
     { delegate: { max_minutes: 10, max_workspace_write_minutes: 11 } },
     /max_workspace_write_minutes must be <=/,
   );
+});
+
+test("remote_ops policy is explicit and validates static Bash patterns", () => {
+  const d = makeTempDir();
+  try {
+    const cfg = join(d, "allowlist.json");
+    writeFileSync(
+      cfg,
+      JSON.stringify({
+        repo_roots: [d],
+        remote_ops: { enabled: true, allowed_bash_patterns: ["ssh:*", "scp:*"], inject_ssh_auth_sock: true },
+      }),
+    );
+    const allow = loadAllowlist(cfg);
+    assert.equal(allow.remoteOps.enabled, true);
+    assert.deepEqual(allow.remoteOps.allowedBashPatterns, ["ssh:*", "scp:*"]);
+    assert.equal(allow.remoteOps.injectSshAuthSock, true);
+  } finally {
+    cleanup(d);
+  }
+});
+
+test("remote_ops policy rejects unknown fields and unsafe patterns", () => {
+  expectShapeError({ remote_ops: { enable: true } }, /remote_ops has unknown field/);
+  expectShapeError({ remote_ops: { enabled: "yes" } }, /remote_ops\.enabled must be a boolean/);
+  expectShapeError({ remote_ops: { allowed_bash_patterns: "ssh:*" } }, /remote_ops\.allowed_bash_patterns must be an array/);
+  expectShapeError({ remote_ops: { allowed_bash_patterns: ["ssh:*\nwhoami"] } }, /single-line tool pattern/);
+  expectShapeError({ remote_ops: { inject_ssh_auth_sock: "yes" } }, /remote_ops\.inject_ssh_auth_sock must be a boolean/);
 });
 
 test("copilot is opt-in: not in default providers", () => {

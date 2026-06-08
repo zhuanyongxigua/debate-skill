@@ -313,6 +313,7 @@ export async function runValidated(
     prompt: reqValidated.prompt,
     baseEnv: env,
     effort: reqValidated.effort,
+    remoteOps: reqValidated.remoteOps,
   });
   const exec = await execute(launch, reqValidated.timeoutSeconds, streamPath);
 
@@ -349,6 +350,13 @@ export async function runValidated(
     phase: reqValidated.phase,
     mode: reqValidated.mode,
     capability: reqValidated.capability,
+    remote_ops:
+      reqValidated.remoteOps === null
+        ? null
+        : {
+            allowed_bash_patterns: reqValidated.remoteOps.allowedBashPatterns,
+            inject_ssh_auth_sock: reqValidated.remoteOps.injectSshAuthSock,
+          },
     repo: reqValidated.repo,
     repo_root: reqValidated.repoRoot,
     profile: reqValidated.profile,
@@ -382,6 +390,13 @@ export async function runValidated(
     phase: reqValidated.phase,
     mode: reqValidated.mode,
     capability: reqValidated.capability,
+    remote_ops:
+      reqValidated.remoteOps === null
+        ? null
+        : {
+            allowed_bash_patterns: reqValidated.remoteOps.allowedBashPatterns,
+            inject_ssh_auth_sock: reqValidated.remoteOps.injectSshAuthSock,
+          },
     status: exec.status,
     error_category: errorCategory,
     returncode: exec.returncode,

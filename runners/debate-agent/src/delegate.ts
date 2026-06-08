@@ -39,6 +39,7 @@ export interface DelegateRequest {
   model: string | null;
   profile: string | null;
   capability: string;
+  remoteOps: { allowedBashPatterns: string[]; injectSshAuthSock: boolean } | null;
   mode: "once" | "supervised_loop";
   skillHint: string | null;
   task: string;
@@ -86,6 +87,13 @@ function computeDelegateDigest(req: Omit<DelegateRequest, "requestDigest">): str
     model: req.model,
     profile: req.profile,
     capability: req.capability,
+    remote_ops:
+      req.remoteOps === null
+        ? null
+        : {
+            allowed_bash_patterns: req.remoteOps.allowedBashPatterns,
+            inject_ssh_auth_sock: req.remoteOps.injectSshAuthSock,
+          },
     mode: req.mode,
     skill_hint: req.skillHint,
     task: req.task,
@@ -144,6 +152,19 @@ export function validateDelegateRequest(raw: Record<string, unknown>, allow: All
     allow.capabilities.includes(capability),
     `capability ${JSON.stringify(capability)} not in allowlist ${JSON.stringify(allow.capabilities)}`,
   );
+  let remoteOps: DelegateRequest["remoteOps"] = null;
+  if (capability === "remote_ops") {
+    req(allow.remoteOps.enabled, "remote_ops capability is disabled in allowlist.remote_ops");
+    req(resolvedProvider.base === "claude", "remote_ops is only supported for providers that resolve to claude");
+    req(
+      allow.remoteOps.allowedBashPatterns.length > 0,
+      "remote_ops.allowed_bash_patterns must contain at least one Bash pattern",
+    );
+    remoteOps = {
+      allowedBashPatterns: [...allow.remoteOps.allowedBashPatterns],
+      injectSshAuthSock: allow.remoteOps.injectSshAuthSock,
+    };
+  }
 
   const mode = raw.mode === undefined || raw.mode === null ? "once" : raw.mode;
   req(typeof mode === "string", "mode must be a string");
@@ -175,6 +196,12 @@ export function validateDelegateRequest(raw: Record<string, unknown>, allow: All
       `workspace_write max_minutes must be <= ${allow.delegate.maxWorkspaceWriteMinutes}`,
     );
   }
+  if (capability === "remote_ops") {
+    req(
+      maxMinutes <= allow.delegate.maxWorkspaceWriteMinutes,
+      `remote_ops max_minutes must be <= ${allow.delegate.maxWorkspaceWriteMinutes}`,
+    );
+  }
 
   const normalized = {
     id: id as string,
@@ -185,6 +212,7 @@ export function validateDelegateRequest(raw: Record<string, unknown>, allow: All
     model: resolvedProvider.model,
     profile,
     capability,
+    remoteOps,
     mode: mode as DelegateRequest["mode"],
     skillHint,
     task,
@@ -231,6 +259,13 @@ function writeDelegateArtifacts(mb: Mailbox, req: DelegateRequest, response: Del
     provider: req.provider,
     profile: req.profile,
     capability: req.capability,
+    remote_ops:
+      req.remoteOps === null
+        ? null
+        : {
+            allowed_bash_patterns: req.remoteOps.allowedBashPatterns,
+            inject_ssh_auth_sock: req.remoteOps.injectSshAuthSock,
+          },
     mode: req.mode,
     skill_hint: req.skillHint,
     max_minutes: req.maxMinutes,
@@ -290,6 +325,7 @@ export function createDelegateHandler(baseEnv?: Record<string, string | undefine
         profile: req.profile,
         capability: req.capability,
         effort: null,
+        remoteOps: req.remoteOps,
         prompt: buildDelegatePrompt(req),
         timeoutSeconds: req.maxMinutes * 60,
         requestDigest: req.requestDigest,

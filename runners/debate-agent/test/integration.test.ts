@@ -1365,6 +1365,96 @@ test("watch daemon: delegate once request is handled through the cli-delegator m
   }
 });
 
+test("watch daemon: delegate remote_ops launches Claude with static tools and SSH agent env", async () => {
+  const ctx = setup();
+  const claudeArgs = join(ctx.root, "claude_remote_args");
+  makeStub(
+    ctx.binDir,
+    "claude",
+    "#!/usr/bin/env bash\n" +
+      `echo "$@" >> ${JSON.stringify(claudeArgs)}\n` +
+      "input=$(cat)\n" +
+      'printf "SSH_AUTH_SOCK=%s\\n" "${SSH_AUTH_SOCK:-}"\n' +
+      "printf 'REMOTE_DELEGATED[%s]\\n' \"$input\"\n",
+  );
+  writeFileSync(
+    ctx.cfg,
+    JSON.stringify({
+      repo_roots: [ctx.repo],
+      modes: ["debate-proposal"],
+      providers: ["claude"],
+      profiles: { claude: [], codex: [], copilot: [] },
+      capabilities: ["read_only_review", "remote_ops"],
+      delegate: { enabled: true, modes: ["once"], max_minutes: 5, max_workspace_write_minutes: 2 },
+      remote_ops: { enabled: true, allowed_bash_patterns: ["ssh:*", "scp:*"], inject_ssh_auth_sock: true },
+    }),
+  );
+  const debateMailbox = join(ctx.root, "debate-mailbox");
+  const delegateMailbox = join(ctx.root, "delegate-mailbox");
+  const env = cliEnv(ctx, {
+    DEBATE_AGENT_MAILBOX: debateMailbox,
+    DEBATE_AGENT_DELEGATE_MAILBOX: delegateMailbox,
+    SSH_AUTH_SOCK: "/tmp/test-ssh-agent.sock",
+  });
+  let daemon: ReturnType<typeof spawn> | undefined;
+  try {
+    let stderr = "";
+    daemon = spawn(process.execPath, [BIN, "--config", ctx.cfg, "watch"], { env, detached: true });
+    daemon.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
+    daemon.on("error", (e) => (stderr += `spawn error: ${String(e)}`));
+    await waitFor(() => stderr.includes("delegate mailbox"), 8000, `daemon delegate banner (stderr so far: ${stderr})`);
+
+    const id = "20260608-itest-delegate-remote-ops";
+    writeFileSync(
+      join(delegateMailbox, "requests", `${id}.json`),
+      JSON.stringify({
+        schema_version: 1,
+        id,
+        kind: "delegate_request",
+        repo: realpathSync(ctx.repo),
+        provider: "claude",
+        capability: "remote_ops",
+        mode: "once",
+        task: "TASK-MARKER-REMOTE-OPS",
+        max_minutes: 1,
+      }),
+    );
+
+    const respPath = join(delegateMailbox, "responses", `${id}.json`);
+    await waitFor(() => existsSync(respPath), 15000, `delegate response ${id}.json (stderr: ${stderr})`);
+
+    const resp = JSON.parse(readFileSync(respPath, "utf8"));
+    assert.equal(resp.kind, "delegate_result");
+    assert.equal(resp.status, "completed", JSON.stringify(resp));
+    assert.equal(resp.trace[0].provider, "claude");
+    assert.equal(resp.trace[0].base_provider, "claude");
+    assert.match(resp.answer_markdown, /REMOTE_DELEGATED\[/);
+    assert.match(resp.answer_markdown, /SSH_AUTH_SOCK=\/tmp\/test-ssh-agent\.sock/);
+    const argv = readFileSync(claudeArgs, "utf8");
+    assert.match(argv, /--permission-mode default/);
+    assert.doesNotMatch(argv, /acceptEdits|bypass/);
+    assert.match(argv, /--allowedTools/);
+    assert.match(argv, /Bash\(ssh:\*\)/);
+    assert.match(argv, /Bash\(scp:\*\)/);
+    assert.ok(!argv.includes("TASK-MARKER-REMOTE-OPS"), "delegate task must go through stdin, not argv");
+    const config = JSON.parse(readFileSync(join(resp.artifacts_dir, "config.json"), "utf8"));
+    assert.deepEqual(config.remote_ops, { allowed_bash_patterns: ["ssh:*", "scp:*"], inject_ssh_auth_sock: true });
+  } finally {
+    if (daemon?.pid !== undefined) {
+      try {
+        process.kill(-daemon.pid, "SIGKILL");
+      } catch {
+        try {
+          daemon.kill("SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }
+    }
+    cleanup(ctx.root);
+  }
+});
+
 test("watch daemon: disabled delegate mailbox rejects without launching a child", async () => {
   const ctx = setup();
   const marker = join(ctx.root, "codex-launched.marker");

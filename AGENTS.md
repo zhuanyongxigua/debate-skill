@@ -118,6 +118,9 @@ plus one optional execution adapter:
    ever silently widens. Unknown request/batch/delegate fields are rejected.
    Default `capability` is `read_only_review`. `delegate_request` support is
    additionally gated by `allowlist.delegate.enabled`, which defaults to false.
+   `remote_ops` is delegate-only, Claude-only, and gated by a separate
+   `allowlist.remote_ops` block; never make SSH hosts or Bash argv request fields,
+   and never allow debate workers to use `remote_ops`.
    Preserve these when editing.
 5. **Static argv only.** No request value is ever spliced into a child `argv` as
    a flag; the prompt goes on stdin. Capability/profile and the optional
@@ -135,10 +138,12 @@ plus one optional execution adapter:
    `<repo>/.debate-agent/env` or `~/.config/debate-agent/env`, injecting only
    `ANTHROPIC_*` keys into Claude launches (planner attempts and workers). Invalid
    project env paths such as symlinks/directories are ignored and may fall back to
-   global config; a valid project file is not merged with global config. Codex uses
-   its normal CLI login/subscription config and must not receive `OPENAI_*` secrets
-   in worker env. Do not add request-controlled env fields or generic shell
-   sourcing.
+   global config; a valid project file is not merged with global config. The only
+   other env exception is `remote_ops.inject_ssh_auth_sock`, which may re-inject
+   `SSH_AUTH_SOCK` into a Claude delegate child when the operator enables it in
+   allowlist config. Codex uses its normal CLI login/subscription config and must
+   not receive `OPENAI_*` secrets in worker env. Do not add request-controlled env
+   fields or generic shell sourcing.
 6. **Two audit trails, linked by id only.** Protocol audit
    (`~/.debate-router/<run-id>/`) is the skill's; execution audit
    (`~/.debate-agent/<run-id|batch-id>/`) is the runner's. The runner never

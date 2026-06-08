@@ -28,7 +28,7 @@
     "codex": ["azure"]
   },
 
-  "_capabilities_note": "Child sandbox postures the runner may use. read_only_review = codex read-only sandbox + claude default permission (debate/critique, cannot edit) — this is the DEFAULT and the only one listed here. workspace_write = codex workspace-write + network + claude acceptEdits (lets a child edit the repo) is OPT-IN: add it to this list only if you want that.",
+  "_capabilities_note": "Child sandbox postures the runner may use. read_only_review = codex read-only sandbox + claude default permission (debate/critique, cannot edit) — this is the DEFAULT and the only one listed here. workspace_write = codex workspace-write + network + claude acceptEdits (lets a child edit the repo) is OPT-IN. remote_ops is delegate-only, Claude-only, and separately gated by remote_ops below; add it only if you want controlled Bash/SSH-style delegation.",
   "capabilities": ["read_only_review"],
 
   "limits": {
@@ -56,5 +56,12 @@
     "modes": ["once"],
     "max_minutes": 30,
     "max_workspace_write_minutes": 30
+  },
+
+  "_remote_ops_note": "Delegate-only remote operations. Disabled by default. When enabled and capability=remote_ops is requested, the daemon only supports Claude providers and maps to --permission-mode default plus --allowedTools Read/Grep/Glob/Edit/Write/MultiEdit and Bash(<pattern>) for each static pattern below. SSH host restrictions are NOT enforced here; use SSH config, wrappers, network ACLs, or a dedicated runner for host-level control.",
+  "remote_ops": {
+    "enabled": false,
+    "allowed_bash_patterns": ["ssh:*", "scp:*"],
+    "inject_ssh_auth_sock": false
   }
 }

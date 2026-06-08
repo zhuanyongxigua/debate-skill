@@ -338,6 +338,57 @@ test("claude read_only_review denies writes, allows read tools + read-only git",
   assert.ok(!rw.argv.includes("--disallowedTools") && !rw.argv.includes("--allowedTools"));
 });
 
+test("claude remote_ops uses default permission mode with static allowed tools", () => {
+  const launch = buildChildLaunch({
+    provider: "claude",
+    cwd: "/r",
+    profile: null,
+    capability: "remote_ops",
+    prompt: "P",
+    baseEnv: { PATH: "/usr/bin", SSH_AUTH_SOCK: "/tmp/agent.sock" },
+    remoteOps: { allowedBashPatterns: ["ssh:*", "scp:*"], injectSshAuthSock: true },
+  });
+  assert.equal(launch.argv[launch.argv.indexOf("--permission-mode") + 1], "default");
+  assert.ok(!launch.argv.includes("acceptEdits"));
+  assert.ok(!launch.argv.includes("--disallowedTools"));
+  const allowed = launch.argv.slice(launch.argv.indexOf("--allowedTools") + 1).filter((a) => !a.startsWith("--"));
+  for (const tool of ["Read", "Grep", "Glob", "Edit", "Write", "MultiEdit", "Bash(ssh:*)", "Bash(scp:*)"]) {
+    assert.ok(allowed.includes(tool), `${tool} should be allowed`);
+  }
+  assert.equal(launch.env.SSH_AUTH_SOCK, "/tmp/agent.sock");
+  assert.ok(!launch.strippedEnvKeys.includes("SSH_AUTH_SOCK"));
+  assert.ok(launch.injectedEnvKeys.includes("SSH_AUTH_SOCK"));
+});
+
+test("remote_ops fails closed without Bash patterns and for non-Claude providers", () => {
+  assert.throws(
+    () =>
+      buildChildLaunch({
+        provider: "claude",
+        cwd: "/r",
+        profile: null,
+        capability: "remote_ops",
+        prompt: "P",
+        baseEnv: {},
+        remoteOps: { allowedBashPatterns: [], injectSshAuthSock: false },
+      }),
+    /requires at least one/,
+  );
+  assert.throws(
+    () =>
+      buildChildLaunch({
+        provider: "codex",
+        cwd: "/r",
+        profile: null,
+        capability: "remote_ops",
+        prompt: "P",
+        baseEnv: {},
+        remoteOps: { allowedBashPatterns: ["ssh:*"], injectSshAuthSock: false },
+      }),
+    /only supported for claude/,
+  );
+});
+
 test("thinking effort is optional; codex defaults to profile config", () => {
   // Claude has no Codex-style profile knob, so the runner defaults it to high.
   const c = buildChildLaunch({ provider: "claude", cwd: "/r", profile: null, capability: "read_only_review", prompt: "P", baseEnv: {} });

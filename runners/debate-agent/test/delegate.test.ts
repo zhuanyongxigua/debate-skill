@@ -72,6 +72,43 @@ test("delegate_request accepts allowlisted provider aliases", () => {
   );
 });
 
+test("delegate_request remote_ops is delegate-only, Claude-only, and separately gated", () => {
+  const disabled = makeAllowlist(repo, {
+    providers: ["claude"],
+    capabilities: ["read_only_review", "remote_ops"],
+    delegate: { enabled: true, modes: ["once"], maxMinutes: 20, maxWorkspaceWriteMinutes: 5 },
+  });
+  assert.throws(
+    () => validateDelegateRequest({ ...base(), provider: "claude", capability: "remote_ops" }, disabled),
+    /remote_ops capability is disabled/,
+  );
+
+  const enabled = makeAllowlist(repo, {
+    providers: ["claude"],
+    capabilities: ["read_only_review", "remote_ops"],
+    remoteOps: { enabled: true, allowedBashPatterns: ["ssh:*", "scp:*"], injectSshAuthSock: true },
+    delegate: { enabled: true, modes: ["once"], maxMinutes: 20, maxWorkspaceWriteMinutes: 5 },
+  });
+  const req = validateDelegateRequest({ ...base(), provider: "claude", capability: "remote_ops", max_minutes: 5 }, enabled);
+  assert.equal(req.capability, "remote_ops");
+  assert.deepEqual(req.remoteOps, { allowedBashPatterns: ["ssh:*", "scp:*"], injectSshAuthSock: true });
+  assert.throws(
+    () => validateDelegateRequest({ ...base(), provider: "claude", capability: "remote_ops", max_minutes: 6 }, enabled),
+    /remote_ops max_minutes/,
+  );
+
+  const codex = makeAllowlist(repo, {
+    providers: ["codex"],
+    capabilities: ["read_only_review", "remote_ops"],
+    remoteOps: { enabled: true, allowedBashPatterns: ["ssh:*"], injectSshAuthSock: false },
+    delegate: { enabled: true, modes: ["once"], maxMinutes: 20, maxWorkspaceWriteMinutes: 5 },
+  });
+  assert.throws(
+    () => validateDelegateRequest({ ...base(), provider: "codex", capability: "remote_ops" }, codex),
+    /only supported for providers that resolve to claude/,
+  );
+});
+
 test("delegate_request rejects argv/env-like unknown fields and write windows beyond policy", () => {
   const allow = makeAllowlist(repo, {
     providers: ["codex"],

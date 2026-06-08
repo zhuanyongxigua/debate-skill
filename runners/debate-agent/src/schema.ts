@@ -67,6 +67,7 @@ export interface ValidatedRequest {
   profile: string | null;
   capability: string;
   effort: string | null;
+  remoteOps: { allowedBashPatterns: string[]; injectSshAuthSock: boolean } | null;
   prompt: string;
   timeoutSeconds: number;
   requestDigest: string;
@@ -205,6 +206,7 @@ export function validateRequest(raw: Record<string, unknown>, allow: Allowlist):
     allow.capabilities.includes(capability),
     `capability ${JSON.stringify(capability)} not in allowlist ${JSON.stringify(allow.capabilities)}`,
   );
+  req(capability !== "remote_ops", "remote_ops is only supported for delegate_request, not low-level run/run-batch");
 
   // --- effort (optional per-launch thinking override) ----------------------
   // If omitted, the child CLI's own profile/config decides. This matters most
@@ -255,6 +257,7 @@ export function validateRequest(raw: Record<string, unknown>, allow: Allowlist):
     profile,
     capability,
     effort,
+    remoteOps: null,
     prompt: prompt as string,
     timeoutSeconds: timeout,
     requestDigest: computeDigest(raw),

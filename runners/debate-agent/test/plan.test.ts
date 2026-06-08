@@ -20,6 +20,7 @@ const allow: Allowlist = {
   rateLimitPatterns: { claude: [], codex: [], copilot: [] },
   fallback: { enabled: true, order: ["claude", "codex"] },
   delegate: { enabled: false, modes: ["once"], maxMinutes: 30, maxWorkspaceWriteMinutes: 30 },
+  remoteOps: { enabled: false, allowedBashPatterns: [], injectSshAuthSock: false },
 };
 
 function goodPlan(): unknown {

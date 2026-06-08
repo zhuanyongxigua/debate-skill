@@ -42,7 +42,9 @@ export const VALID_PHASES = [
 // child CLI. They are the runner's blast-radius control: debate participants get
 // read_only_review by default so an automated run can never edit the repo unless
 // the operator both allowlists workspace_write and a request asks for it.
-export const VALID_CAPABILITIES = ["read_only_review", "workspace_write"] as const;
+// remote_ops is stricter and delegate-only: it exists for controlled Claude
+// Bash/SSH-style work and is gated by the separate `remote_ops` allowlist block.
+export const VALID_CAPABILITIES = ["read_only_review", "workspace_write", "remote_ops"] as const;
 export type Capability = (typeof VALID_CAPABILITIES)[number];
 export const DEFAULT_CAPABILITY: Capability = "read_only_review";
 
@@ -114,6 +116,12 @@ export interface DelegatePolicy {
   maxWorkspaceWriteMinutes: number;
 }
 
+export interface RemoteOpsPolicy {
+  enabled: boolean;
+  allowedBashPatterns: string[];
+  injectSshAuthSock: boolean;
+}
+
 export interface Allowlist {
   // Absolute, realpath-resolved roots. A request repo must resolve under one.
   repoRoots: string[];
@@ -140,6 +148,9 @@ export interface Allowlist {
   // High-level cli-delegator mailbox support. Disabled by default so adding a
   // second mailbox does not silently widen who can ask the daemon to spawn CLIs.
   delegate: DelegatePolicy;
+  // Delegate-only remote operations policy. Disabled by default and only used
+  // with capability="remote_ops".
+  remoteOps: RemoteOpsPolicy;
 }
 
 /** Default per-provider rate-limit signatures (the same conservative set for
@@ -168,6 +179,7 @@ export const DEFAULT_ALLOWLIST: Allowlist = {
   // Swap engines on provider failure by default; order follows `providers`.
   fallback: { enabled: true, order: ["claude", "codex"] },
   delegate: { enabled: false, modes: ["once"], maxMinutes: 30, maxWorkspaceWriteMinutes: 30 },
+  remoteOps: { enabled: false, allowedBashPatterns: [], injectSshAuthSock: false },
 };
 
 export function repoRootMatch(allow: Allowlist, resolvedRepo: string): string | null {
@@ -246,6 +258,12 @@ function expectProviderId(value: string, field: string): void {
 function expectModelId(value: string, field: string): void {
   if (!isSafeModelId(value)) {
     throw new AllowlistError(`${field} must be a non-empty safe model id with no whitespace/control characters`);
+  }
+}
+
+function expectToolPattern(value: string, field: string): void {
+  if (value.trim() === "" || /[\r\n\0]/.test(value)) {
+    throw new AllowlistError(`${field} must be a non-empty single-line tool pattern`);
   }
 }
 
@@ -344,6 +362,26 @@ function parseDelegate(raw: unknown, base: DelegatePolicy): DelegatePolicy {
     throw new AllowlistError("delegate.max_workspace_write_minutes must be <= delegate.max_minutes");
   }
   return { enabled, modes, maxMinutes, maxWorkspaceWriteMinutes };
+}
+
+function parseRemoteOps(raw: unknown, base: RemoteOpsPolicy): RemoteOpsPolicy {
+  if (raw === undefined) return { ...base, allowedBashPatterns: [...base.allowedBashPatterns] };
+  const obj = expectObject(raw, "remote_ops");
+  const extra = Object.keys(obj).filter((k) => !["enabled", "allowed_bash_patterns", "inject_ssh_auth_sock"].includes(k));
+  if (extra.length) throw new AllowlistError(`remote_ops has unknown field(s): ${JSON.stringify(extra.sort())}`);
+  const enabled = obj.enabled === undefined ? base.enabled : expectBoolean(obj.enabled, "remote_ops.enabled");
+  const allowedBashPatterns =
+    obj.allowed_bash_patterns === undefined
+      ? [...base.allowedBashPatterns]
+      : expectStringArray(obj.allowed_bash_patterns, "remote_ops.allowed_bash_patterns");
+  allowedBashPatterns.forEach((pattern, index) =>
+    expectToolPattern(pattern, `remote_ops.allowed_bash_patterns[${index}]`),
+  );
+  const injectSshAuthSock =
+    obj.inject_ssh_auth_sock === undefined
+      ? base.injectSshAuthSock
+      : expectBoolean(obj.inject_ssh_auth_sock, "remote_ops.inject_ssh_auth_sock");
+  return { enabled, allowedBashPatterns, injectSshAuthSock };
 }
 
 function parseProviderAliases(raw: unknown, profiles: Record<string, string[]>): Record<string, ProviderAlias> {
@@ -473,6 +511,7 @@ export function loadAllowlist(configPath: string | null | undefined): Allowlist 
   const rateLimitPatterns = parseRateLimitPatterns(obj.rate_limit_patterns);
   const fallback = parseFallback(obj.fallback, providers);
   const delegate = parseDelegate(obj.delegate, base.delegate);
+  const remoteOps = parseRemoteOps(obj.remote_ops, base.remoteOps);
 
   return {
     repoRoots,
@@ -488,6 +527,7 @@ export function loadAllowlist(configPath: string | null | undefined): Allowlist 
     rateLimitPatterns,
     fallback,
     delegate,
+    remoteOps,
   };
 }
 

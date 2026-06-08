@@ -164,6 +164,14 @@ test("explicit workspace_write capability accepted when allowlisted", () => {
   assert.equal(req.capability, "workspace_write");
 });
 
+test("remote_ops is rejected for low-level run requests", () => {
+  const withRemoteOps = makeAllowlist(repo, { capabilities: ["read_only_review", "remote_ops"] });
+  assert.throws(
+    () => validateRequest({ ...baseRequest(repo), capability: "remote_ops" }, withRemoteOps),
+    (err) => err instanceof RequestRejected && /only supported for delegate_request/.test(err.message),
+  );
+});
+
 test("the retired low-level `fast` request field is now rejected as unknown", () => {
   // `fast` belongs only to high-level debate_request workflow selection, not to
   // low-level run/run-batch child CLI launch specs.

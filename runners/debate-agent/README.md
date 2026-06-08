@@ -120,7 +120,7 @@ listed here.
 | `mode` | string | in the mode allowlist (audit/policy label only; does not change argv) |
 | `repo` | string | absolute path; `realpath` must resolve under an allowed repo root and be an existing directory |
 | `profile` | string \| null | `null`, or in the profile allowlist for that provider. **Only Codex has profiles the runner can honor** — Claude profiles (strips `CLAUDE_CONFIG_DIR`) and Copilot profiles are rejected. If a provider alias fixes a Codex profile, the request cannot override it |
-| `capability` | string | `read_only_review` (default) or `workspace_write`; must be in the `capabilities` allowlist. Controls the child sandbox posture (see below) |
+| `capability` | string | `read_only_review` (default) or `workspace_write`; must be in the `capabilities` allowlist. Controls the child sandbox posture (see below). `remote_ops` is rejected here; it is delegate-only |
 | `effort` | string | optional thinking override (`--effort` / `model_reasoning_effort`). claude: `low\|medium\|high\|xhigh\|max` (omitted defaults to `high` in the runner because Claude has no Codex-style profile knob); codex: `low\|medium\|high\|xhigh` (omitted means use the user's Codex config/profile). The planner may pick this per launch, but should omit it when the profile should decide |
 | `prompt` | string | non-empty, length ≤ `max_prompt_chars`; transported to the child via **stdin only** |
 | `timeout_seconds` | int | a positive integer ≤ `86400` (fixed internal sanity cap, not configurable); if omitted, the phase-aware default is used |
@@ -183,6 +183,7 @@ operator **both** allowlists `workspace_write` **and** a request asks for it.
 | --- | --- | --- | --- | --- |
 | `read_only_review` (default) | `exec --sandbox read-only` (no network) | `--permission-mode default` + deny `Edit/Write/MultiEdit/NotebookEdit` + allow `Read/Grep/Glob` and read-only git (`Bash(git diff:*)` / `log` / `show` / `status` / `blame`) | `--deny-tool=write --deny-tool=shell` | proposer / critic / reviewer — reads + read-only git, cannot edit |
 | `workspace_write` | `--sandbox workspace-write` + network | `--permission-mode acceptEdits` | `--allow-tool=write --add-dir <repo>` (no shell) | implementation — may edit the repo |
+| `remote_ops` | rejected | delegate-only: `--permission-mode default` + `--allowedTools Read/Grep/Glob/Edit/Write/MultiEdit` plus `Bash(<allowlist pattern>)` from `remote_ops.allowed_bash_patterns` | rejected | bounded cli-delegator tasks that need controlled Bash/SSH-style operations |
 
 **Assurance differs by provider.** Codex read-only is an **OS-level** sandbox
 (`--sandbox read-only`) — a kernel guarantee — so it can run **any** read-only
@@ -199,8 +200,13 @@ claude/copilot as permission-listed when reasoning about blast radius.
 The **default allowlist lists only `read_only_review`**, so no automated child
 can ever write — important once Codex Rules are set to `allow` (unattended).
 `workspace_write` is OPT-IN: add it to `capabilities` only if you explicitly want
-children to edit repos. The argv stays static: capability only selects among
-fixed, safe templates.
+children to edit repos. `remote_ops` is even narrower in API surface but higher
+risk operationally: it is accepted only by `delegate_request`, only for providers
+that resolve to Claude, only when `remote_ops.enabled` is true, and only with
+operator-configured Bash patterns. It does **not** enforce SSH host allowlists;
+use SSH config, wrappers, network ACLs, or a dedicated runner for host-level
+control. The argv stays static: capability only selects among fixed, safe
+templates.
 
 ### Prompt transport
 
@@ -440,11 +446,11 @@ It is disabled unless `allowlist.delegate.enabled` is true.
 | `repo` | string | absolute; `realpath` must resolve under an allowed repo root |
 | `provider` | string | optional; defaults to `codex`; must be an allowlisted built-in provider id or alias |
 | `profile` | string \| null | optional; only Codex profiles are supported and must be allowlisted. If an alias fixes a Codex profile, the request cannot override it |
-| `capability` | string | optional; defaults to `read_only_review`; `workspace_write` requires both allowlist opt-in and the tighter delegate write-time cap |
+| `capability` | string | optional; defaults to `read_only_review`; `workspace_write` requires both allowlist opt-in and the tighter delegate write-time cap. `remote_ops` requires allowlisted capability, `remote_ops.enabled`, a Claude provider, and at least one static `remote_ops.allowed_bash_patterns` entry |
 | `mode` | string | optional; only `once` is implemented in this slice. `supervised_loop` is a reserved future mode and is rejected today |
 | `skill_hint` | string | optional prompt-only hint. It never becomes argv and is named `skill_hint` to avoid implying executable routing |
 | `task` | string | non-empty delegated task prompt; transported through stdin for stdin-capable providers |
-| `max_minutes` | int | optional; defaults to `allowlist.delegate.max_minutes`; capped by `delegate.max_minutes`, and by `delegate.max_workspace_write_minutes` for `workspace_write` |
+| `max_minutes` | int | optional; defaults to `allowlist.delegate.max_minutes`; capped by `delegate.max_minutes`, and by `delegate.max_workspace_write_minutes` for `workspace_write` and `remote_ops` |
 
 Unknown fields are rejected. In particular, `argv`, `env`, shell strings, and
 request-controlled process ids are not accepted. A successful `once` response is
@@ -684,9 +690,12 @@ Tuning (allowlist, hot-reloaded per request):
    every Claude launch, including planner attempts and workers. This is not shell
    sourcing, so `source ~/.zshrc` is not part of daemon configuration. Unknown
    keys, `PATH`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `OPENAI_*`, and other
-   non-`ANTHROPIC_*` entries are ignored. Worker result/audit records only the
-   source path and injected key names, never values. Codex/Copilot still use the
-   rebuilt allowlisted env only.
+   non-`ANTHROPIC_*` entries are ignored. `remote_ops` has a second explicit
+   exception only when `remote_ops.inject_ssh_auth_sock` is true: `SSH_AUTH_SOCK`
+   may be re-injected into the Claude child so the static `Bash(ssh:*)` /
+   `Bash(scp:*)` style tools can use the operator's SSH agent. Worker
+   result/audit records only the source path and injected key names, never
+   values. Codex/Copilot still use the rebuilt allowlisted env only.
 4. **Process-group isolation.** Each child runs in its own process group
    (`detached`). On timeout the group gets `SIGTERM`, then `SIGKILL` after a 10s
    grace period, so no orphan model processes survive.
@@ -776,6 +785,7 @@ through it, all of the following must be in place. This is the full list.
    | `rate_limit_patterns` | `provider -> [regex]` limit signatures (tune to your CLIs) | conservative built-ins per provider |
    | `fallback` | `{enabled, order}` for provider failure engine swap | `{enabled: true, order: providers}` |
    | `delegate` | `{enabled, modes, max_minutes, max_workspace_write_minutes}` for the cli-delegator mailbox | disabled; `once` reserved but inactive |
+   | `remote_ops` | delegate-only Claude Bash/SSH policy `{enabled, allowed_bash_patterns, inject_ssh_auth_sock}` | disabled |
 
 3. **Codex Rules** at `~/.codex/rules/default.rules` allowing **only** the fixed
    runner path (see Install). `decision = "prompt"` asks each time;

@@ -187,11 +187,13 @@ const CLAUDE_READONLY_TOOLS = [
   "Bash(git status:*)",
   "Bash(git blame:*)",
 ];
+const CLAUDE_REMOTE_OPS_BASE_TOOLS = ["Read", "Grep", "Glob", "Edit", "Write", "MultiEdit"];
 
 function buildClaudeArgv(
   capability: string,
   effort: string,
   model?: string | null,
+  remoteOps?: { allowedBashPatterns: string[]; injectSshAuthSock: boolean } | null,
   jsonSchema?: string,
   session?: { id: string; resume: boolean },
 ): string[] {
@@ -200,7 +202,8 @@ function buildClaudeArgv(
   // caller defaults Claude to high because Claude has no Codex-style profile knob.
   // Claude profiles are unsupported (caller fails closed before reaching here).
   // read_only_review denies writes and allows only read tools + read-only git;
-  // workspace_write auto-accepts edits.
+  // workspace_write auto-accepts edits. remote_ops stays in default permission
+  // mode and allowlists only the configured Bash patterns plus local edit tools.
   //
   // `fast` is a debate workflow switch, not a child CLI performance flag.
   const permissionMode = capability === "workspace_write" ? "acceptEdits" : "default";
@@ -214,7 +217,16 @@ function buildClaudeArgv(
     // workers never do.
     argv.push(session.resume ? "--resume" : "--session-id", session.id);
   }
-  if (capability !== "workspace_write") {
+  if (capability === "remote_ops") {
+    if (!remoteOps || remoteOps.allowedBashPatterns.length === 0) {
+      throw new Error("remote_ops requires at least one allowlisted Bash pattern");
+    }
+    argv.push(
+      "--allowedTools",
+      ...CLAUDE_REMOTE_OPS_BASE_TOOLS,
+      ...remoteOps.allowedBashPatterns.map((pattern) => `Bash(${pattern})`),
+    );
+  } else if (capability !== "workspace_write") {
     argv.push("--disallowedTools", ...CLAUDE_DENY_WRITE_TOOLS);
     argv.push("--allowedTools", ...CLAUDE_READONLY_TOOLS);
   }
@@ -312,6 +324,7 @@ export function buildChildLaunch(args: {
   prompt: string;
   baseEnv: Record<string, string | undefined>;
   effort?: string | null; // optional thinking override. copilot has none.
+  remoteOps?: { allowedBashPatterns: string[]; injectSshAuthSock: boolean } | null;
   // Planner-only structured-output (the runner reads the validated plan back):
   jsonSchema?: string; // claude: inline `--json-schema` (with `--output-format json`)
   codexSchemaFile?: string; // codex: `--output-schema <file>`
@@ -323,6 +336,7 @@ export function buildChildLaunch(args: {
   const { provider, cwd, profile, capability, prompt, baseEnv, effort, jsonSchema, codexSchemaFile, codexOutputFile, claudeSession } = args;
   const baseProvider = args.baseProvider ?? provider;
   const model = args.model ?? null;
+  const remoteOps = args.remoteOps ?? null;
 
   let argv: string[];
   let promptTransport: "stdin" | "argv";
@@ -332,12 +346,18 @@ export function buildChildLaunch(args: {
     if (profile !== null) {
       throw new Error("claude profile is not supported by this runner");
     }
-    argv = buildClaudeArgv(capability, effort ?? "high", model, jsonSchema, claudeSession);
+    argv = buildClaudeArgv(capability, effort ?? "high", model, remoteOps, jsonSchema, claudeSession);
     promptTransport = "stdin";
   } else if (baseProvider === "codex") {
+    if (capability === "remote_ops") {
+      throw new Error("remote_ops is only supported for claude provider aliases");
+    }
     argv = buildCodexArgv(cwd, profile, capability, effort, model, codexSchemaFile, codexOutputFile);
     promptTransport = "stdin";
   } else if (baseProvider === "copilot") {
+    if (capability === "remote_ops") {
+      throw new Error("remote_ops is only supported for claude provider aliases");
+    }
     // copilot is exempt from fast mode (no clean per-invocation fast flag).
     if (profile !== null) {
       throw new Error("copilot profile is not supported by this runner");
@@ -356,6 +376,7 @@ export function buildChildLaunch(args: {
   }
 
   const { env, stripped } = buildChildEnv(baseEnv);
+  let strippedEnvKeys = stripped;
   let providerEnvSource: string | null = null;
   let injectedEnvKeys: string[] = [];
   if (baseProvider === "claude") {
@@ -363,6 +384,11 @@ export function buildChildLaunch(args: {
     Object.assign(env, providerEnv.env);
     providerEnvSource = providerEnv.source;
     injectedEnvKeys = providerEnv.keys;
+    if (capability === "remote_ops" && remoteOps?.injectSshAuthSock && baseEnv.SSH_AUTH_SOCK) {
+      env.SSH_AUTH_SOCK = baseEnv.SSH_AUTH_SOCK;
+      injectedEnvKeys = [...new Set([...injectedEnvKeys, "SSH_AUTH_SOCK"])].sort();
+      strippedEnvKeys = strippedEnvKeys.filter((key) => key !== "SSH_AUTH_SOCK");
+    }
   }
   const displayCommand =
     promptTransport === "stdin"
@@ -378,7 +404,7 @@ export function buildChildLaunch(args: {
     promptTransport,
     cwd,
     env,
-    strippedEnvKeys: stripped,
+    strippedEnvKeys,
     providerEnvSource,
     injectedEnvKeys,
   };
