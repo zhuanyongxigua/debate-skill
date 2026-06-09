@@ -12,6 +12,8 @@ plus one optional execution adapter:
   bounded critique/cross-review/arbitration flow.
 - `skills/cli-launch` — builds non-interactive launch specs for selected local
   agent CLIs.
+- `skills/cli-delegator` — submits bounded one-shot delegated work through the
+  daemon request-file mailbox and reads daemon-written artifacts.
 - `runners/debate-agent` — an optional, separately-permissioned thin execution
   adapter (TypeScript/Node). Its `watch` daemon runs **outside** the sandbox and
   launches `claude`/`codex` on behalf of sandboxed parent agents (which cannot

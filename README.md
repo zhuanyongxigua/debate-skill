@@ -5,7 +5,7 @@
 This repo intentionally stays narrow. It does not try to be a general method
 catalog, agent framework, or work-entry gate.
 
-It currently packages two reusable skills plus one standalone runner:
+It currently packages three reusable skills plus one standalone runner:
 
 - [`debate-router`](skills/debate-router/SKILL.md): classify an explicitly
   requested debate. By default it does not run the debate in-session — it writes
@@ -16,6 +16,9 @@ It currently packages two reusable skills plus one standalone runner:
   non-interactive launch specs for selected local agent CLIs, including
   profile/env isolation, sandbox, network, timeout, and redacted display
   commands.
+- [`cli-delegator`](skills/cli-delegator/SKILL.md): submit bounded one-shot
+  delegated work through the daemon request-file mailbox, then read
+  daemon-written artifacts and responses.
 
 [`runners/debate-agent`](runners/debate-agent/README.md) is **not** a skill — it
 is a standalone processor (TypeScript/Node) that the human runs outside the
@@ -208,6 +211,8 @@ skills/
   debate-router/         # classify a debate; emit a request file (or run via cli-launch)
     SKILL.md  agents/  references/
   cli-launch/            # build non-interactive CLI launch specs
+    SKILL.md  scripts/
+  cli-delegator/         # submit bounded one-shot delegated work through the daemon mailbox
     SKILL.md  scripts/
 runners/
   debate-agent/          # standalone processor (outside skills/, run by the human)
