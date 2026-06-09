@@ -451,7 +451,7 @@ It is disabled unless `allowlist.delegate.enabled` is true.
   "mode": "once",
   "skill_hint": "optional local skill name or SKILL.md path",
   "task": "Inspect the run logs and summarize the failure.",
-  "max_minutes": 20
+  "timeout_minutes": 20
 }
 ```
 
@@ -466,7 +466,8 @@ It is disabled unless `allowlist.delegate.enabled` is true.
 | `mode` | string | optional; only `once` is implemented in this slice. `supervised_loop` is a reserved future mode and is rejected today |
 | `skill_hint` | string | optional prompt-only hint. It never becomes argv and is named `skill_hint` to avoid implying executable routing |
 | `task` | string | non-empty delegated task prompt; transported through stdin for stdin-capable providers |
-| `max_minutes` | int | optional; defaults to `allowlist.delegate.max_minutes`; capped by `delegate.max_minutes`, and by `delegate.max_workspace_write_minutes` for `workspace_write` and `remote_ops` |
+| `timeout_minutes` | int | preferred optional per-request runtime cap; defaults to 30 minutes, or a lower `delegate.max_minutes` cap if configured below 30; explicit values are capped by `delegate.max_minutes`, and by `delegate.max_workspace_write_minutes` for `workspace_write` and `remote_ops` |
+| `max_minutes` | int | legacy alias for `timeout_minutes`; use either field, never both |
 
 Unknown fields are rejected. In particular, `argv`, `env`, shell strings, and
 request-controlled process ids are not accepted. A successful `once` response is

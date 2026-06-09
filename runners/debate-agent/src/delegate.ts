@@ -23,6 +23,7 @@ import { RESULT_SCHEMA_VERSION } from "./version";
 const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,128}$/;
 const PRIVATE_DIR_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
+const DEFAULT_DELEGATE_TIMEOUT_MINUTES = 30;
 const ALLOWED_DELEGATE_FIELDS = [
   "schema_version",
   "id",
@@ -35,6 +36,7 @@ const ALLOWED_DELEGATE_FIELDS = [
   "mode",
   "skill_hint",
   "task",
+  "timeout_minutes",
   "max_minutes",
 ] as const;
 const ALLOWED_DELEGATE_FIELD_SET = new Set<string>(ALLOWED_DELEGATE_FIELDS);
@@ -108,7 +110,7 @@ function computeDelegateDigest(req: Omit<DelegateRequest, "requestDigest">): str
     mode: req.mode,
     skill_hint: req.skillHint,
     task: req.task,
-    max_minutes: req.maxMinutes,
+    timeout_minutes: req.maxMinutes,
   });
 }
 
@@ -193,22 +195,35 @@ export function validateDelegateRequest(raw: Record<string, unknown>, allow: All
   req(typeof task === "string" && task.trim() !== "", "task must be a non-empty string");
   req(task.length <= allow.maxPromptChars, `task exceeds max_prompt_chars (${allow.maxPromptChars})`);
 
-  let maxMinutes = allow.delegate.maxMinutes;
-  if (raw.max_minutes !== undefined && raw.max_minutes !== null) {
+  req(
+    !(raw.timeout_minutes !== undefined && raw.timeout_minutes !== null && raw.max_minutes !== undefined && raw.max_minutes !== null),
+    "use either timeout_minutes or max_minutes, not both",
+  );
+  let maxMinutes = Math.min(DEFAULT_DELEGATE_TIMEOUT_MINUTES, allow.delegate.maxMinutes);
+  if (raw.timeout_minutes !== undefined && raw.timeout_minutes !== null) {
+    req(
+      typeof raw.timeout_minutes === "number" && Number.isInteger(raw.timeout_minutes),
+      "timeout_minutes must be an integer",
+    );
+    maxMinutes = raw.timeout_minutes;
+  } else if (raw.max_minutes !== undefined && raw.max_minutes !== null) {
     req(typeof raw.max_minutes === "number" && Number.isInteger(raw.max_minutes), "max_minutes must be an integer");
     maxMinutes = raw.max_minutes;
   }
-  req(maxMinutes >= 1 && maxMinutes <= allow.delegate.maxMinutes, `max_minutes outside [1, ${allow.delegate.maxMinutes}]`);
+  req(
+    maxMinutes >= 1 && maxMinutes <= allow.delegate.maxMinutes,
+    `timeout_minutes outside [1, ${allow.delegate.maxMinutes}]`,
+  );
   if (hasWorkspaceWrite) {
     req(
       maxMinutes <= allow.delegate.maxWorkspaceWriteMinutes,
-      `workspace_write max_minutes must be <= ${allow.delegate.maxWorkspaceWriteMinutes}`,
+      `workspace_write timeout_minutes must be <= ${allow.delegate.maxWorkspaceWriteMinutes}`,
     );
   }
   if (hasRemoteOps) {
     req(
       maxMinutes <= allow.delegate.maxWorkspaceWriteMinutes,
-      `remote_ops max_minutes must be <= ${allow.delegate.maxWorkspaceWriteMinutes}`,
+      `remote_ops timeout_minutes must be <= ${allow.delegate.maxWorkspaceWriteMinutes}`,
     );
   }
 
@@ -279,6 +294,7 @@ function writeDelegateArtifacts(mb: Mailbox, req: DelegateRequest, response: Del
           },
     mode: req.mode,
     skill_hint: req.skillHint,
+    timeout_minutes: req.maxMinutes,
     max_minutes: req.maxMinutes,
     request_digest: req.requestDigest,
   });
@@ -313,7 +329,7 @@ export function createDelegateHandler(baseEnv?: Record<string, string | undefine
   return {
     kind: "delegate_request",
     mailboxName: "cli-delegator",
-    resourceBudget: { maxConcurrent: 1, maxMinutes: 30 },
+    resourceBudget: { maxConcurrent: 1, maxMinutes: null },
     invalidRequestDigest: "invalid-request",
     validate: (raw, id, allow) => {
       const req = validateDelegateRequest(raw, allow);

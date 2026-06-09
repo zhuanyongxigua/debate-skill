@@ -1330,7 +1330,7 @@ test("watch daemon: delegate once request is handled through the cli-delegator m
         provider: "codex",
         mode: "once",
         task: "TASK-MARKER-DELEGATE",
-        max_minutes: 2,
+        timeout_minutes: 2,
       }),
     );
 
@@ -1345,6 +1345,8 @@ test("watch daemon: delegate once request is handled through the cli-delegator m
     assert.equal(typeof resp.artifacts_dir, "string");
     assert.ok(existsSync(join(resp.artifacts_dir, "state.json")), "delegate state artifact written");
     assert.ok(existsSync(join(resp.artifacts_dir, "observations.md")), "delegate observations artifact written");
+    const config = JSON.parse(readFileSync(join(resp.artifacts_dir, "config.json"), "utf8"));
+    assert.equal(config.timeout_minutes, 2);
 
     const argv = readFileSync(codexArgs, "utf8");
     assert.ok(!argv.includes("TASK-MARKER-DELEGATE"), "delegate task must go through stdin, not argv");

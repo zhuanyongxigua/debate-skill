@@ -44,12 +44,32 @@ test("delegate_request accepts a bounded once task when enabled", () => {
     providers: ["codex"],
     delegate: { enabled: true, modes: ["once"], maxMinutes: 20, maxWorkspaceWriteMinutes: 5 },
   });
-  const req = validateDelegateRequest({ ...base(), max_minutes: 7 }, allow);
+  const defaultedUnderLowCap = validateDelegateRequest(base(), allow);
+  assert.equal(defaultedUnderLowCap.maxMinutes, 20);
+
+  const allowHighCap = makeAllowlist(repo, {
+    providers: ["codex"],
+    delegate: { enabled: true, modes: ["once"], maxMinutes: 180, maxWorkspaceWriteMinutes: 30 },
+  });
+  const defaulted = validateDelegateRequest(base(), allowHighCap);
+  assert.equal(defaulted.maxMinutes, 30);
+
+  const req = validateDelegateRequest({ ...base(), timeout_minutes: 7 }, allow);
   assert.equal(req.id, "delegate-test");
   assert.equal(req.provider, "codex");
   assert.equal(req.capability, "read_only_review");
   assert.equal(req.maxMinutes, 7);
   assert.ok(req.requestDigest.startsWith("sha256:"));
+  const legacy = validateDelegateRequest({ ...base(), max_minutes: 8 }, allow);
+  assert.equal(legacy.maxMinutes, 8);
+  assert.throws(
+    () => validateDelegateRequest({ ...base(), timeout_minutes: 7, max_minutes: 8 }, allow),
+    /either timeout_minutes or max_minutes/,
+  );
+  assert.throws(
+    () => validateDelegateRequest({ ...base(), timeout_minutes: 21 }, allow),
+    /timeout_minutes outside/,
+  );
 });
 
 test("delegate_request accepts allowlisted provider aliases", () => {
@@ -94,7 +114,7 @@ test("delegate_request remote_ops is delegate-only, Claude-only, and separately 
   assert.deepEqual(req.remoteOps, { allowedBashPatterns: ["ssh:*", "scp:*"], injectSshAuthSock: true });
   assert.throws(
     () => validateDelegateRequest({ ...base(), provider: "claude", capability: "remote_ops", max_minutes: 6 }, enabled),
-    /remote_ops max_minutes/,
+    /remote_ops timeout_minutes/,
   );
 
   const codex = makeAllowlist(repo, {
@@ -145,7 +165,7 @@ test("delegate_request capabilities array supports explicit workspace_write + re
         { ...base(), provider: "claude", capabilities: ["workspace_write", "remote_ops"], max_minutes: 6 },
         comboAllowed,
       ),
-    /workspace_write max_minutes/,
+    /workspace_write timeout_minutes/,
   );
   assert.throws(
     () =>
@@ -167,7 +187,7 @@ test("delegate_request rejects argv/env-like unknown fields and write windows be
   assert.throws(() => validateDelegateRequest({ ...base(), env: { OPENAI_API_KEY: "x" } }, allow), /unknown delegate request field/);
   assert.throws(
     () => validateDelegateRequest({ ...base(), capability: "workspace_write", max_minutes: 6 }, allow),
-    /workspace_write max_minutes/,
+    /workspace_write timeout_minutes/,
   );
   assert.throws(
     () => validateDelegateRequest({ ...base(), mode: "supervised_loop" }, allow),
