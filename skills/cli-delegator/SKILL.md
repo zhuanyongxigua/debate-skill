@@ -12,6 +12,22 @@ skill merely because a task is long, expensive, parallelizable, or could benefit
 from another agent. In ordinary tasks, keep the work in the current session
 unless delegation was explicitly requested.
 
+For subagent delegation that needs tight in-session coupling (multi-turn
+iteration on the same worker, sharing the current harness/repo state, parallel
+worktree isolation, structured results landing directly in context), use the
+`tiered-delegation` skill instead — this skill outsources to EXTERNAL CLI
+agents via the daemon mailbox. Note both paths return results: a `once` run's
+result flows back via `responses/<run-id>.json` and is presented to the user;
+the real differentiators are the quota/account pool and coupling, not whether
+results return.
+
+Invocation routed by the user's standing delegation policy (the tiered-delegation
+routing rules in the user-level CLAUDE.md — e.g. "bounded one-shot task that
+doesn't need tight iteration", "preserve this session's quota", "cross-vendor
+second opinion via codex") COUNTS as explicit selection: the user pre-authorized
+those routes. The guard above still excludes invoking this skill for tasks
+outside those routes merely because they are long or parallelizable.
+
 If `cli-delegator` is explicitly selected, you must actually delegate by
 submitting a `delegate_request` to the daemon mailbox unless a concrete blocker
 prevents submission. Do not replace an explicit delegation request with a normal
@@ -119,6 +135,30 @@ the parent response. The daemon still enforces its allowlist caps:
 `delegate.max_workspace_write_minutes` for `workspace_write` and `remote_ops`.
 If the requested timeout exceeds those caps, report the allowlist blocker rather
 than silently lowering the user's requested duration.
+
+## Permission Blockers
+
+Even when the daemon allowlist and launch capability look correct, the child CLI
+can still get stuck behind provider-side permission prompts, model policy
+questions, tool approval limits, SSH restrictions, or sandbox behavior that the
+parent cannot answer interactively.
+
+When building the delegated `--task`, include an explicit escape hatch for
+permission loops. Tell the child that if it repeatedly hits the same permission
+blocker and cannot make progress without outside approval, it should stop
+retrying, return a concise blocker report, and include:
+
+- The exact operation or tool it attempted.
+- The permission or approval message it saw.
+- How many times or how long it retried.
+- The smallest capability, allowlist, credential, or human action needed to
+  continue.
+
+Do not ask the child to wait forever for an approval that may never arrive.
+Prefer a clear `blocked` result over a long silent run that only ends by daemon
+timeout. This guidance applies even for `workspace_write` or `remote_ops`;
+those capabilities reduce expected prompts but do not guarantee every provider
+or remote operation will be non-interactive.
 
 Compatibility: the old path `~/.agents/skills/azure-codex-observer/scripts/codex_observe.py` is kept as a symlink for existing automations.
 If you need to inspect or resume an older run created before this default changed, pass `--state-dir <cwd>/.codex-observe`.

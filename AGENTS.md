@@ -139,16 +139,17 @@ plus one optional execution adapter:
    profile are static operator config, and a request may only select the alias id,
    never supply argv flags or ad-hoc model/profile strings. Keep it that way.
    Child env is also rebuilt from a small allowlist. The only credential exception
-   is Claude provider env loaded by the runner itself from a regular-file
+   is provider env loaded by the runner itself from a regular-file
    `<repo>/.debate-agent/env` or `~/.config/debate-agent/env`, injecting only
-   `ANTHROPIC_*` keys into Claude launches (planner attempts and workers). Invalid
-   project env paths such as symlinks/directories are ignored and may fall back to
-   global config; a valid project file is not merged with global config. The only
-   other env exception is `remote_ops.inject_ssh_auth_sock`, which may re-inject
-   `SSH_AUTH_SOCK` into a Claude delegate child when the operator enables it in
-   allowlist config. Codex uses its normal CLI login/subscription config and must
-   not receive `OPENAI_*` secrets in worker env. Do not add request-controlled env
-   fields or generic shell sourcing.
+   provider-specific keys into matching launches: `ANTHROPIC_*` for Claude, and
+   `OPENAI_*` / `AZURE_OPENAI_*` for Codex. Invalid project env paths such as
+   symlinks/directories are ignored and may fall back to global config; a valid
+   project file is not merged with global config. The only other env exception is
+   `remote_ops.inject_ssh_auth_sock`, which may re-inject `SSH_AUTH_SOCK` into a
+   Claude delegate child when the operator enables it in allowlist config. Codex
+   must not inherit `OPENAI_*` from the parent process; use the daemon provider
+   env file instead. Do not add request-controlled env fields or generic shell
+   sourcing.
 6. **Two audit trails, linked by id only.** Protocol audit
    (`~/.debate-router/<run-id>/`) is the skill's; execution audit
    (`~/.debate-agent/<run-id|batch-id>/`) is the runner's. The runner never

@@ -40,7 +40,7 @@ const ENV_KEEP_EXACT = new Set([
 const ENV_KEEP_PREFIXES = ["LC_", "XDG_"];
 
 // Belt-and-suspenders denylist. The keep allowlist already excludes these, but
-// we drop them explicitly and report them. Claude provider env, if configured, is
+// we drop them explicitly and report them. Provider env, if configured, is
 // injected later from a service-level file rather than inherited from the parent.
 const ENV_SECRET_DENY = new Set([
   "ANTHROPIC_API_KEY",
@@ -50,6 +50,8 @@ const ENV_SECRET_DENY = new Set([
   "OPENAI_API_KEY",
   "OPENAI_BASE_URL",
   "OPENAI_ORGANIZATION",
+  "AZURE_OPENAI_API_KEY",
+  "AZURE_OPENAI_ENDPOINT",
   "GH_TOKEN",
   "GITHUB_TOKEN",
   "GITLAB_TOKEN",
@@ -102,16 +104,18 @@ export function buildChildEnv(
   return { env, stripped };
 }
 
-// Optional service-level Claude provider env. This is deliberately NOT shell
+// Optional service-level provider env. This is deliberately NOT shell
 // sourcing: the runner reads a small dotenv-like file and injects only
-// ANTHROPIC_* keys into Claude children. Project config wins over global config;
-// the two files are not merged. Codex uses its normal CLI login/subscription
-// configuration and does not receive OPENAI_* secrets in the worker environment.
+// provider-specific keys into matching children. Project config wins over global
+// config; the two files are not merged. Parent-process secrets are still
+// stripped; Codex receives OPENAI_* / AZURE_OPENAI_* only from this service-level
+// provider env file.
 export const PROVIDER_ENV_PROJECT = ".debate-agent/env";
 export const PROVIDER_ENV_GLOBAL = ".config/debate-agent/env";
 
 function isProviderEnvKey(provider: string, key: string): boolean {
   if (provider === "claude") return key.startsWith("ANTHROPIC_");
+  if (provider === "codex") return key.startsWith("OPENAI_") || key.startsWith("AZURE_OPENAI_");
   return false;
 }
 
@@ -392,12 +396,12 @@ export function buildChildLaunch(args: {
   let strippedEnvKeys = stripped;
   let providerEnvSource: string | null = null;
   let injectedEnvKeys: string[] = [];
-  if (baseProvider === "claude") {
+  if (baseProvider === "claude" || baseProvider === "codex") {
     const providerEnv = loadProviderEnv(baseProvider, cwd, baseEnv);
     Object.assign(env, providerEnv.env);
     providerEnvSource = providerEnv.source;
     injectedEnvKeys = providerEnv.keys;
-    if (remoteOpsRequested && remoteOps?.injectSshAuthSock && baseEnv.SSH_AUTH_SOCK) {
+    if (baseProvider === "claude" && remoteOpsRequested && remoteOps?.injectSshAuthSock && baseEnv.SSH_AUTH_SOCK) {
       env.SSH_AUTH_SOCK = baseEnv.SSH_AUTH_SOCK;
       injectedEnvKeys = [...new Set([...injectedEnvKeys, "SSH_AUTH_SOCK"])].sort();
       strippedEnvKeys = strippedEnvKeys.filter((key) => key !== "SSH_AUTH_SOCK");

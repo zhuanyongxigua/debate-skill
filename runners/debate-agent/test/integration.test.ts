@@ -283,7 +283,7 @@ test("claude child gets project provider env before global provider env", () => 
   }
 });
 
-test("codex child does not receive OpenAI provider env or parent OpenAI key", () => {
+test("codex child receives private OpenAI provider env but not parent OpenAI key", () => {
   const ctx = setup();
   try {
     makeStub(ctx.binDir, "codex", "#!/usr/bin/env bash\nenv\n");
@@ -298,12 +298,12 @@ test("codex child does not receive OpenAI provider env or parent OpenAI key", ()
     const proc = runCli(ctx, ["--config", ctx.cfg, "run", "--request", req], cliEnv(ctx, { OPENAI_API_KEY: "parent-openai" }));
     assert.equal(proc.status, 0, proc.stderr);
     const result = JSON.parse(proc.stdout);
-    assert.deepEqual(result.injected_env_keys, []);
-    assert.equal(result.provider_env_source, null);
+    assert.deepEqual(result.injected_env_keys, ["OPENAI_API_KEY"]);
+    assert.equal(result.provider_env_source, join(ctx.root, ".config", "debate-agent", "env"));
     assert.ok(result.stripped_env_keys.includes("OPENAI_API_KEY"));
 
     const childEnv = readFileSync(result.stdout_path, "utf8");
-    assert.ok(!childEnv.includes("openai-global"));
+    assert.match(childEnv, /^OPENAI_API_KEY=openai-global$/m);
     assert.ok(!childEnv.includes("parent-openai"));
     assert.ok(!childEnv.includes("anthropic-global"));
   } finally {

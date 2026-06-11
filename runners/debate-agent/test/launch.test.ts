@@ -25,6 +25,7 @@ test("secrets dropped, PATH kept", () => {
     XDG_CONFIG_HOME: "/Users/me/.config",
     ANTHROPIC_API_KEY: "sk-secret",
     OPENAI_API_KEY: "sk-secret2",
+    AZURE_OPENAI_API_KEY: "az-secret",
     GH_TOKEN: "ghp_x",
     SSH_AUTH_SOCK: "/tmp/agent.sock",
     CLAUDE_CONFIG_DIR: "/Users/me/.claude-other",
@@ -35,12 +36,12 @@ test("secrets dropped, PATH kept", () => {
   assert.equal(env.HOME, "/Users/me");
   assert.ok("LC_CTYPE" in env);
   assert.ok("XDG_CONFIG_HOME" in env);
-  for (const secret of ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GH_TOKEN", "SSH_AUTH_SOCK", "CLAUDE_CONFIG_DIR"]) {
+  for (const secret of ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AZURE_OPENAI_API_KEY", "GH_TOKEN", "SSH_AUTH_SOCK", "CLAUDE_CONFIG_DIR"]) {
     assert.ok(!(secret in env), `${secret} leaked into child env`);
   }
   // unlisted non-secret also not copied (allowlist, not denylist)
   assert.ok(!("RANDOM_UNLISTED" in env));
-  for (const secret of ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GH_TOKEN", "SSH_AUTH_SOCK"]) {
+  for (const secret of ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AZURE_OPENAI_API_KEY", "GH_TOKEN", "SSH_AUTH_SOCK"]) {
     assert.ok(stripped.includes(secret));
   }
 });
@@ -99,7 +100,7 @@ test("claude provider env comes from project file before global file", () => {
   });
 });
 
-test("claude provider env falls back to global file and is not injected into codex", () => {
+test("provider env falls back to global file and is filtered by provider", () => {
   withTempDir((root) => {
     const repo = join(root, "repo");
     const home = join(root, "home");
@@ -107,7 +108,7 @@ test("claude provider env falls back to global file and is not injected into cod
     mkdirSync(join(home, ".config", "debate-agent"), { recursive: true });
     writeFileSync(
       join(home, ".config", "debate-agent", "env"),
-      "ANTHROPIC_MODEL=claude-test\nOPENAI_API_KEY=openai-test\n",
+      "ANTHROPIC_MODEL=claude-test\nOPENAI_API_KEY=openai-test\nAZURE_OPENAI_ENDPOINT=https://azure.example\n",
     );
 
     const claude = buildChildLaunch({
@@ -131,10 +132,11 @@ test("claude provider env falls back to global file and is not injected into cod
       prompt: "P",
       baseEnv: { PATH: "/usr/bin", HOME: home },
     });
-    assert.ok(!("OPENAI_API_KEY" in codex.env));
+    assert.equal(codex.env.OPENAI_API_KEY, "openai-test");
+    assert.equal(codex.env.AZURE_OPENAI_ENDPOINT, "https://azure.example");
     assert.ok(!("ANTHROPIC_MODEL" in codex.env));
-    assert.equal(codex.providerEnvSource, null);
-    assert.deepEqual(codex.injectedEnvKeys, []);
+    assert.equal(codex.providerEnvSource, join(home, ".config", "debate-agent", "env"));
+    assert.deepEqual(codex.injectedEnvKeys, ["AZURE_OPENAI_ENDPOINT", "OPENAI_API_KEY"]);
   });
 });
 

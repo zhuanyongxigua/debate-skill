@@ -698,21 +698,22 @@ Tuning (allowlist, hot-reloaded per request):
    …) is copied. Known secret-bearing variables (`ANTHROPIC_API_KEY`,
    `OPENAI_API_KEY`, `GH_TOKEN`, `AWS_*`, `SSH_AUTH_SOCK`, …) are dropped from the
    parent environment.
-   Claude has one explicit service-level exception: after stripping parent env,
-   the runner may inject `ANTHROPIC_*` keys from a dotenv-style provider env file.
-   It reads a regular-file `<repo>/.debate-agent/env` first; if that file is
-   absent or invalid (for example a symlink or directory), it reads
+   Provider env has one explicit service-level exception: after stripping parent
+   env, the runner may inject provider-specific keys from a dotenv-style provider
+   env file: `ANTHROPIC_*` for Claude, and `OPENAI_*` / `AZURE_OPENAI_*` for
+   Codex. It reads a regular-file `<repo>/.debate-agent/env` first; if that file
+   is absent or invalid (for example a symlink or directory), it reads
    `~/.config/debate-agent/env`; the files are not merged. A valid project file
    with zero allowed keys still suppresses the global fallback. This applies to
-   every Claude launch, including planner attempts and workers. This is not shell
-   sourcing, so `source ~/.zshrc` is not part of daemon configuration. Unknown
-   keys, `PATH`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `OPENAI_*`, and other
-   non-`ANTHROPIC_*` entries are ignored. `remote_ops` has a second explicit
-   exception only when `remote_ops.inject_ssh_auth_sock` is true: `SSH_AUTH_SOCK`
-   may be re-injected into the Claude child so the static `Bash(ssh:*)` /
-   `Bash(scp:*)` style tools can use the operator's SSH agent. Worker
-   result/audit records only the source path and injected key names, never
-   values. Codex/Copilot still use the rebuilt allowlisted env only.
+   matching provider launches, including planner attempts and workers. This is
+   not shell sourcing, so `source ~/.zshrc` is not part of daemon configuration.
+   Unknown keys, `PATH`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, and keys for other
+   providers are ignored. `remote_ops` has a second explicit exception only when
+   `remote_ops.inject_ssh_auth_sock` is true: `SSH_AUTH_SOCK` may be re-injected
+   into the Claude child so the static `Bash(ssh:*)` / `Bash(scp:*)` style tools
+   can use the operator's SSH agent. Worker result/audit records only the source
+   path and injected key names, never values. Copilot still uses the rebuilt
+   allowlisted env only.
 4. **Process-group isolation.** Each child runs in its own process group
    (`detached`). On timeout the group gets `SIGTERM`, then `SIGKILL` after a 10s
    grace period, so no orphan model processes survive.
@@ -808,20 +809,24 @@ through it, all of the following must be in place. This is the full list.
 3. **Codex Rules** at `~/.codex/rules/default.rules` allowing **only** the fixed
    runner path (see Install). `decision = "prompt"` asks each time;
    `decision = "allow"` is unattended. Do not allow `bash`/`node`/`claude`/`codex`.
-4. **Accounts / provider env**: `codex` uses its default account config
-   (`~/.codex`) and is not given `OPENAI_*` env secrets. `claude` may use its
-   default account config (`~/.claude`) or a service-level provider env file. Prefer
-   `~/.config/debate-agent/env` for personal/global Claude settings, and
-   a regular-file `<repo>/.debate-agent/env` only for project-specific overrides.
-   Claude receives only `ANTHROPIC_*` for both planner attempts and workers. Keep
-   env files out of git and `chmod 600` them when they contain tokens.
+4. **Accounts / provider env**: `codex` normally uses its default account config
+   (`~/.codex`), but an allowlisted Codex profile may require service-level
+   `OPENAI_*` or `AZURE_OPENAI_*` keys from the daemon provider env file.
+   `claude` may use its default account config (`~/.claude`) or
+   `ANTHROPIC_*` from the same provider env file. Prefer
+   `~/.config/debate-agent/env` for personal/global settings, and a regular-file
+   `<repo>/.debate-agent/env` only for project-specific overrides. Parent-process
+   secrets are still stripped; do not rely on shell env inheritance. Keep env
+   files out of git and `chmod 600` them when they contain tokens.
 
-   Example Claude provider env file:
+   Example provider env file:
 
    ```dotenv
    ANTHROPIC_BASE_URL=https://api.example.invalid
    ANTHROPIC_API_KEY=sk-...
    ANTHROPIC_MODEL=claude-sonnet-4-5
+   OPENAI_API_KEY=sk-...
+   AZURE_OPENAI_ENDPOINT=https://example.openai.azure.com
    ```
 5. **Re-install after updates**: the default install is a frozen snapshot, so a
    `git pull` / edit does not take effect until you re-run `install.sh`.
