@@ -37,6 +37,15 @@ export interface Plan {
 // does NOT encode the policy/semantic checks (provider allowlist, unique ids
 // across phases, `{{id.output}}` referencing an earlier phase, answer_item
 // validity) — a JSON Schema can't express those; validatePlan does, with retry.
+//
+// IMPORTANT: codex `--output-schema` forwards this verbatim to the OpenAI API as a
+// strict `response_format` schema, whose validator requires EVERY property of an
+// object to appear in that object's `required` array (claude `--json-schema` is
+// lenient about this). So an "optional" field is expressed the OpenAI way — listed
+// in `required` but with a nullable type (`["string", "null"]`), and validatePlan
+// treats a `null` effort as "no override". Marking `effort` optional-by-omission
+// instead makes the codex planner fail EVERY call with HTTP 400 invalid_json_schema
+// ("'required' ... Missing 'effort'"). Keep every property listed in its `required`.
 export const PLAN_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -57,12 +66,14 @@ export const PLAN_JSON_SCHEMA = {
             items: {
               type: "object",
               additionalProperties: false,
-              required: ["id", "provider", "prompt"],
+              required: ["id", "provider", "prompt", "effort"],
               properties: {
                 id: { type: "string" },
                 provider: { type: "string" },
                 prompt: { type: "string" },
-                effort: { type: "string" },
+                // Optional override expressed the OpenAI strict way: required key,
+                // nullable type. `null` => no override (validatePlan drops it).
+                effort: { type: ["string", "null"] },
               },
             },
           },
@@ -188,8 +199,12 @@ export function validatePlan(raw: unknown, allow: Allowlist): Plan {
         bad(`phases[${pi}].launches[${li}].prompt exceeds max_prompt_chars (${allow.maxPromptChars})`);
       }
 
+      // `null` means "no override" — the structured-output schema requires the
+      // `effort` key, so a CLI with nothing to override emits `null` (codex always
+      // does; see PLAN_JSON_SCHEMA). Treat it the same as an omitted field and drop
+      // it below. Only a NON-null effort is validated against the provider's set.
       const effort = launch.effort;
-      if (effort !== undefined) {
+      if (effort !== undefined && effort !== null) {
         const baseProvider = resolveProvider(allow, provider as string).base;
         const allowed = validEffortsFor(baseProvider);
         if (typeof effort !== "string" || !allowed.includes(effort)) {

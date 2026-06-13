@@ -8,7 +8,7 @@
 // here (code-driven retry) in a way it is not in the sandboxed parent.
 
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -86,7 +86,7 @@ const PLAN_FORMAT = `Output ONLY one JSON object — no prose, no markdown, no c
   "complexity": "simple|complex",
   "phases": [
     { "name": "<label, e.g. proposal_generation|critique|cross_review|arbitration>",
-      "launches": [ { "id": "<unique slug, e.g. P1>", "provider": "<one provider id from the request provider list>", "prompt": "<full self-contained instruction for this worker>", "effort": "<optional thinking override>" } ] }
+      "launches": [ { "id": "<unique slug, e.g. P1>", "provider": "<one provider id from the request provider list>", "prompt": "<full self-contained instruction for this worker>", "effort": <thinking override string, or null for no override> } ] }
   ],
   "answer_item": "<the id of the launch whose output IS the final answer>"
 }
@@ -94,14 +94,14 @@ Rules you MUST follow:
 - "complexity": FIRST judge the task. SIMPLE = a focused question, a small/single-area change, or a clearly-scoped review. COMPLEX = broad, contentious, large, or spanning multiple subsystems.
   - If SIMPLE, emit the FAST workflow (keep it short, this is the whole point):
       Phase 1 "proposal_generation": TWO independent reviewers in PARALLEL; Phase 2 "arbitration": ONE arbiter that reads {{P1.output}} and {{P2.output}} and writes the final answer, noting any disagreement. answer_item = that arbiter.
-      Use the request provider order positionally: P1 = providers[0], P2 = providers[1] if present otherwise providers[0], A1 = providers[2] if present otherwise providers[0]. Ignore providers after the first three for this simple shape. For example, codex-only means P1/P2/A1 are all codex with no effort override unless you deliberately set one.
+      Use the request provider order positionally: P1 = providers[0], P2 = providers[1] if present otherwise providers[0], A1 = providers[2] if present otherwise providers[0]. Ignore providers after the first three for this simple shape. For example, codex-only means P1/P2/A1 are all codex with effort null unless you deliberately set one.
       Do NOT add separate critique / cross-review phases for a simple task.
   - If COMPLEX, design the full bounded debate (proposal_generation -> normalization -> critique -> cross_review -> arbitration), allocating providers and optional effort per the task.
-- "effort" is OPTIONAL. Omit it to let the child CLI's own profile/config decide:
-    codex: prefer omitting it so the user's Codex profile controls model/reasoning/service tier. Set low|medium|high|xhigh only when the task truly needs an explicit override.
-    claude: omitted means the runner uses high. Set xhigh or max ONLY when that launch needs deeper reasoning.
-    copilot: omit it; the runner ignores effort for copilot.
-    valid values — claude: low|medium|high|xhigh|max ; codex: low|medium|high|xhigh ; copilot: low|medium|high|xhigh|max.
+- "effort" is a REQUIRED key, but use null for "no override" (let the child CLI's own profile/config decide):
+    codex: prefer null so the user's Codex profile controls model/reasoning/service tier. Set low|medium|high|xhigh only when the task truly needs an explicit override.
+    claude: null means the runner uses high. Set xhigh or max ONLY when that launch needs deeper reasoning.
+    copilot: use null; the runner ignores effort for copilot.
+    valid values — null, or claude: low|medium|high|xhigh|max ; codex: low|medium|high|xhigh ; copilot: low|medium|high|xhigh|max.
 - Provider capabilities (allocate accordingly):
     claude worker = can Read/Grep/Glob and run READ-ONLY git (git diff/log/show/status/blame), but NOT arbitrary shell.
     codex worker = read-only OS sandbox; can run any read-only command. Give tasks needing shell beyond git (build, tests, broad inspection) to codex.
@@ -178,6 +178,34 @@ export function extractClaudeStructuredOutput(stdout: string): string {
  * `structured_output`); codex `--output-schema <file>` with the final message
  * captured to `-o <file>`. validatePlan + retry remain the semantic second line.
  */
+/** Last `n` chars of a trimmed string — the END of CLI stderr holds the real
+ * error (e.g. codex prints a startup banner + skill warnings first, then the
+ * fatal API error LAST), so a head slice would show noise, not the cause. */
+function stderrTail(stderr: string, n = 600): string {
+  const s = (stderr || "").trim();
+  return s.length > n ? `…${s.slice(-n)}` : s;
+}
+
+/** Append a failing planner attempt's FULL stderr to its stream file so the real
+ * cause is preserved on disk (the planner path writes no execution audit, and the
+ * stream sink otherwise only captures stdout — which is empty when the child dies
+ * before producing output, e.g. a codex --output-schema 400). Best-effort: a sink
+ * problem must never mask the original failure. No-op without a stream path. */
+function persistPlannerStderr(
+  streamPath: string | undefined,
+  provider: string,
+  exec: { status: string; errorCategory: string | null; returncode?: number | null; stderr: string },
+): void {
+  if (!streamPath) return;
+  try {
+    const rc = exec.returncode ?? "null";
+    const header = `\n[planner failed on ${provider}: status=${exec.status} category=${exec.errorCategory ?? "null"} rc=${rc}] stderr:\n`;
+    appendFileSync(streamPath, header + (exec.stderr || "(empty)") + "\n", { mode: 0o600 });
+  } catch {
+    /* best effort — never let a sink problem hide the real error */
+  }
+}
+
 export function makeCliPlanner(
   repo: string,
   opts: {
@@ -219,7 +247,14 @@ export function makeCliPlanner(
     // error, ...) marks this provider exhausted so the next plan attempt rotates to a
     // fallback. Throwing lets planWithRetry retry with the rotated provider.
     // Branch on execution status only, never on the planner's text.
-    const fail = (exec: { status: string; errorCategory: string | null; stderr: string; stdout: string }): never => {
+    const fail = (exec: { status: string; errorCategory: string | null; returncode?: number | null; stderr: string; stdout: string }): never => {
+      // Preserve the child's real error (full to the stream file, a tail in the
+      // thrown message that planWithRetry logs) BEFORE rotating — otherwise the
+      // only trace is a generic "rotating to a fallback provider" line, which is
+      // exactly how a codex --output-schema 400 stayed invisible.
+      persistPlannerStderr(streamPath, provider, exec);
+      const tail = stderrTail(exec.stderr);
+      const detail = tail ? `: ${tail}` : "";
       const patterns = opts.rateLimitPatterns?.[resolvedProvider.base] ?? [];
       const limited =
         classifyRateLimit(exec.stderr, exec.stdout, patterns);
@@ -227,9 +262,9 @@ export function makeCliPlanner(
       if (isFallbackEligible(exec.status, category)) {
         exhausted.add(provider);
         const reason = limited ? "rate-limited" : `failed (${category})`;
-        throw new Error(`planner CLI ${reason} on ${provider}; rotating to a fallback provider`);
+        throw new Error(`planner CLI ${reason} on ${provider}${detail}; rotating to a fallback provider`);
       }
-      throw new Error(`planner CLI ${exec.status} (${category}): ${(exec.stderr || "").slice(0, 300)}`);
+      throw new Error(`planner CLI ${exec.status} (${category}) on ${provider}${detail}`);
     };
 
     if (resolvedProvider.base === "codex") {

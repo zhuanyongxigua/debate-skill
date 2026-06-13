@@ -3,6 +3,8 @@
 // provider failures — driven by an injected `exec`, so no real CLI runs.
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import { ChildLaunch } from "../src/launch";
@@ -256,6 +258,63 @@ test("planner resolves provider aliases before launching structured-output CLI",
     assert.equal(seen[0]!.argv[0], "codex");
     assert.equal(seen[0]!.argv[seen[0]!.argv.indexOf("--model") + 1], "gpt-5.2-codex");
     assert.equal(seen[0]!.argv[seen[0]!.argv.indexOf("--profile") + 1], "azure");
+  } finally {
+    cleanup(root);
+  }
+});
+
+// --- the real child error must surface (not just "rotating to a fallback") ------
+// Regression for the codex --output-schema 400 that died silently: the daemon
+// reported "all planner providers are unavailable (codex)" with a 0-byte stream
+// and no trace of the actual HTTP 400 invalid_json_schema. A planner launch failure
+// must (a) carry the child's real stderr into the logged/thrown message, and (b)
+// persist the FULL stderr to the planner stream file.
+
+const SCHEMA_400_STDERR =
+  'OpenAI Codex v0.139.0\n--------\nworkdir: /x\n--------\nERROR: {"type":"error","error":' +
+  '{"code":"invalid_json_schema","message":"Invalid schema for response_format: ' +
+  "'required' is required to be ... Missing 'effort'.\"},\"status\":400}";
+const schema400 = (): ExecResult => ({
+  status: "error",
+  errorCategory: "nonzero_exit",
+  returncode: 1,
+  elapsedSeconds: 0,
+  stdout: "",
+  stderr: SCHEMA_400_STDERR,
+});
+
+test("a failing planner attempt surfaces the child's real stderr in the logged message", async () => {
+  const root = makeTempDir();
+  try {
+    const allow = makeAllowlist(root);
+    const exec = async (_l: ChildLaunch): Promise<ExecResult> => schema400();
+    const planner = makeCliPlanner(root, { providers: ["codex"], allow, rateLimitPatterns: RL_PATTERNS, exec });
+    const logs: string[] = [];
+    await assert.rejects(
+      () => planWithRetry(plannerReq(root), allow, planner, 4, (l) => logs.push(l)),
+      /unavailable/,
+    );
+    const joined = logs.join("\n");
+    // the per-attempt failure line carries the END of the child's stderr (the cause)
+    assert.match(joined, /invalid_json_schema/);
+    assert.match(joined, /Missing 'effort'/);
+  } finally {
+    cleanup(root);
+  }
+});
+
+test("a failing planner attempt persists the full child stderr to its stream file", async () => {
+  const root = makeTempDir();
+  try {
+    const allow = makeAllowlist(root);
+    const exec = async (_l: ChildLaunch): Promise<ExecResult> => schema400();
+    // streamDir set => the (otherwise 0-byte) planner-1.log must now hold the error.
+    const planner = makeCliPlanner(root, { providers: ["codex"], allow, streamDir: root, rateLimitPatterns: RL_PATTERNS, exec });
+    await assert.rejects(() => planWithRetry(plannerReq(root), allow, planner, 4), /unavailable/);
+    const logged = readFileSync(join(root, "planner-1.log"), "utf8");
+    assert.match(logged, /status=error category=nonzero_exit rc=1/);
+    assert.match(logged, /invalid_json_schema/);
+    assert.match(logged, /Missing 'effort'/);
   } finally {
     cleanup(root);
   }

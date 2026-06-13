@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { Allowlist } from "../src/allowlist";
-import { PlanInvalid, parsePlan, placeholderRefs, substitute, validatePlan } from "../src/plan";
+import { PLAN_JSON_SCHEMA, PlanInvalid, parsePlan, placeholderRefs, substitute, validatePlan } from "../src/plan";
 
 const allow: Allowlist = {
   repoRoots: [],
@@ -144,16 +144,46 @@ test("validatePlan allows optional per-launch effort, rejects bad effort and unk
     () => validatePlan({ phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", effort: "xhigh", prompt: "x" }] }], answer_item: "P1" }, allow),
     /complexity/,
   );
-  assert.throws(
-    () => validatePlan({ complexity: "simple", phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "x", effort: null }] }], answer_item: "P1" }, allow),
-    /effort .* not allowed/,
+  // `effort: null` means "no override" — the structured-output schema requires the
+  // key, so codex emits null when it has nothing to override. It must validate and
+  // be dropped (not rejected), or every codex plan would fail validation.
+  const nullEffort = validatePlan(
+    { complexity: "simple", phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "x", effort: null }] }], answer_item: "P1" },
+    allow,
   );
+  assert.equal(nullEffort.phases[0]!.launches[0]!.effort, undefined);
   // 'max' is NOT valid for codex
   const badCodex = { complexity: "simple", phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "x", effort: "max" }] }], answer_item: "P1" };
   assert.throws(() => validatePlan(badCodex, allow), /effort .* not allowed for provider "codex"/);
   // the retired per-launch `fast` field is now an UNKNOWN field => rejected.
   const badFast = { complexity: "simple", phases: [{ name: "p", launches: [{ id: "P1", provider: "codex", prompt: "x", effort: "xhigh", fast: true }] }], answer_item: "P1" };
   assert.throws(() => validatePlan(badFast, allow), /unknown field/);
+});
+
+test("PLAN_JSON_SCHEMA is a valid OpenAI strict response_format (codex --output-schema)", () => {
+  // codex forwards this schema to the OpenAI API, whose strict validator requires
+  // EVERY object property to appear in that object's `required` array. A miss (e.g.
+  // optional-by-omission `effort`) makes every codex planner call fail with HTTP 400
+  // invalid_json_schema. Walk the schema and assert the rule everywhere.
+  const offenders: string[] = [];
+  const walk = (node: unknown, path: string): void => {
+    if (!node || typeof node !== "object") return;
+    const obj = node as Record<string, unknown>;
+    if (obj.type === "object" && obj.properties && typeof obj.properties === "object") {
+      const props = Object.keys(obj.properties as Record<string, unknown>);
+      const required = Array.isArray(obj.required) ? (obj.required as string[]) : [];
+      for (const key of props) {
+        if (!required.includes(key)) offenders.push(`${path}.${key}`);
+      }
+      for (const key of props) walk((obj.properties as Record<string, unknown>)[key], `${path}.${key}`);
+    }
+    if (obj.items) walk(obj.items, `${path}[]`);
+  };
+  walk(PLAN_JSON_SCHEMA, "plan");
+  assert.deepEqual(offenders, [], `schema properties missing from their object's "required": ${offenders.join(", ")}`);
+  // and the optional override must stay nullable so "no override" is expressible.
+  const effort = (PLAN_JSON_SCHEMA as any).properties.phases.items.properties.launches.items.properties.effort;
+  assert.deepEqual(effort.type, ["string", "null"]);
 });
 
 test("validatePlan checks effort against alias base provider", () => {
