@@ -143,7 +143,18 @@ function codexEventText(ev: Record<string, unknown>): string | null {
     const obj = candidate as Record<string, unknown>;
     const role = typeof obj.role === "string" ? obj.role : "";
     const itemType = typeof obj.type === "string" ? obj.type : "";
-    if (role === "assistant" || itemType === "message" || /message|result|final|response/.test(type)) {
+    // Codex >=0.139 `exec --json` uses the "thread/item" stream: the final answer
+    // is `{"type":"item.completed","item":{"type":"agent_message","text":...}}`.
+    // The outer event type is "item.completed" (matches none of the regex words),
+    // and the item type is "agent_message" (not "message"), so without recognizing
+    // it here extraction falls back to RAW stdout — dumping the whole 100s-of-KB
+    // JSONL into the next phase's prompt and blowing past max_prompt_chars.
+    if (
+      role === "assistant" ||
+      itemType === "message" ||
+      itemType === "agent_message" ||
+      /message|result|final|response/.test(type)
+    ) {
       const text = collectContentText(obj).join("");
       if (text) return text;
     }

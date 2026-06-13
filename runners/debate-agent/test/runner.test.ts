@@ -47,6 +47,24 @@ test("extractCodexJsonResult: final JSONL answer, else raw fallback", () => {
   assert.equal(extractCodexJsonResult("CWD=/r\nARGS=x\nSTDIN=y"), "CWD=/r\nARGS=x\nSTDIN=y");
 });
 
+test("extractCodexJsonResult: codex >=0.139 thread/item stream (agent_message)", () => {
+  // Real codex 0.139 `exec --json` shape. The FINAL answer is the last
+  // item.completed/agent_message; earlier agent_messages are progress narration,
+  // and command_execution + turn.completed events surround it as noise. Without
+  // recognizing this the extractor returned the whole stream -> later debate
+  // phases blew past max_prompt_chars and the run degraded.
+  const stream = [
+    '{"type":"thread.started","thread_id":"t1"}',
+    '{"type":"turn.started"}',
+    '{"type":"item.started","item":{"id":"item_0","type":"agent_message"}}',
+    '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"first I will read the files"}}',
+    '{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"sed -n 1,5p f","aggregated_output":"...big output..."}}',
+    '{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"THE FINAL ANSWER"}}',
+    '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}',
+  ].join("\n");
+  assert.equal(extractCodexJsonResult(stream), "THE FINAL ANSWER");
+});
+
 let root: string;
 let repo: string;
 let binDir: string;
