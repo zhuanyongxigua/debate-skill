@@ -200,6 +200,7 @@ test("codex argv uses stdin dash and cwd", () => {
   });
   assert.equal(launch.argv[0], "codex");
   assert.ok(launch.argv.includes("exec"));
+  assert.ok(launch.argv.includes("--skip-git-repo-check"));
   assert.ok(launch.argv.includes('approval_policy="never"'));
   assert.ok(launch.argv.includes("--json"));
   assert.ok(launch.argv.includes("--sandbox"));
@@ -310,6 +311,7 @@ test("workspace_write: codex writable sandbox with network", () => {
   });
   const i = launch.argv.indexOf("--sandbox");
   assert.equal(launch.argv[i + 1], "workspace-write");
+  assert.ok(launch.argv.includes("--skip-git-repo-check"));
   assert.ok(launch.argv.some((a) => a.includes("sandbox_workspace_write.network_access=true")));
 });
 

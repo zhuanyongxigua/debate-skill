@@ -291,11 +291,12 @@ function buildCodexArgv(
       "-c",
       "sandbox_workspace_write.network_access=true",
       "exec",
+      "--skip-git-repo-check",
       "--sandbox",
       "workspace-write",
     );
   } else {
-    argv.push("exec", "--sandbox", "read-only");
+    argv.push("exec", "--skip-git-repo-check", "--sandbox", "read-only");
   }
   // Planner only: constrain the final message to a JSON Schema file and capture
   // it to an output file (the runner reads that file back as the plan). Workers
