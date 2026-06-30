@@ -825,6 +825,57 @@ would make concurrent calls counterproductive. Record the reason in
   heterogeneous debates should re-run the same task on another selected engine.
   Only a launch with no un-rate-limited selected engine left degrades.
 
+## Cancelling a Running Debate
+
+To cancel a debate that has already been submitted (Mode 2) and is still
+running, use the `cancel` subcommand of `cli_delegate.py` pointed at the
+debate-router mailbox.
+
+The debate id is the `<YYYYMMDD-HHMMSS-slug>` you chose in Step 1 of Mode 2.
+
+```shell
+python3 ~/.agents/skills/cli-delegator/scripts/cli_delegate.py cancel \
+  --state-dir ~/.debate-router \
+  --run-id 20240101-120000-my-debate
+```
+
+You may optionally include a reason:
+
+```shell
+python3 ~/.agents/skills/cli-delegator/scripts/cli_delegate.py cancel \
+  --state-dir ~/.debate-router \
+  --run-id 20240101-120000-my-debate \
+  --reason "requirement changed, resubmitting"
+```
+
+This writes a cancel marker to `~/.debate-router/cancel/20240101-120000-my-debate.json`.
+The debate-agent daemon picks it up on its next poll tick (at most about one
+second), sends SIGTERM to the running workers, waits up to 10 seconds, then
+SIGKILL, and writes a `status: "cancelled"` entry to
+`~/.debate-router/responses/20240101-120000-my-debate.json`.
+
+Key points:
+
+- The run-id must be a valid slug (starts with a letter or digit, contains only
+  letters, digits, dots, underscores, or hyphens). The script validates this
+  and rejects anything else.
+- Cancellation takes effect within the next daemon poll tick; not instantaneous.
+- Any intermediate debate artifacts already written (worker outputs, sidecar,
+  audit files) are preserved in the run directory after cancellation.
+- After cancellation the response status is `cancelled`. If you were polling for
+  the response in Step 2 of Mode 2 and see `status: "cancelled"`, report that
+  to the user instead of continuing to poll.
+
+If `cli_delegate.py` is not available, you can write the marker file directly
+with a Bash one-liner (replace the id with your actual debate id):
+
+```bash
+mkdir -p ~/.debate-router/cancel && echo '{}' > ~/.debate-router/cancel/20240101-120000-my-debate.json
+```
+
+The daemon only reads the filename for the id; file content is optional
+(an empty object is sufficient).
+
 ## References
 
 - Read `references/debate-agent-policy.md` when external CLI agents,

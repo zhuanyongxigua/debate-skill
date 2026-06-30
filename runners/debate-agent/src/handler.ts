@@ -17,6 +17,10 @@ export interface HandlerRunContext {
   resume: boolean;
   streamDir: string;
   log: (line: string) => void;
+  // Optional cancellation signal. When aborted, the handler should stop
+  // launching new work and return a cancelled response. The abort is triggered
+  // externally (by the daemon's cancel-dir scan), never from within the handler.
+  signal?: AbortSignal;
 }
 
 export interface MailboxHandler<RequestT, ResponseT> {

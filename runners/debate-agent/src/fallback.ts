@@ -8,6 +8,11 @@ export function isFallbackEligible(status: string, errorCategory: string | null 
   if (status === "completed") return false;
   if (status === "rejected") return false;
   if (errorCategory === "rejected") return false;
+  // A cancelled result means the whole debate is being aborted — do not attempt
+  // a fallback provider, because the signal is already set and the next attempt
+  // would also be cancelled immediately.
+  if (status === "cancelled") return false;
+  if (errorCategory === "cancelled") return false;
   return true;
 }
 

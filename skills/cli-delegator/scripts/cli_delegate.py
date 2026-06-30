@@ -8,6 +8,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -224,6 +225,49 @@ def tail(args: argparse.Namespace) -> int:
     return tail_file(targets[args.file], args.lines, args.follow)
 
 
+# Slug regex: must start with alphanumeric, contain only [A-Za-z0-9._-], no slashes or path separators.
+# This mirrors the daemon's SLUG_RE EXACTLY (including the 1+128 length bound) so an id the
+# client accepts is the same set the daemon's cancelRequestIds() will act on — otherwise an
+# over-long id would write a marker the daemon silently ignores (cancel never fires).
+_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}$")
+
+
+def validate_slug(run_id: str) -> None:
+    """Raise SystemExit if run_id is not a safe slug (mirrors daemon SLUG_RE)."""
+    if not _SLUG_RE.match(run_id):
+        raise SystemExit(
+            f"Invalid run-id '{run_id}': must start with a letter or digit and contain only "
+            "letters, digits, dots, underscores, or hyphens (no slashes or path separators)."
+        )
+
+
+def cancel(args: argparse.Namespace) -> int:
+    """Write a cancel marker to <mailbox_root>/cancel/<run_id>.json.
+
+    The daemon scans cancel/ each poll tick, sends SIGTERM to the matching
+    child process (then SIGKILL after a 10-second grace period), and writes a
+    status:cancelled response.  The caller only needs to drop this file.
+    """
+    run_id: str = args.run_id
+    validate_slug(run_id)
+
+    root = mailbox_root_from_args(args)
+    cancel_dir = root / "cancel"
+    cancel_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        cancel_dir.chmod(0o700)
+    except OSError:
+        pass
+
+    marker_path = cancel_dir / f"{run_id}.json"
+    payload: dict = {"run_id": run_id, "requested_at": now()}
+    if getattr(args, "reason", None):
+        payload["reason"] = args.reason
+    write_json_atomic(marker_path, payload)
+    print(f"cancel requested for {run_id} -> {marker_path} (daemon will act within one poll tick)")
+    return 0
+
+
 def daemon_control_unimplemented(command: str) -> int:
     raise SystemExit(
         f"{command} now uses the daemon mailbox, but daemon-side supervised_loop/control is not implemented yet. "
@@ -317,6 +361,23 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p_tail.add_argument("--lines", type=int, default=40)
     p_tail.add_argument("--follow", action="store_true")
     p_tail.set_defaults(func=tail)
+
+    p_cancel = sub.add_parser(
+        "cancel",
+        help="Request cancellation of a running daemon task by writing a cancel marker file.",
+    )
+    p_cancel.add_argument("--cwd", default=".")
+    p_cancel.add_argument(
+        "--state-dir",
+        default=DEFAULT_STATE_DIR,
+        help=(
+            "Delegation mailbox/state directory. Default: ~/.cli-delegator. "
+            "Pass --state-dir ~/.debate-router to cancel a debate-router task."
+        ),
+    )
+    p_cancel.add_argument("--run-id", required=True, help="The run id to cancel (must be a valid slug).")
+    p_cancel.add_argument("--reason", default=None, help="Optional human-readable cancel reason recorded in the marker.")
+    p_cancel.set_defaults(func=cancel)
 
     p_supervise = sub.add_parser("supervise", help=argparse.SUPPRESS)
     p_supervise.add_argument("--run-dir", required=True)

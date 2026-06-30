@@ -28,7 +28,7 @@ const PRIVATE_FILE_MODE = 0o600;
 type ResultEnvelope = Record<string, unknown>;
 
 export interface ExecResult {
-  status: "completed" | "timed_out" | "error";
+  status: "completed" | "timed_out" | "error" | "cancelled";
   errorCategory: string | null;
   returncode: number | null;
   elapsedSeconds: number;
@@ -185,8 +185,10 @@ export function extractCodexJsonResult(stdout: string): string {
 
 /** Run the static child command in its own process group with a timeout.
  * When `streamPath` is set, the child's stdout is also appended there live (a
- * debug stream you can `tail -f`); the buffered stdout is still returned. */
-export function execute(launch: ChildLaunch, timeoutSeconds: number, streamPath?: string): Promise<ExecResult> {
+ * debug stream you can `tail -f`); the buffered stdout is still returned.
+ * When `signal` is provided, aborting it triggers the same SIGTERM→grace→SIGKILL
+ * sequence as the timeout path and resolves with status "cancelled". */
+export function execute(launch: ChildLaunch, timeoutSeconds: number, streamPath?: string, signal?: AbortSignal): Promise<ExecResult> {
   // Resolve the binary against the CHILD env PATH (not the parent's) and exec
   // the absolute path, so the missing-CLI check matches what the child would
   // actually run.
@@ -216,6 +218,7 @@ export function execute(launch: ChildLaunch, timeoutSeconds: number, streamPath?
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let cancelled = false;
     let settled = false;
     let killTimer: NodeJS.Timeout | undefined;
     let graceTimer: NodeJS.Timeout | undefined;
@@ -245,6 +248,37 @@ export function execute(launch: ChildLaunch, timeoutSeconds: number, streamPath?
       }
     };
 
+    // Reusable kill sequence shared between the timeout path and the abort path.
+    // Sets a flag, sends SIGTERM, then after KILL_GRACE_MS sends SIGKILL.
+    const triggerKill = (flagSetter: () => void): void => {
+      flagSetter();
+      if (child.pid !== undefined) {
+        killGroup(child.pid, "SIGTERM");
+        graceTimer = setTimeout(() => {
+          if (child.pid !== undefined) killGroup(child.pid, "SIGKILL");
+        }, KILL_GRACE_MS);
+      }
+    };
+
+    // If a cancellation signal was provided, wire it up. The abort listener
+    // mirrors the timeout path: SIGTERM → grace → SIGKILL. It is removed on
+    // settle so there are no leaks after the child exits.
+    let abortListener: (() => void) | undefined;
+    if (signal) {
+      abortListener = () => {
+        if (settled) return;
+        triggerKill(() => {
+          cancelled = true;
+        });
+      };
+      if (signal.aborted) {
+        // Already aborted before the child even started: kill immediately.
+        abortListener();
+      } else {
+        signal.addEventListener("abort", abortListener);
+      }
+    }
+
     child.stdout.on("data", (d: Buffer) => {
       stdout += d.toString();
       if (streamFd !== undefined) {
@@ -260,6 +294,7 @@ export function execute(launch: ChildLaunch, timeoutSeconds: number, streamPath?
     child.on("error", (err) => {
       if (settled) return;
       settled = true;
+      if (abortListener && signal) signal.removeEventListener("abort", abortListener);
       clearTimers();
       resolvePromise({
         status: "error",
@@ -274,9 +309,12 @@ export function execute(launch: ChildLaunch, timeoutSeconds: number, streamPath?
     child.on("close", (code) => {
       if (settled) return;
       settled = true;
+      if (abortListener && signal) signal.removeEventListener("abort", abortListener);
       clearTimers();
       const e = Math.round(elapsed() * 1000) / 1000;
-      if (timedOut) {
+      if (cancelled) {
+        resolvePromise({ status: "cancelled", errorCategory: "cancelled", returncode: code, elapsedSeconds: e, stdout, stderr });
+      } else if (timedOut) {
         resolvePromise({ status: "timed_out", errorCategory: "timeout", returncode: code, elapsedSeconds: e, stdout, stderr });
       } else if (code !== 0) {
         resolvePromise({ status: "error", errorCategory: "nonzero_exit", returncode: code, elapsedSeconds: e, stdout, stderr });
@@ -296,15 +334,105 @@ export function execute(launch: ChildLaunch, timeoutSeconds: number, streamPath?
     }
 
     killTimer = setTimeout(() => {
-      timedOut = true;
-      if (child.pid !== undefined) {
-        killGroup(child.pid, "SIGTERM");
-        graceTimer = setTimeout(() => {
-          if (child.pid !== undefined) killGroup(child.pid, "SIGKILL");
-        }, KILL_GRACE_MS);
-      }
+      triggerKill(() => {
+        timedOut = true;
+      });
     }, timeoutSeconds * 1000);
   });
+}
+
+// ---------------------------------------------------------------------------
+// Global per-provider subprocess limiter (singleton, module-level).
+//
+// WHY: runPreparedItems already caps concurrency within a single debate via
+// runWithCaps. But when multiple debate requests run concurrently (maxConcurrentRequests
+// > 1 in the mailbox), each debate spawns up to maxParallel workers in parallel, so M
+// debates could launch M * maxParallel subprocesses with no cross-debate ceiling.
+// This module-global semaphore enforces an absolute cap across ALL concurrent runValidated
+// calls: global cap = maxParallel, per-provider cap = maxParallelPerProvider.
+//
+// Cap values are read at acquire time from module-level mutable numbers that are
+// updated on each call, so a hot-reloaded allowlist takes effect without restart.
+// Single-threaded JS means mutate-then-check is safe without locks.
+//
+// Default: very-high cap (no-op) so existing direct callers and tests are unaffected
+// when globalCap / perProviderCap are not passed.
+let _globalCapValue = 1_000_000;
+let _perProviderCapValue = 1_000_000;
+let _globalActive = 0;
+const _perProviderActive: Record<string, number> = {};
+// Waiters: each entry re-tries the acquire; returns true if it took a slot.
+const _waiters: Array<() => boolean> = [];
+
+// Exported under a __test prefix so the deadlock/wakeup behavior can be unit-tested
+// directly (it is module-global infra, not request-facing API). Production code
+// reaches it only through runValidated.
+export function __testAcquireSubprocessSlot(provider: string, globalCap: number, perProviderCap: number): Promise<void> {
+  return _acquireSubprocessSlot(provider, globalCap, perProviderCap);
+}
+export function __testReleaseSubprocessSlot(provider: string): void {
+  _releaseSubprocessSlot(provider);
+}
+/** Reset the module-global limiter so one test's leftover state can't leak into
+ * the next. Test-only. */
+export function __testResetSubprocessLimiter(): void {
+  _globalCapValue = 1_000_000;
+  _perProviderCapValue = 1_000_000;
+  _globalActive = 0;
+  for (const k of Object.keys(_perProviderActive)) delete _perProviderActive[k];
+  _waiters.length = 0;
+}
+
+function _acquireSubprocessSlot(provider: string, globalCap: number, perProviderCap: number): Promise<void> {
+  // Update the live cap values (latest caller wins — safe in single-threaded JS).
+  _globalCapValue = globalCap;
+  _perProviderCapValue = perProviderCap;
+  return new Promise<void>((resolve) => {
+    // Returns true if a slot was taken (and the promise resolved); false otherwise.
+    // A parked copy of this closure is re-run on every release; on failure it must
+    // re-park itself so it is never silently dropped.
+    const tryAcquire = (): boolean => {
+      const g = _globalCapValue;
+      const p = _perProviderCapValue;
+      if (_globalActive < g && (_perProviderActive[provider] ?? 0) < p) {
+        _globalActive++;
+        _perProviderActive[provider] = (_perProviderActive[provider] ?? 0) + 1;
+        resolve();
+        return true;
+      }
+      return false;
+    };
+    if (!tryAcquire()) {
+      // Park the waiter in the FIFO queue.
+      _waiters.push(tryAcquire);
+    }
+  });
+}
+
+function _releaseSubprocessSlot(provider: string): void {
+  _globalActive = Math.max(0, _globalActive - 1);
+  _perProviderActive[provider] = Math.max(0, (_perProviderActive[provider] ?? 1) - 1);
+  // Wake ALL parked waiters and let each re-park itself if it still cannot acquire.
+  // Waking only the FIFO head is wrong: a freed slot of provider X must be claimable
+  // by a waiter for X even if an earlier-queued waiter for a different (still-full)
+  // provider sits at the head — otherwise that head waiter fails, and (because a
+  // failed wake must not drop it) we would deadlock on head-of-line blocking. Drain
+  // the queue into a local snapshot first so re-parks (push) don't grow the list we
+  // are iterating; FIFO fairness is preserved because re-parked waiters keep their
+  // relative order and each release re-drains. Stop early once no slot is free.
+  const woken = _waiters.splice(0, _waiters.length);
+  for (const w of woken) {
+    // Once the global cap is saturated again no further waiter can proceed this
+    // round, so re-park the remainder in order and stop trying.
+    if (_globalActive >= _globalCapValue) {
+      _waiters.push(w);
+      continue;
+    }
+    // w() takes a slot and resolves, or fails on its own (still-full) per-provider
+    // cap. The parked closure does not re-park itself, so on failure we re-park it
+    // here, preserving its place for the next release.
+    if (!w()) _waiters.push(w);
+  }
 }
 
 export async function runValidated(
@@ -312,6 +440,9 @@ export async function runValidated(
   baseEnv?: Record<string, string | undefined>,
   streamPath?: string,
   rateLimitPatterns: readonly RegExp[] = [],
+  globalCap?: number,
+  perProviderCap?: number,
+  signal?: AbortSignal,
 ): Promise<ResultEnvelope> {
   const env = baseEnv ?? process.env;
   const launch = buildChildLaunch({
@@ -327,16 +458,28 @@ export async function runValidated(
     effort: reqValidated.effort,
     remoteOps: reqValidated.remoteOps,
   });
-  const exec = await execute(launch, reqValidated.timeoutSeconds, streamPath);
+  // Acquire a global + per-provider subprocess slot before spawning.
+  // When globalCap/perProviderCap are provided (from runPreparedItems → cross-debate use),
+  // this enforces a process-global ceiling across all concurrent debates.
+  // When unset (default very-high cap), it is a no-op so existing callers are unaffected.
+  const usedGlobalCap = globalCap ?? _globalCapValue;
+  const usedPerProviderCap = perProviderCap ?? _perProviderCapValue;
+  await _acquireSubprocessSlot(reqValidated.baseProvider, usedGlobalCap, usedPerProviderCap);
+  let exec: ExecResult;
+  try {
+    exec = await execute(launch, reqValidated.timeoutSeconds, streamPath, signal);
+  } finally {
+    _releaseSubprocessSlot(reqValidated.baseProvider);
+  }
 
   // Detect a usage/rate limit and re-label it `rate_limited` so the orchestrator
-  // can swap engines. Only a FAILED, non-timeout run is reconsidered, so a
-  // successful answer that merely mentions "rate limit" is never reclassified, and
-  // a genuine timeout stays a timeout. The runner only LABELS here; it never
-  // rebalances providers (that is the daemon's job).
+  // can swap engines. Only a FAILED, non-timeout, non-cancelled run is reconsidered,
+  // so a successful answer that merely mentions "rate limit" is never reclassified,
+  // a genuine timeout stays a timeout, and a cancelled run stays cancelled.
   const errorCategory =
     exec.status !== "completed" &&
     exec.errorCategory !== "timeout" &&
+    exec.errorCategory !== "cancelled" &&
     exec.errorCategory !== "missing_cli" &&
     classifyRateLimit(exec.stderr, exec.stdout, rateLimitPatterns)
       ? "rate_limited"
@@ -477,8 +620,9 @@ interface Job<T> {
   run: () => Promise<T>;
 }
 
-/** Run jobs honoring a global cap and a per-key (provider) cap; ordered results. */
-function runWithCaps<T>(jobs: Job<T>[], maxParallel: number, perKey: number): Promise<T[]> {
+/** Run jobs honoring a global cap and a per-key (provider) cap; ordered results.
+ * Exported so mailbox_service can reuse this pattern for concurrent request processing. */
+export function runWithCaps<T>(jobs: Job<T>[], maxParallel: number, perKey: number): Promise<T[]> {
   const cap = Math.max(1, maxParallel);
   const keyCap = Math.max(1, perKey);
   return new Promise<T[]>((resolve) => {
@@ -518,12 +662,15 @@ function runWithCaps<T>(jobs: Job<T>[], maxParallel: number, perKey: number): Pr
  * Run a set of already-prepared batch items (valid requests run; pre-rejected
  * items become `rejected` results consuming no concurrency). Ordered results.
  * Shared by `run-batch` and the debate daemon's per-phase fan-out.
+ * The optional `signal` is forwarded into each runValidated call so an abort
+ * terminates every active child in the batch.
  */
 export async function runPreparedItems(
   items: PreparedItem[],
   allow: Allowlist,
   baseEnv: Record<string, string | undefined> | undefined,
   maxParallel: number,
+  signal?: AbortSignal,
 ): Promise<BatchItemResult[]> {
   const jobs: Job<BatchItemResult>[] = [];
   const jobIndexBySlot = new Map<number, number>();
@@ -535,7 +682,17 @@ export async function runPreparedItems(
         run: async () =>
           ({
             item_id: slot.itemId,
-            ...(await runValidated(slot.req!, baseEnv, slot.streamPath, allow.rateLimitPatterns[slot.req!.baseProvider] ?? [])),
+            // Pass the allowlist caps into runValidated so the global per-provider
+            // subprocess limiter can enforce them across ALL concurrent debates.
+            ...(await runValidated(
+              slot.req!,
+              baseEnv,
+              slot.streamPath,
+              allow.rateLimitPatterns[slot.req!.baseProvider] ?? [],
+              allow.maxParallel,
+              allow.maxParallelPerProvider,
+              signal,
+            )),
           }) as BatchItemResult,
       });
     }
