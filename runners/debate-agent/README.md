@@ -347,18 +347,56 @@ AGENTS.md invariant #2).
     <id>.intermediates.json  canonical plan + clean per-step outputs
     <id>.streams/  per-launch live CLI debug streams (tail -f a slow worker)
   archive/     finished requests are MOVED here (durable record), never deleted
+  cancel/      skill writes <id>.json here to cancel an in-flight request
 
 ~/.cli-delegator/
   requests/    cli-delegator writes <id>.json (a delegate_request) here
   processing/  daemon claims a request by atomic rename
   responses/   daemon writes <id>.json result + <id>.log progress here
   archive/     finished requests are MOVED here
+  cancel/      skill writes <id>.json here to cancel an in-flight delegate task
   <id>/         compatibility artifacts for once runs
     config.json
     state.json
     observations.md
     current.log
 ```
+
+### Graceful cancellation
+
+A user or skill can cancel one specific in-flight request **without affecting
+any other concurrent request** by writing a cancel marker file:
+
+```
+~/.debate-router/cancel/<id>.json     # cancel a debate request
+~/.cli-delegator/cancel/<id>.json     # cancel a delegate request
+```
+
+The file content is permissive — `{}` is sufficient; `{"reason": "..."}` is also
+accepted. The file name's `<id>` is the authoritative identifier (same pattern as
+request files). **This file write is the only supported cancel mechanism** — no
+direct signals or IPC (invariant #2: all control goes through file mailboxes).
+
+Each poll tick, the daemon scans `cancel/` **before** dispatching new requests.
+Behaviour by state:
+
+| Request state | What happens |
+| --- | --- |
+| In-flight (in `processing/`) | Subprocess(es) killed with SIGTERM then SIGKILL; response is written with `status: "cancelled"` |
+| Still unclaimed (in `requests/`) | Claimed immediately and `status: "cancelled"` response written — it **never runs** |
+| Already finished (response exists) | Harmless no-op; cancel marker consumed |
+| Unknown / archived | Marker consumed, no-op |
+
+The cancelled response preserves any **already-completed intermediates** (for
+debate requests: `responses/<id>.intermediates.json` still has the outputs of
+phases that completed before the abort). The cancellation is per-id and per-mailbox
+— a cancel in `~/.debate-router/cancel/` cannot touch a delegate request and
+vice versa.
+
+The `cancelled` status appears in:
+- `DebateResponse.status` (`completed | degraded | error | cancelled`)
+- `DelegateResponse.status` (`completed | timed_out | error | cancelled`)
+- `ExecResult.status` (`completed | timed_out | error | cancelled`)
 
 Each worker (and each planner attempt) streams its raw CLI output **live** to
 `responses/<id>.streams/<launch>.log`, so you can `tail -f` a slow or hung worker
@@ -392,10 +430,17 @@ each mailbox's `requests/`, and for each NEW request: claims it (atomic rename
 into `processing/`), runs the matching handler, atomically writes
 `responses/<id>.json`, and **moves the request into `archive/`** — `requests/`
 stays a clean work queue, but every request is preserved (prompt and all). The
-current daemon processes one claimed request at a time; per-handler resource
-slots are part of the handler contract but not yet used for concurrent
-scheduling. The claim-rename is also the exactly-once guard (a second claim of
-the same id fails) and the crash-recovery marker.
+daemon processes claimed requests with **bounded concurrency** controlled by
+`limits.max_concurrent_requests` in the allowlist (**default 3** — concurrent out
+of the box; set to 1 for strictly serial). With concurrency on, the debate and
+delegate mailboxes are also drained in parallel within each poll tick. A cross-debate global subprocess
+cap (`limits.max_parallel` / `limits.max_parallel_per_provider`) prevents M
+concurrent debates from multiplying subprocess load M-fold: all `runValidated`
+calls share a process-global per-provider semaphore, so the total in-flight
+subprocesses across all concurrent debates never exceeds `max_parallel` globally
+and `max_parallel_per_provider` per provider. The claim-rename is also the
+exactly-once guard (a second claim of the same id fails) and the crash-recovery
+marker.
 
 The allowlist is **re-read for each new request**, so config edits (e.g. adding a
 `repo_root`) apply to the next debate without restarting the daemon. A
@@ -799,8 +844,9 @@ through it, all of the following must be in place. This is the full list.
    | `allowed_capability_sets` | exact capability sets a request may select | singleton sets derived from `capabilities` |
    | `limits.max_prompt_chars` | prompt size cap | 200000 |
    | `limits.max_batch_items` | items per `run-batch` | 8 |
-   | `limits.max_parallel` | global batch concurrency | 4 |
-   | `limits.max_parallel_per_provider` | per-provider concurrency | 2 |
+   | `limits.max_parallel` | global batch concurrency; also the cross-debate subprocess ceiling | 4 |
+   | `limits.max_parallel_per_provider` | per-provider subprocess cap (within and across debates) | 2 |
+   | `limits.max_concurrent_requests` | how many mailbox requests the watch daemon processes at once (1 = serial) | 3 |
    | `rate_limit_patterns` | `provider -> [regex]` limit signatures (tune to your CLIs) | conservative built-ins per provider |
    | `fallback` | `{enabled, order}` for provider failure engine swap | `{enabled: true, order: providers}` |
    | `delegate` | `{enabled, modes, max_minutes, max_workspace_write_minutes}` for the cli-delegator mailbox | disabled; `once` reserved but inactive |

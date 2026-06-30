@@ -1,12 +1,20 @@
 // The mailbox daemon. Watches ~/.debate-router/requests/ for NEW request files
 // (existing ones at startup are ignored), claims each atomically, runs the whole
 // debate — plan (one-shot planner CLI, with retry) then mechanical execution —
-// and writes responses/<id>.json. One debate at a time. Every CLI it spawns (the
-// planner and every worker) runs read-only.
+// and writes responses/<id>.json. Concurrency is configurable via
+// allowlist.limits.max_concurrent_requests (default 1 = serial). Every CLI it
+// spawns (the planner and every worker) runs read-only.
 //
 // The sandboxed debate-router skill only writes the high-level `debate_request`
 // and presents the result; all execution (planner + workers) is here, out of
 // sandbox, so it bypasses the parent's top-level command reviewer.
+//
+// CANCELLATION: a user/skill can gracefully cancel one specific in-flight request
+// by writing cancel/<id>.json to the mailbox directory. Each poll tick scans
+// cancel/ before processing new requests, and either aborts the in-flight handler
+// or (for not-yet-started requests) writes a cancelled response immediately.
+// This works for both debate and delegate mailboxes. The cancel trigger MUST be
+// a file the skill writes — never a direct signal/IPC (invariant #2).
 
 import { existsSync, readFileSync } from "node:fs";
 
@@ -27,7 +35,7 @@ import {
   writeIntermediates,
   writeResponse,
 } from "./mailbox";
-import { recoverMailboxOrphans, processNewMailboxRequests } from "./mailbox_service";
+import { CancellationRegistry, abortInFlightCancellations, applyCancellations, recoverMailboxOrphans, processNewMailboxRequests } from "./mailbox_service";
 import { makeCliPlanner } from "./planner";
 import { RESULT_SCHEMA_VERSION } from "./version";
 
@@ -135,11 +143,13 @@ function writeDebateArtifacts(mb: Mailbox, id: string, response: DebateResponse,
   writeResponse(mb, id, { ...responseBody, intermediates_path: intermediatesPath });
 }
 
-function createDebateHandler(opts: WatchOptions): MailboxHandler<DebateRequest, DebateResponse> {
+// maxConcurrent defaults to 1 so processNewRequests / recoverOrphans (called
+// from tests without an explicit cap) stay serial — identical to old behavior.
+function createDebateHandler(opts: WatchOptions, maxConcurrent = 1): MailboxHandler<DebateRequest, DebateResponse> {
   return {
     kind: "debate_request",
     mailboxName: "debate-router",
-    resourceBudget: { maxConcurrent: 1, maxMinutes: null },
+    resourceBudget: { maxConcurrent, maxMinutes: null },
     invalidRequestDigest: "invalid-request",
     validate: (raw, id, allowNow) => {
       const req = validateDebateRequest(raw, allowNow);
@@ -161,6 +171,9 @@ function createDebateHandler(opts: WatchOptions): MailboxHandler<DebateRequest, 
       deps.log = ctx.log;
       deps.streamDir = ctx.streamDir;
       deps.intermediateStore = fileIntermediateStore(ctx.mailbox, ctx.id);
+      // Thread the cancellation signal so runDebate can abort between phases
+      // and kill any in-flight subprocess when the cancel/<id>.json marker fires.
+      deps.signal = ctx.signal;
       return await runDebate(req, allowForReq, deps);
     },
     errorResponse,
@@ -178,15 +191,16 @@ export async function processNewRequests(
   ignore: Set<string>,
   allow: Allowlist,
   opts: WatchOptions,
+  registry?: CancellationRegistry,
 ): Promise<string[]> {
-  return await processNewMailboxRequests(mb, ignore, allow, opts, createDebateHandler(opts));
+  return await processNewMailboxRequests(mb, ignore, allow, opts, createDebateHandler(opts), registry);
 }
 
 /** Recover requests left in processing/ by a previous crash/restart. If no final
  * response exists, resume the request through the normal plan→execute path, using
  * persisted intermediates to skip completed work. Returns the recovered ids. */
-export async function recoverOrphans(mb: Mailbox, allow: Allowlist, opts: WatchOptions): Promise<string[]> {
-  return await recoverMailboxOrphans(mb, allow, opts, createDebateHandler(opts));
+export async function recoverOrphans(mb: Mailbox, allow: Allowlist, opts: WatchOptions, registry?: CancellationRegistry): Promise<string[]> {
+  return await recoverMailboxOrphans(mb, allow, opts, createDebateHandler(opts), registry);
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -201,10 +215,20 @@ export async function watchLoop(allow: Allowlist, opts: WatchOptions = {}): Prom
   }
   const mb = openMailbox();
   const delegateMb = openDelegateMailbox();
-  const debateHandler = createDebateHandler(opts);
+  // maxConcurrentRequests from the allowlist sets how many debates run at once
+  // (default 3 = concurrent; set to 1 for strictly serial). The global subprocess
+  // cap still bounds total in-flight CLIs across concurrent debates.
+  const debateHandler = createDebateHandler(opts, allow.maxConcurrentRequests);
   const delegateHandler = createDelegateHandler(opts.baseEnv);
-  const recovered = await recoverOrphans(mb, allow, opts);
-  const recoveredDelegate = await recoverMailboxOrphans(delegateMb, allow, opts, delegateHandler);
+
+  // Per-mailbox cancellation registries. Each registry maps in-flight id →
+  // AbortController for that mailbox only, so cancelling a debate id never
+  // touches the delegate registry (and vice versa).
+  const debateRegistry = new CancellationRegistry();
+  const delegateRegistry = new CancellationRegistry();
+
+  const recovered = await recoverOrphans(mb, allow, opts, debateRegistry);
+  const recoveredDelegate = await recoverMailboxOrphans(delegateMb, allow, opts, delegateHandler, delegateRegistry);
   const ignore = snapshotRequestIds(mb);
   const delegateIgnore = snapshotRequestIds(delegateMb);
   const interval = opts.intervalMs ?? 1000;
@@ -217,18 +241,44 @@ export async function watchLoop(allow: Allowlist, opts: WatchOptions = {}): Prom
     `debate-agent watch: delegate mailbox ${delegateMb.root}; enabled=${allow.delegate.enabled}; ` +
       `recovered ${recoveredDelegate.length} orphaned request(s); ignoring ${delegateIgnore.size} existing request(s)\n`,
   );
+
+  // Independent cancellation timer. The main poll loop below blocks inside
+  // `await processNewMailboxRequests` for the full duration of any running task,
+  // so it cannot observe a cancel marker mid-execution. This timer runs on its
+  // own cadence and aborts in-flight requests promptly (within `interval` ms) no
+  // matter how long the owning task runs. It does ONLY in-memory aborts (see
+  // abortInFlightCancellations) so it never races the main loop on claim state.
+  const cancelLog = (msg: string): void => void process.stderr.write(`  ${msg}\n`);
+  const cancelTimer = setInterval(() => {
+    abortInFlightCancellations(mb, debateRegistry, cancelLog);
+    abortInFlightCancellations(delegateMb, delegateRegistry, cancelLog);
+  }, interval);
+  // Don't let this timer keep the process alive on its own (the poll loop does).
+  if (typeof cancelTimer.unref === "function") cancelTimer.unref();
+
   for (;;) {
-    try {
-      const done = await processNewMailboxRequests(mb, ignore, allow, opts, debateHandler);
-      for (const id of done) process.stderr.write(`  processed ${id}\n`);
-    } catch (err) {
-      process.stderr.write(`  debate mailbox watch error: ${String(err)}\n`);
+    // Scan cancel/ dirs BEFORE dispatching new work each tick. This ensures a
+    // cancel marker that arrives between ticks is always acted on promptly, and
+    // a not-yet-started request is intercepted before it is claimed.
+    applyCancellations(mb, debateRegistry, ignore, debateHandler, (msg) => process.stderr.write(`  ${msg}\n`));
+    applyCancellations(delegateMb, delegateRegistry, delegateIgnore, delegateHandler, (msg) => process.stderr.write(`  ${msg}\n`));
+
+    // Run both mailboxes concurrently within a poll tick so a long debate drain
+    // does not starve the delegate mailbox. allSettled ensures both settle before
+    // the sleep, and we log rejections from each mailbox independently.
+    const [debateResult, delegateResult] = await Promise.allSettled([
+      processNewMailboxRequests(mb, ignore, allow, opts, debateHandler, debateRegistry),
+      processNewMailboxRequests(delegateMb, delegateIgnore, allow, opts, delegateHandler, delegateRegistry),
+    ]);
+    if (debateResult.status === "fulfilled") {
+      for (const id of debateResult.value) process.stderr.write(`  processed ${id}\n`);
+    } else {
+      process.stderr.write(`  debate mailbox watch error: ${String(debateResult.reason)}\n`);
     }
-    try {
-      const delegateDone = await processNewMailboxRequests(delegateMb, delegateIgnore, allow, opts, delegateHandler);
-      for (const id of delegateDone) process.stderr.write(`  delegated ${id}\n`);
-    } catch (err) {
-      process.stderr.write(`  delegate mailbox watch error: ${String(err)}\n`);
+    if (delegateResult.status === "fulfilled") {
+      for (const id of delegateResult.value) process.stderr.write(`  delegated ${id}\n`);
+    } else {
+      process.stderr.write(`  delegate mailbox watch error: ${String(delegateResult.reason)}\n`);
     }
     await sleep(interval);
   }

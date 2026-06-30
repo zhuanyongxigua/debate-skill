@@ -2,7 +2,7 @@
 // (writes responses). Lives under ~/.debate-router/ by default; override with
 // $DEBATE_AGENT_MAILBOX. Requests and responses correlate by id.
 
-import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
@@ -20,6 +20,12 @@ export interface Mailbox {
   processingDir: string;
   responsesDir: string;
   archiveDir: string;
+  // Cancel signals: a file cancel/<id>.json tells the daemon to abort an
+  // in-flight request. The file name's id is authoritative (same pattern as
+  // request files). Content is permissive: {} or {reason?: string}; unknown
+  // keys are ignored. Writing this file is the ONLY cancel mechanism — no
+  // direct signals or IPC (invariant #2: all control goes through file mailboxes).
+  cancelDir: string;
 }
 
 export function mailboxRoot(): string {
@@ -39,8 +45,9 @@ export function openMailboxAt(root: string): Mailbox {
     processingDir: join(root, "processing"),
     responsesDir: join(root, "responses"),
     archiveDir: join(root, "archive"),
+    cancelDir: join(root, "cancel"),
   };
-  for (const d of [mb.requestsDir, mb.processingDir, mb.responsesDir, mb.archiveDir]) ensurePrivateDir(d);
+  for (const d of [mb.requestsDir, mb.processingDir, mb.responsesDir, mb.archiveDir, mb.cancelDir]) ensurePrivateDir(d);
   return mb;
 }
 
@@ -83,6 +90,24 @@ export function processingIds(mb: Mailbox): string[] {
   return readdirSync(mb.processingDir)
     .filter((f) => f.endsWith(".json"))
     .map((f) => f.slice(0, -".json".length));
+}
+
+/** Ids with pending cancel markers in cancel/ — mirrored from processingIds pattern. */
+export function cancelRequestIds(mb: Mailbox): string[] {
+  if (!existsSync(mb.cancelDir)) return [];
+  return readdirSync(mb.cancelDir)
+    .filter((f) => f.endsWith(".json") && SLUG_RE.test(f.slice(0, -".json".length)))
+    .map((f) => f.slice(0, -".json".length));
+}
+
+/** Delete the cancel marker for `id` after it has been acted on.
+ * Best-effort: a missing or unlink-failed entry is silently ignored. */
+export function consumeCancel(mb: Mailbox, id: string): void {
+  try {
+    unlinkSync(join(mb.cancelDir, `${id}.json`));
+  } catch {
+    /* already gone or never existed */
+  }
 }
 
 /** Atomically claim a request by renaming it into processing/. Returns the new

@@ -29,6 +29,7 @@ export interface DebateDeps {
     allow: Allowlist,
     baseEnv: Record<string, string | undefined> | undefined,
     maxParallel: number,
+    signal?: AbortSignal,
   ) => Promise<BatchItemResult[]>;
   // Injectable stdout reader (defaults to reading the audit stdout_path).
   readOutput?: (r: BatchItemResult) => string;
@@ -42,6 +43,9 @@ export interface DebateDeps {
   // responses/<id>.intermediates.json so later phases read exactly what was
   // already written to disk; tests may omit it and get an in-memory store.
   intermediateStore?: IntermediateStore;
+  // Optional cancellation signal. When aborted, runDebate stops launching new
+  // phases and returns a cancelled response preserving already-completed work.
+  signal?: AbortSignal;
 }
 
 export interface TraceRow {
@@ -457,11 +461,30 @@ function buildFastPlan(req: DebateRequest, allow: Allowlist): Plan {
   };
 }
 
+/** Build a cancelled DebateResponse preserving any already-collected outputs. */
+function cancelledResponse(id: string, state: PersistedDebateState, trace: TraceRow[]): DebateResponse {
+  const finishedAt = new Date().toISOString();
+  return {
+    schema_version: RESULT_SCHEMA_VERSION,
+    request_id: id,
+    kind: "debate_result",
+    status: "cancelled",
+    status_reason: "request was cancelled",
+    // Preserve whatever output the answer item may already have, so callers
+    // can inspect partial work (intermediates sidecar always has the full set).
+    answer_markdown: "",
+    trace,
+    intermediate_outputs: state.outputs,
+    finished_at: finishedAt,
+  };
+}
+
 export async function runDebate(req: DebateRequest, allow: Allowlist, deps: DebateDeps): Promise<DebateResponse> {
   allow = narrowAllowlistForRequest(allow, req);
   const runItems = deps.runItems ?? runPreparedItems;
   const readOutput = deps.readOutput ?? defaultReadOutput;
   const log = deps.log;
+  const signal = deps.signal;
   const store = deps.intermediateStore ?? memoryIntermediateStore(req);
   log?.(`debate ${req.id}: repo=${req.repo} language=${req.language ?? "-"} fast=${req.fast}`);
 
@@ -470,6 +493,15 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
   // runs a fixed lean 2-phase shape; the non-fast path plans with the CLI planner.
   let state = loadState(req, store, allow, log);
   let plan: Plan;
+
+  // Check for cancellation before we even start planning (handles cancel-before-run).
+  if (signal?.aborted) {
+    log?.(`cancelled: abort signal received before planning`);
+    const resp = cancelledResponse(req.id, state, []);
+    log?.(`done: cancelled — response → ${req.id}.json`);
+    return resp;
+  }
+
   if (state.plan) {
     plan = state.plan;
     log?.(`resume: loaded persisted plan from intermediates (${plan.phases.length} phase(s), answer=${plan.answerItem})`);
@@ -497,6 +529,18 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
 
   for (let pi = 0; pi < plan.phases.length; pi++) {
     const phase = plan.phases[pi]!;
+
+    // Check for cancellation before launching each phase. Already-completed
+    // phases are persisted to the intermediates sidecar — they are preserved
+    // in the cancelled response, so no work is lost.
+    if (signal?.aborted) {
+      state = loadState(req, store, allow, log);
+      log?.(`cancelled: abort signal received before phase ${pi + 1}/${plan.phases.length} ${phase.name}`);
+      const resp = cancelledResponse(req.id, state, trace);
+      log?.(`done: cancelled — response → ${req.id}.json`);
+      return resp;
+    }
+
     log?.(`phase ${pi + 1}/${plan.phases.length} ${phase.name}: ${phase.launches.map((l) => `${l.id} ${l.provider}`).join(", ")}`);
 
     state = loadState(req, store, allow, log);
@@ -549,12 +593,25 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
     let results: BatchItemResult[];
     try {
       // Initial run: each launch on its planned provider and effort.
+      // The signal is passed so an in-flight child is killed on abort.
       results = await runItems(
         pending.map((p) => p.item),
         allow,
         deps.baseEnv,
         allow.maxParallel,
+        signal,
       );
+
+      // If any item was cancelled, the signal fired during execution. Stop
+      // immediately and return a cancelled response preserving what completed.
+      const anyCancelled = results.some((r) => r.status === "cancelled" || r.error_category === "cancelled");
+      if (anyCancelled) {
+        state = loadState(req, store, allow, log);
+        log?.(`cancelled: abort signal fired during phase ${pi + 1}/${plan.phases.length} ${phase.name}`);
+        const resp = cancelledResponse(req.id, state, trace);
+        log?.(`done: cancelled — response → ${req.id}.json`);
+        return resp;
+      }
 
       // Provider fallback: re-run any CLI launch/completion failure on the next
       // available provider — same task, swap engine. Bounded by the provider count; we
@@ -593,6 +650,7 @@ export async function runDebate(req: DebateRequest, allow: Allowlist, deps: Deba
             allow,
             deps.baseEnv,
             allow.maxParallel,
+            signal,
           );
           retry.forEach(({ idx }, k) => {
             results[idx] = retryResults[k]!;

@@ -213,6 +213,11 @@ export interface Allowlist {
   maxBatchItems: number;
   maxParallel: number;
   maxParallelPerProvider: number;
+  // How many mailbox requests the watch daemon may process concurrently.
+  // Default 3 = concurrent out of the box; set to 1 for strictly serial. The
+  // cross-request subprocess cap (maxParallel / maxParallelPerProvider) still
+  // bounds total in-flight CLIs regardless of this value.
+  maxConcurrentRequests: number;
   // provider -> compiled rate-limit signatures. A FAILED child whose output
   // matches one is reclassified `rate_limited`; fallback itself applies to any
   // provider launch/completion failure. Empty for a provider => detection off for it.
@@ -249,6 +254,12 @@ export const DEFAULT_ALLOWLIST: Allowlist = {
   maxBatchItems: 8,
   maxParallel: 4,
   maxParallelPerProvider: 2,
+  // Default 3 = concurrent: the daemon processes up to 3 mailbox requests at once
+  // out of the box. The cross-request global subprocess cap (maxParallel /
+  // maxParallelPerProvider) still bounds total in-flight CLIs, so concurrent
+  // requests cannot multiply provider load without limit. Set to 1 for the old
+  // strictly-serial behavior.
+  maxConcurrentRequests: 3,
   rateLimitPatterns: defaultRateLimitPatterns(),
   // Swap engines on provider failure by default; order follows `providers`.
   fallback: { enabled: true, order: ["claude", "codex"] },
@@ -673,6 +684,7 @@ export function loadAllowlist(configPath: string | null | undefined): Allowlist 
     maxBatchItems: limit("max_batch_items", base.maxBatchItems),
     maxParallel: limit("max_parallel", base.maxParallel),
     maxParallelPerProvider: limit("max_parallel_per_provider", base.maxParallelPerProvider),
+    maxConcurrentRequests: limit("max_concurrent_requests", base.maxConcurrentRequests),
     rateLimitPatterns,
     fallback,
     delegate,

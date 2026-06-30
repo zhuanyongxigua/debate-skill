@@ -63,7 +63,7 @@ export interface DelegateResponse {
   schema_version: number;
   request_id: string;
   kind: "delegate_result";
-  status: "completed" | "timed_out" | "error";
+  status: "completed" | "timed_out" | "error" | "cancelled";
   status_reason: string;
   answer_markdown: string;
   artifacts_dir: string | null;
@@ -363,10 +363,19 @@ export function createDelegateHandler(baseEnv?: Record<string, string | undefine
         baseEnv,
         join(ctx.streamDir, "delegate.log"),
         ctx.allow.rateLimitPatterns[req.baseProvider] ?? [],
+        undefined,
+        undefined,
+        ctx.signal,
       );
       const answer = readText(result.stdout_path);
-      const status =
-        result.status === "completed" ? "completed" : result.status === "timed_out" ? "timed_out" : "error";
+      const status: DelegateResponse["status"] =
+        result.status === "completed"
+          ? "completed"
+          : result.status === "timed_out"
+            ? "timed_out"
+            : result.status === "cancelled"
+              ? "cancelled"
+              : "error";
       const response: DelegateResponse = {
         schema_version: RESULT_SCHEMA_VERSION,
         request_id: req.id,

@@ -18,6 +18,7 @@ const allow: Allowlist = {
   maxBatchItems: 8,
   maxParallel: 4,
   maxParallelPerProvider: 2,
+  maxConcurrentRequests: 1,
   rateLimitPatterns: { claude: [], codex: [], copilot: [] },
   fallback: { enabled: true, order: ["claude", "codex"] },
   delegate: { enabled: false, modes: ["once"], maxMinutes: 30, maxWorkspaceWriteMinutes: 30 },

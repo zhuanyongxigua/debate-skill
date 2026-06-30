@@ -206,6 +206,54 @@ python3 ~/.agents/skills/cli-delegator/scripts/cli_delegate.py tail --run-id del
 
 `start`, `resume`, `stop`, and `kill-agent` currently report that daemon-side supervised-loop/control is not implemented. Do not use a legacy direct supervisor as a workaround.
 
+## Cancelling a Running Task
+
+To cancel a task that is still running, use the `cancel` subcommand:
+
+```shell
+python3 ~/.agents/skills/cli-delegator/scripts/cli_delegate.py cancel \
+  --run-id delegate-example
+```
+
+You can also pass an optional human-readable reason:
+
+```shell
+python3 ~/.agents/skills/cli-delegator/scripts/cli_delegate.py cancel \
+  --run-id delegate-example \
+  --reason "superseded by a newer request"
+```
+
+What this does: the script writes a small JSON marker file at
+`~/.cli-delegator/cancel/delegate-example.json`. The daemon picks it up on its
+next poll tick (at most about one second later), sends SIGTERM to the matching
+child process, waits up to 10 seconds for a clean shutdown, then sends SIGKILL
+if the child has not exited. The daemon then writes a `status: "cancelled"`
+response to `~/.cli-delegator/responses/delegate-example.json`.
+
+Key points:
+
+- The run-id must be a valid slug (starts with a letter or digit, contains only
+  letters, digits, dots, underscores, or hyphens). The script rejects anything
+  else to prevent path injection.
+- Cancellation takes effect within the next daemon poll tick; it is not
+  instantaneous.
+- Any intermediate work already written by the child (observations, partial
+  logs, partial artifacts) is preserved in the run directory after cancellation.
+- After cancellation the response status is `cancelled`; the `status` subcommand
+  will reflect this once the daemon has processed the request.
+
+To cancel a debate-router task, point the command at the debate-router mailbox
+with `--state-dir ~/.debate-router` and use the debate request id:
+
+```shell
+python3 ~/.agents/skills/cli-delegator/scripts/cli_delegate.py cancel \
+  --state-dir ~/.debate-router \
+  --run-id 20240101-120000-my-debate
+```
+
+See the debate-router SKILL.md for the exact id format used when submitting a
+debate request.
+
 ## Artifact Layout
 
 ```text
